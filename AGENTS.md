@@ -59,6 +59,24 @@ modelos `anthropic/*` como padrão.
   mensagens (0 entrada, 1 saída). Confundir faz o bot ler as próprias respostas.
 - `jobId` do BullMQ **não aceita `:`** — use `conversa-<id>`.
 
+### ClickUp: armadilhas da API v2
+
+Todas cobertas por teste em `src/server/integrations/clickup/client.test.ts` —
+se mexer no cliente, rode-o.
+
+- **Auth sem `Bearer`**: o header é `Authorization: pk_...` cru. Quem vem de
+  outras APIs erra aqui.
+- **`assignees` muda de forma**: array `[1,2]` no *create*, objeto
+  `{add:[1], rem:[2]}` no *update*. Mandar array no update não dá erro — apenas
+  não atribui ninguém.
+- **Não existe busca textual.** Só filtros estruturados; casar por nome é feito
+  no cliente (`filtrarPorTexto`).
+- **Prioridade vem em três formas**: id `"1".."4"`, rótulo em inglês
+  (`urgent`/`high`/…) e o nome em português que usamos. `nomeDaPrioridade`
+  aceita as três.
+- **Status é texto livre por lista.** Antes de atualizar, o agente precisa dos
+  status válidos — vêm de `clickup_listar_estrutura`.
+
 ### Regras do projeto
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`

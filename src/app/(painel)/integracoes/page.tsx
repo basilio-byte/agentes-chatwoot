@@ -1,30 +1,37 @@
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
-import { integracaoImplementada } from "@/server/integrations/registry";
+import { obterIntegracao } from "@/server/integrations/registry";
 import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
-import { IntegrationProvider, IntegrationStatus } from "@/generated/prisma/enums";
+import { clickupConfigSchema } from "@/server/integrations/clickup/config";
+import {
+  IntegrationProvider,
+  IntegrationStatus,
+  UserRole,
+} from "@/generated/prisma/enums";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
+import { ClickUpConfigForm } from "@/components/clickup-config";
 import { Aviso, Badge, Card } from "@/components/ui";
 import { formatarData } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-const PENDENTES: Partial<Record<IntegrationProvider, string>> = {
-  [IntegrationProvider.CLICKUP]:
-    "Consulta e criação de tarefas a partir do atendimento.",
-  [IntegrationProvider.CONEXA]:
-    "Consulta de cadastro, contratos e financeiro dos clientes.",
-};
-
 export default async function IntegracoesPage() {
   const sessao = await exigirSessao();
   const editavel = podeEditar(sessao.user.role);
 
-  const registros = await db.integration.findMany();
+  const registros = await db.integration.findMany({
+    include: { credential: true },
+  });
   const chatwoot = registros.find(
     (i) => i.provider === IntegrationProvider.CHATWOOT,
   );
+  const clickup = registros.find(
+    (i) => i.provider === IntegrationProvider.CLICKUP,
+  );
   const configChatwoot = chatwootConfigSchema.safeParse(chatwoot?.config ?? {});
+  const configClickUp = clickupConfigSchema.safeParse(clickup?.config ?? {});
+  const toolsClickUp =
+    obterIntegracao(IntegrationProvider.CLICKUP)?.tools.length ?? 0;
 
   const comBot = await db.agentChatwootBot.count();
 
@@ -78,27 +85,64 @@ export default async function IntegracoesPage() {
         ) : null}
       </Card>
 
-      <Aviso>
-        ClickUp e ERP Conexa entram na Fase 3. A documentação de API das duas
-        ainda não foi fornecida — o contrato do registry já existe, falta o módulo
-        de cada uma.
-      </Aviso>
+      <Card className="space-y-4">
+        <div className="flex items-center gap-2">
+          <h2 className="font-medium">ClickUp</h2>
+          {clickup?.enabled ? (
+            <Badge tone="success">ligada</Badge>
+          ) : (
+            <Badge>desligada</Badge>
+          )}
+          {clickup?.status === IntegrationStatus.OK ? (
+            <Badge tone="success">conexão ok</Badge>
+          ) : clickup?.status === IntegrationStatus.ERROR ? (
+            <Badge tone="danger">falha na conexão</Badge>
+          ) : null}
+        </div>
 
-      {Object.entries(PENDENTES).map(([provider, descricao]) => (
-        <Card key={provider} className="space-y-2">
-          <div className="flex items-center gap-2">
-            <h2 className="font-medium">
-              {provider === IntegrationProvider.CLICKUP ? "ClickUp" : "ERP Conexa"}
-            </h2>
-            {integracaoImplementada(provider as IntegrationProvider) ? (
-              <Badge tone="success">disponível</Badge>
-            ) : (
-              <Badge>aguardando implementação</Badge>
-            )}
-          </div>
-          <p className="text-sm text-muted">{descricao}</p>
-        </Card>
-      ))}
+        <p className="text-sm text-muted">
+          Criar e administrar tarefas, mudar status, comentar e atribuir
+          responsáveis. O agente recebe {toolsClickUp} ferramenta(s) quando esta
+          integração está ligada para ele.
+        </p>
+
+        <ClickUpConfigForm
+          teamId={configClickUp.success ? configClickUp.data.teamId : ""}
+          defaultListId={
+            configClickUp.success ? (configClickUp.data.defaultListId ?? "") : ""
+          }
+          spaceIds={
+            configClickUp.success
+              ? configClickUp.data.spaceIdsPermitidos.join(", ")
+              : ""
+          }
+          habilitada={clickup?.enabled ?? false}
+          temToken={Boolean(clickup?.credential)}
+          hintToken={clickup?.credential?.hint ?? null}
+          somenteLeitura={!editavel}
+          podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+        />
+
+        {clickup?.lastError ? (
+          <Aviso tone="danger">
+            Último teste falhou: {clickup.lastError}
+            {clickup.lastCheckedAt
+              ? ` (${formatarData(clickup.lastCheckedAt)})`
+              : ""}
+          </Aviso>
+        ) : null}
+      </Card>
+
+      <Card className="space-y-2">
+        <div className="flex items-center gap-2">
+          <h2 className="font-medium">ERP Conexa</h2>
+          <Badge>aguardando documentação de API</Badge>
+        </div>
+        <p className="text-sm text-muted">
+          Consulta de cadastro, contratos e financeiro dos clientes. O contrato do
+          registry já existe — falta a documentação para escrever o módulo.
+        </p>
+      </Card>
     </div>
   );
 }

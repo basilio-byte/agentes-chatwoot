@@ -1,12 +1,13 @@
 import type { IntegrationProvider } from "@/generated/prisma/enums";
 import type { IntegrationDefinition } from "./types";
 import { chatwootIntegration } from "./chatwoot";
+import { clickupIntegration } from "./clickup";
 
 /**
  * Registro central de integrações.
  *
- * ClickUp e ERP Conexa continuam fora: a documentação de API das duas ainda não
- * foi fornecida, e inventar endpoints garantiria retrabalho.
+ * O ERP Conexa continua fora: a documentação de API dele ainda não foi
+ * fornecida, e inventar endpoints garantiria retrabalho.
  *
  * Para adicionar uma integração:
  *   1. criar `src/server/integrations/<provider>/index.ts` exportando um
@@ -16,6 +17,7 @@ import { chatwootIntegration } from "./chatwoot";
  */
 const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = {
   [chatwootIntegration.provider]: chatwootIntegration,
+  [clickupIntegration.provider]: clickupIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {
