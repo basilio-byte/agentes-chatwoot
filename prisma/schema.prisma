@@ -68,6 +68,38 @@ model Agent {
   integrations  AgentIntegration[]
   conversations Conversation[]
   runs          AgentRun[]
+  chatwootBot   AgentChatwootBot?
+}
+
+/// Um Agent Bot do Chatwoot por agente — decisão de 2026-07-28, para cada agente
+/// ter nome e avatar próprios na interface do Chatwoot.
+///
+/// Consequência: cada bot tem o **seu** secret de webhook. Por isso o endpoint é
+/// `/api/webhooks/chatwoot/<agentId>` — a URL identifica o bot antes da
+/// verificação da assinatura, evitando ter de confiar no payload para escolher a
+/// chave.
+model AgentChatwootBot {
+  id      String @id @default(cuid())
+  agentId String @unique
+
+  /// Id numérico do bot no Chatwoot. Serve para vincular inboxes e para ignorar
+  /// as mensagens que o próprio bot enviou.
+  botId   Int?
+  botName String
+
+  /// JSON cifrado (AES-256-GCM): { token, webhookSecret }.
+  /// Um blob só em vez de duas colunas cifradas — menos ruído no schema.
+  ciphertext String @db.Text
+  iv         String
+  authTag    String
+  /// Máscara do token, para conferência visual no painel.
+  hint       String
+
+  rotatedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
 }
 
 /// Histórico imutável de prompt. Permite rollback quando um ajuste piora o atendimento.
@@ -289,16 +321,21 @@ model ToolCall {
 
 /// Deduplicação de webhook: o Chatwoot reenvia em caso de falha.
 model WebhookEvent {
-  id          String    @id @default(cuid())
-  provider    String
-  externalId  String
-  eventType   String
-  payload     Json
+  id       String @id @default(cuid())
+  provider String
+  /// X-Chatwoot-Delivery. É a chave de idempotência: o Chatwoot reenvia em falha.
+  externalId String
+  eventType  String
+  /// Qual agente recebeu — vem da URL do webhook, uma por bot.
+  agentId    String?
+  payload    Json
+
   processedAt DateTime?
   createdAt   DateTime  @default(now())
 
   @@unique([provider, externalId])
   @@index([processedAt])
+  @@index([agentId])
 }
 
 model AuditLog {

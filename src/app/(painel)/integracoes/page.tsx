@@ -1,32 +1,32 @@
 import { db } from "@/lib/db";
-import { exigirSessao } from "@/server/auth-guard";
+import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import { integracaoImplementada } from "@/server/integrations/registry";
-import { IntegrationProvider } from "@/generated/prisma/enums";
+import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
+import { IntegrationProvider, IntegrationStatus } from "@/generated/prisma/enums";
+import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { Aviso, Badge, Card } from "@/components/ui";
+import { formatarData } from "@/lib/utils";
 
-const CATALOGO: Record<
-  IntegrationProvider,
-  { label: string; descricao: string }
-> = {
-  [IntegrationProvider.CHATWOOT]: {
-    label: "Chatwoot",
-    descricao:
-      "Canal de atendimento. O agente responde como Agent Bot nas inboxes vinculadas.",
-  },
-  [IntegrationProvider.CLICKUP]: {
-    label: "ClickUp",
-    descricao: "Consulta e criação de tarefas a partir do atendimento.",
-  },
-  [IntegrationProvider.CONEXA]: {
-    label: "ERP Conexa",
-    descricao: "Consulta de cadastro, contratos e financeiro dos clientes.",
-  },
+export const dynamic = "force-dynamic";
+
+const PENDENTES: Partial<Record<IntegrationProvider, string>> = {
+  [IntegrationProvider.CLICKUP]:
+    "Consulta e criação de tarefas a partir do atendimento.",
+  [IntegrationProvider.CONEXA]:
+    "Consulta de cadastro, contratos e financeiro dos clientes.",
 };
 
 export default async function IntegracoesPage() {
-  await exigirSessao();
-  const configuradas = await db.integration.findMany();
-  const porProvider = new Map(configuradas.map((i) => [i.provider, i]));
+  const sessao = await exigirSessao();
+  const editavel = podeEditar(sessao.user.role);
+
+  const registros = await db.integration.findMany();
+  const chatwoot = registros.find(
+    (i) => i.provider === IntegrationProvider.CHATWOOT,
+  );
+  const configChatwoot = chatwootConfigSchema.safeParse(chatwoot?.config ?? {});
+
+  const comBot = await db.agentChatwootBot.count();
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -38,41 +38,67 @@ export default async function IntegracoesPage() {
         </p>
       </header>
 
+      <Card className="space-y-4">
+        <div className="flex items-center gap-2">
+          <h2 className="font-medium">Chatwoot</h2>
+          {chatwoot?.enabled ? (
+            <Badge tone="success">ligada</Badge>
+          ) : (
+            <Badge>desligada</Badge>
+          )}
+          {chatwoot?.status === IntegrationStatus.OK ? (
+            <Badge tone="success">conexão ok</Badge>
+          ) : chatwoot?.status === IntegrationStatus.ERROR ? (
+            <Badge tone="danger">falha na conexão</Badge>
+          ) : null}
+        </div>
+
+        <p className="text-sm text-muted">
+          Canal de atendimento. Esta tela guarda só a instância — o{" "}
+          <strong>bot é por agente</strong>, com token próprio, na tela de cada um.
+          {comBot > 0 ? ` ${comBot} agente(s) com bot configurado.` : ""}
+        </p>
+
+        <ChatwootConfigForm
+          baseUrl={configChatwoot.success ? configChatwoot.data.baseUrl : ""}
+          accountId={
+            configChatwoot.success ? String(configChatwoot.data.accountId) : "1"
+          }
+          habilitada={chatwoot?.enabled ?? false}
+          somenteLeitura={!editavel}
+        />
+
+        {chatwoot?.lastError ? (
+          <Aviso tone="danger">
+            Último teste falhou: {chatwoot.lastError}
+            {chatwoot.lastCheckedAt
+              ? ` (${formatarData(chatwoot.lastCheckedAt)})`
+              : ""}
+          </Aviso>
+        ) : null}
+      </Card>
+
       <Aviso>
-        Fase 3 do projeto. A documentação de API do ClickUp e do ERP Conexa ainda
-        não foi fornecida, então essas integrações aparecem aqui como pendentes —
-        o contrato já existe, falta o módulo de cada uma.
+        ClickUp e ERP Conexa entram na Fase 3. A documentação de API das duas
+        ainda não foi fornecida — o contrato do registry já existe, falta o módulo
+        de cada uma.
       </Aviso>
 
-      <div className="space-y-3">
-        {Object.values(IntegrationProvider).map((provider) => {
-          const registro = porProvider.get(provider);
-          const implementada = integracaoImplementada(provider);
-          const info = CATALOGO[provider];
-
-          return (
-            <Card key={provider} className="space-y-2">
-              <div className="flex items-center gap-2">
-                <h2 className="font-medium">{info.label}</h2>
-
-                {!implementada ? (
-                  <Badge>aguardando implementação</Badge>
-                ) : registro?.enabled ? (
-                  <Badge tone="success">ligada</Badge>
-                ) : (
-                  <Badge>desligada</Badge>
-                )}
-              </div>
-
-              <p className="text-sm text-muted">{info.descricao}</p>
-
-              {registro?.lastError ? (
-                <p className="text-xs text-danger">{registro.lastError}</p>
-              ) : null}
-            </Card>
-          );
-        })}
-      </div>
+      {Object.entries(PENDENTES).map(([provider, descricao]) => (
+        <Card key={provider} className="space-y-2">
+          <div className="flex items-center gap-2">
+            <h2 className="font-medium">
+              {provider === IntegrationProvider.CLICKUP ? "ClickUp" : "ERP Conexa"}
+            </h2>
+            {integracaoImplementada(provider as IntegrationProvider) ? (
+              <Badge tone="success">disponível</Badge>
+            ) : (
+              <Badge>aguardando implementação</Badge>
+            )}
+          </div>
+          <p className="text-sm text-muted">{descricao}</p>
+        </Card>
+      ))}
     </div>
   );
 }

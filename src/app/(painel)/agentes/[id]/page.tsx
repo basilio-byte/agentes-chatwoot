@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { ArrowLeft } from "lucide-react";
+import { UserRole } from "@/generated/prisma/enums";
+import { resumoDoBot } from "@/server/actions/chatwoot";
+import { ChatwootBotCard } from "@/components/chatwoot-bot";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import {
@@ -34,6 +38,15 @@ export default async function AgentePage({
   if (!agente) notFound();
 
   const modelos = await listarModelos();
+
+  // A URL do webhook é montada a partir do host da requisição — funciona em
+  // local e no Easypanel sem precisar de variável de ambiente.
+  const cabecalhos = await headers();
+  const protocolo = cabecalhos.get("x-forwarded-proto") ?? "https";
+  const host = cabecalhos.get("host") ?? "localhost:3000";
+  const urlWebhook = `${protocolo}://${host}/api/webhooks/chatwoot/${agente.id}`;
+  const resumoBot = await resumoDoBot(agente.id);
+
   const integracoesAtivas = agente.integrations.filter(
     (v) => v.enabled && v.integration.enabled,
   );
@@ -91,8 +104,16 @@ export default async function AgentePage({
             }}
           />
 
+          <ChatwootBotCard
+            agentId={agente.id}
+            agentName={agente.name}
+            resumo={resumoBot}
+            urlWebhook={urlWebhook}
+            podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+          />
+
           <Card className="space-y-3">
-            <h2 className="text-sm font-semibold">Integrações deste agente</h2>
+            <h2 className="text-sm font-semibold">Outras integrações</h2>
             {integracoesAtivas.length === 0 ? (
               <p className="text-sm text-muted">
                 Nenhuma integração ligada. O agente responde só com o que está no
