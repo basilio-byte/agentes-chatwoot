@@ -1,0 +1,39 @@
+# Infra local de desenvolvimento. Em produção, Postgres e Redis são serviços
+# separados do Easypanel — este arquivo não vai para lá.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: seahub-agentes-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: seahub
+      POSTGRES_PASSWORD: seahub_dev
+      POSTGRES_DB: agentes
+    ports:
+      - "5434:5432" # 5434 no host: 5432 e 5433 já estão ocupados nesta máquina
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seahub -d agentes"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: seahub-agentes-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379" # 6380 no host, mesmo motivo
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:

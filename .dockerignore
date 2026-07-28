@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+docs
+docker-compose.dev.yml
+*.md
+.claude
+.agents
+.windsurf
+coverage
