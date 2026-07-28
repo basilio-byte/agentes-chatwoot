@@ -34,6 +34,30 @@ export async function salvarSegredosDoBot(args: {
 }) {
   const cifrado = cifrar(JSON.stringify(args.segredos));
 
+  // Liga a integração para este agente, senão a tool de transferência não
+  // apareceria para o modelo. O toggle por agente continua editável depois.
+  const integracao = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    select: { id: true },
+  });
+
+  if (integracao) {
+    await db.agentIntegration.upsert({
+      where: {
+        agentId_integrationId: {
+          agentId: args.agentId,
+          integrationId: integracao.id,
+        },
+      },
+      update: {},
+      create: {
+        agentId: args.agentId,
+        integrationId: integracao.id,
+        enabled: true,
+      },
+    });
+  }
+
   return db.agentChatwootBot.upsert({
     where: { agentId: args.agentId },
     update: {

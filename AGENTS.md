@@ -47,6 +47,18 @@ modelos `anthropic/*` como padrão.
 - `reasoning: { effort }` só é enviado se o modelo declarar suporte e o effort não
   for `none`.
 
+### Chatwoot: um bot por agente
+
+- Cada agente tem o **seu** Agent Bot, com token e secret próprios em
+  `AgentChatwootBot` (blob AES-256-GCM). Por isso o webhook é
+  `/api/webhooks/chatwoot/<agentId>` — a URL identifica o bot **antes** de
+  verificar a assinatura, sem depender do payload.
+- Assinatura: `HMAC-SHA256(secret, "{timestamp}.{corpo cru}")`. O corpo tem de
+  ser o texto cru de `req.text()`; reserializar o JSON quebra a verificação.
+- `message_type` é **string** no webhook (`incoming`) e **número** na API de
+  mensagens (0 entrada, 1 saída). Confundir faz o bot ler as próprias respostas.
+- `jobId` do BullMQ **não aceita `:`** — use `conversa-<id>`.
+
 ### Regras do projeto
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`

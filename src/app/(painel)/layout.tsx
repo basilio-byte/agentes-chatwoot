@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { Bot, Plug, ScrollText, LogOut } from "lucide-react";
+import { Bot, MessagesSquare, Plug, ScrollText, LogOut } from "lucide-react";
 import { exigirSessao } from "@/server/auth-guard";
 import { sair } from "@/server/actions/auth";
 import { Button } from "@/components/ui";
 
 const NAV = [
   { href: "/agentes", label: "Agentes", icon: Bot },
+  { href: "/conversas", label: "Conversas", icon: MessagesSquare },
   { href: "/integracoes", label: "Integrações", icon: Plug },
   { href: "/execucoes", label: "Execuções", icon: ScrollText },
 ];

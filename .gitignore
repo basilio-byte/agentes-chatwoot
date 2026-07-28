@@ -46,3 +46,6 @@ next-env.d.ts
 # editor. Versionamos só a de .claude/ — as outras são cópias idênticas.
 /.agents
 /.windsurf
+
+# bundle do worker
+/dist

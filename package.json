@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && next build && npm run build:worker",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
@@ -15,7 +15,10 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "build:worker": "esbuild src/worker.ts --bundle --platform=node --target=node24 --format=esm --tsconfig=tsconfig.json --outfile=dist/worker.mjs --external:@prisma/* --external:pg --external:bullmq --external:ioredis --external:pino --external:pino-pretty --external:openai",
+    "worker": "node dist/worker.mjs",
+    "worker:dev": "npm run build:worker && node --env-file=.env dist/worker.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
@@ -42,6 +45,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",
+    "esbuild": "^0.28.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "pino-pretty": "^13.1.3",

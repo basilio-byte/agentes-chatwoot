@@ -88,8 +88,8 @@ BOOTSTRAP_TOKEN=<openssl rand -hex 16>
 LOG_LEVEL=info
 ```
 
-> Os hostnames `postgres` e `redis` são os nomes dos serviços dentro do projeto —
-> o Easypanel resolve na rede interna.
+Os hostnames `postgres` e `redis` são os nomes dos serviços dentro do projeto —
+o Easypanel resolve na rede interna.
 
 > ⚠️ **`ENCRYPTION_KEY` não pode mudar depois.** Trocar essa chave torna ilegíveis
 > todas as credenciais de integração já salvas. Guarde junto com as senhas do
@@ -136,9 +136,51 @@ sozinho. Sem o secret, o workflow avisa no log e você aperta *Deploy* na mão.
 
 ---
 
-## 7. Quando o worker entrar (Fase 2)
+## 7. Worker de atendimento
 
-Mesmo processo: um segundo serviço App, **mesma imagem**, mudando só:
+Sem worker o bot **recebe e não responde**: as entregas ficam gravadas e nada
+sai. Duas formas de ligar — escolha no deploy, a imagem é a mesma.
 
-- Comando de start para o worker;
-- `SKIP_MIGRATIONS=true`, para não competir com o `app` na subida.
+### a) Dentro do container do app (mais simples)
+
+Basta uma variável no serviço `app`:
+
+```env
+RUN_WORKER_IN_APP=true
+```
+
+O entrypoint sobe o worker junto e o encerra junto, esperando os jobs em
+andamento terminarem. Suficiente para o volume de um coworking, e não custa
+serviço nem memória extra no Easypanel.
+
+### b) Serviço separado (escala independente)
+
+Crie um segundo serviço App com a **mesma imagem**, mudando:
+
+| Campo | Valor |
+| --- | --- |
+| Comando | `node worker.mjs` |
+| Variáveis | as mesmas do `app`, mais `SKIP_MIGRATIONS=true` |
+
+O `SKIP_MIGRATIONS` evita que os dois disputem a migração na subida. Não
+publique domínio para este serviço — ele não escuta HTTP.
+
+Use esta forma quando quiser escalar worker e painel separadamente, ou isolar um
+pico de atendimento do uso do painel.
+
+---
+
+## 8. Configurar os bots
+
+Um Agent Bot **por agente**, para cada um ter nome e avatar próprios.
+
+1. No painel, em **Integrações**, salve a URL da instância e o id da conta.
+2. Na tela do agente, copie a **URL de webhook** dele.
+3. No Chatwoot, em *Configurações → Bots → Adicionar bot*: nome, avatar e essa URL.
+4. Copie o **access token** e o **secret** que aparecem e cole no card do agente.
+   O secret aparece uma vez — guarde na hora.
+5. Vincule o bot à inbox, em *Bot Configuration* dentro da inbox.
+6. Aperte **Testar conexão** no painel.
+
+Erros comuns: 401 costuma ser token pessoal de agente no lugar do token do bot;
+404 costuma ser URL ou id de conta errados.

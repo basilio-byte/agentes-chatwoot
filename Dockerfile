@@ -54,6 +54,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
+# Worker: bundle próprio. As dependências ficam externas de propósito — o
+# node_modules traçado pelo standalone já contém tudo que ele importa.
+COPY --from=builder --chown=nextjs:nodejs /app/dist/worker.mjs ./worker.mjs
+
 # Schema + migrations + CLI isolado, para o `migrate deploy` do entrypoint.
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./prisma.config.ts

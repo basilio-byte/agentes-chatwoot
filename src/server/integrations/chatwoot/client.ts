@@ -75,6 +75,20 @@ export class ChatwootClient {
     }
   }
 
+  /**
+   * Mensagens da conversa, da mais antiga para a mais recente.
+   *
+   * Atenção ao `message_type`: aqui ele é **numérico** (0 entrada, 1 saída,
+   * 2 atividade, 3 template), enquanto no webhook vem como string. Confundir os
+   * dois faz o bot ler as próprias respostas como se fossem do cliente.
+   */
+  async listarMensagens(conversationId: number) {
+    const resposta = await this.requisitar<{ payload?: MensagemChatwoot[] }>(
+      `/conversations/${conversationId}/messages`,
+    );
+    return resposta.payload ?? [];
+  }
+
   async enviarMensagem(
     conversationId: number,
     conteudo: string,
@@ -121,6 +135,15 @@ export class ChatwootClient {
     });
   }
 }
+
+export type MensagemChatwoot = {
+  id: number;
+  content: string | null;
+  /** 0 entrada · 1 saída · 2 atividade · 3 template */
+  message_type: number;
+  private?: boolean;
+  created_at?: number;
+};
 
 export class ChatwootApiError extends Error {
   constructor(

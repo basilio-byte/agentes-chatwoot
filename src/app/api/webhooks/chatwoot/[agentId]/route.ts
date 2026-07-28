@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
 import { obterSegredosDoBot } from "@/server/integrations/chatwoot/credenciais";
+import { decidirSeResponde } from "@/server/integrations/chatwoot/eventos";
+import { agendarAtendimento } from "@/server/queue/atendimento";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,9 +91,63 @@ export async function POST(
     throw erro;
   }
 
-  logger.info({ agentId, eventType, entrega }, "webhook do Chatwoot recebido");
+  // Decisão barata aqui para não encher a fila de ruído (typing, eco, nota
+  // privada). O worker ainda reconfere o estado no banco depois do debounce.
+  const decisao = decidirSeResponde(payload);
+  if (!decisao.responder) {
+    logger.debug(
+      { agentId, eventType, motivo: decisao.motivo },
+      "evento recebido sem resposta",
+    );
+    await db.webhookEvent.update({
+      where: { provider_externalId: { provider: "CHATWOOT", externalId: entrega } },
+      data: { processedAt: new Date() },
+    });
+    return NextResponse.json({ ok: true, respondera: false });
+  }
 
-  return NextResponse.json({ ok: true });
+  const agente = await db.agent.findUnique({
+    where: { id: agentId },
+    select: { active: true, debounceSeconds: true },
+  });
+
+  if (!agente?.active) {
+    logger.info({ agentId }, "agente desligado — mensagem não será respondida");
+    return NextResponse.json({ ok: true, respondera: false });
+  }
+
+  await db.conversation.upsert({
+    where: { chatwootConversationId: decisao.conversationId },
+    update: {
+      lastMessageAt: new Date(),
+      contactName: decisao.contato.nome,
+      contactIdentifier: decisao.contato.identificador,
+    },
+    create: {
+      chatwootConversationId: decisao.conversationId,
+      chatwootInboxId: decisao.inboxId,
+      agentId,
+      contactName: decisao.contato.nome,
+      contactIdentifier: decisao.contato.identificador,
+      lastMessageAt: new Date(),
+    },
+  });
+
+  await agendarAtendimento(
+    {
+      chatwootConversationId: decisao.conversationId,
+      agentId,
+      inboxId: decisao.inboxId,
+    },
+    agente.debounceSeconds,
+  );
+
+  logger.info(
+    { agentId, eventType, conversa: decisao.conversationId },
+    "atendimento agendado",
+  );
+
+  return NextResponse.json({ ok: true, respondera: true });
 }
 
 /**

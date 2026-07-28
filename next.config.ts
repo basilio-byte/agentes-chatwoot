@@ -5,8 +5,23 @@ const nextConfig: NextConfig = {
   // necessário para rodar, sem o node_modules inteiro.
   output: "standalone",
 
-  // O cliente do Prisma 7 e o pg são nativos — não devem ser empacotados.
-  serverExternalPackages: ["@prisma/client", "@prisma/adapter-pg", "pino"],
+  // Pacotes que não podem ser empacotados no bundle do servidor:
+  //  - Prisma e pg são nativos;
+  //  - pino usa worker threads para os transports;
+  //  - bullmq carrega scripts Lua do próprio diretório em runtime, e ioredis
+  //    vem junto.
+  //
+  // Além disso, manter externo faz o Next copiar o pacote inteiro para o
+  // `node_modules` do standalone — é de lá que o bundle do worker resolve os
+  // imports dele.
+  serverExternalPackages: [
+    "@prisma/client",
+    "@prisma/adapter-pg",
+    "pino",
+    "bullmq",
+    "ioredis",
+    "openai",
+  ],
 };
 
 export default nextConfig;
