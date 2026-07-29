@@ -178,6 +178,11 @@ export class ClickUpClient {
     );
   }
 
+  /**
+   * `custom_fields` já no create evita a sequência
+   * criar → definir campo → definir campo → … , que estoura o limite de
+   * iterações de tool do agente antes de preencher tudo.
+   */
   criarTarefa(
     listId: string,
     dados: {
@@ -189,6 +194,7 @@ export class ClickUpClient {
       assignees?: number[];
       tags?: string[];
       parent?: string;
+      custom_fields?: { id: string; value: unknown }[];
     },
   ) {
     return this.requisitar<ClickUpTarefa>(`/list/${listId}/task`, {

@@ -11,6 +11,7 @@ import {
   paraTimestamp,
   resolverMembro,
 } from "./formatacao";
+import { nomesDisponiveis, prepararCampos } from "./campos";
 import { PRIORIDADES, type ClickUpSpace, type ClickUpUsuario } from "./tipos";
 
 /** Teto por resposta: lista longa demais só gasta token sem ajudar o modelo. */
@@ -63,6 +64,12 @@ function espacoBloqueado(config: ClickUpConfig, spaceId: string): string | null 
 const prioridadeSchema = z
   .enum(["urgente", "alta", "normal", "baixa"])
   .describe("Prioridade da tarefa.");
+
+const valorDeCampoSchema = z
+  .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
+  .describe(
+    "Valor como o cliente informou — data ISO, número, sim/não ou o rótulo da opção. A conversão é feita internamente.",
+  );
 
 export const clickupIntegration: IntegrationDefinition = {
   provider: IntegrationProvider.CLICKUP,
@@ -153,6 +160,17 @@ export const clickupIntegration: IntegrationDefinition = {
           .array(z.string())
           .optional()
           .describe("Tags já existentes no espaço."),
+        camposPersonalizados: z
+          .array(
+            z.object({
+              campo: z.string().describe("Nome do campo, como aparece no ClickUp."),
+              valor: valorDeCampoSchema,
+            }),
+          )
+          .optional()
+          .describe(
+            "Dados estruturados (CPF, e-mail, valor, periodicidade...). Preencha aqui em vez de escrever num comentário — o comentário não é pesquisável nem aparece em relatório.",
+          ),
       }),
       async execute(entrada, ctx) {
         const args = entrada as {
@@ -164,6 +182,7 @@ export const clickupIntegration: IntegrationDefinition = {
           vencimento?: string;
           responsavel?: string;
           tags?: string[];
+          camposPersonalizados?: { campo: string; valor: unknown }[];
         };
         const { cliente, config } = contexto(ctx);
 
@@ -182,6 +201,26 @@ export const clickupIntegration: IntegrationDefinition = {
           assignees = [achado.usuario.id];
         }
 
+        // Resolve nome → id antes de criar. Se algum campo não casar, não cria:
+        // tarefa órfã com metade dos dados é pior do que pedir a correção.
+        let custom_fields: { id: string; value: unknown }[] | undefined;
+        if (args.camposPersonalizados?.length) {
+          const { fields } = await cliente.listarCamposPersonalizados(listaId);
+          const { prontos, problemas } = prepararCampos(
+            args.camposPersonalizados,
+            fields,
+          );
+
+          if (problemas.length > 0) {
+            return {
+              erro: "Não criei a tarefa — corrija os campos e chame de novo.",
+              problemas,
+              camposDisponiveis: nomesDisponiveis(fields),
+            };
+          }
+          custom_fields = prontos;
+        }
+
         const tarefa = await cliente.criarTarefa(listaId, {
           name: args.nome,
           description: args.descricao,
@@ -190,9 +229,14 @@ export const clickupIntegration: IntegrationDefinition = {
           due_date: paraTimestamp(args.vencimento),
           assignees,
           tags: args.tags,
+          custom_fields,
         });
 
-        return { criada: true, ...formatarTarefa(tarefa) };
+        return {
+          criada: true,
+          camposPreenchidos: custom_fields?.length ?? 0,
+          ...formatarTarefa(tarefa),
+        };
       },
     },
 
@@ -1132,29 +1176,55 @@ export const clickupIntegration: IntegrationDefinition = {
       name: "clickup_definir_campo_personalizado",
       categoria: "Campos personalizados",
       description:
-        "Define o valor de um campo personalizado numa tarefa do ClickUp. O formato do valor depende do tipo do campo — consulte clickup_listar_campos_personalizados antes (campos de seleção usam o id da opção).",
+        "Preenche um ou mais campos personalizados de uma tarefa que já existe no ClickUp. Informe o campo pelo nome — a conversão para o formato da API (datas, números, opções de seleção) é feita aqui. Ao criar a tarefa, prefira passar os campos direto em clickup_criar_tarefa.",
       requiresConfirmation: true,
       inputSchema: z.object({
         tarefaId: z.string(),
-        campoId: z.string(),
-        valor: z
-          .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
-          .describe("Valor no formato que o tipo do campo espera."),
+        campos: z
+          .array(
+            z.object({
+              campo: z.string().describe("Nome do campo, como aparece no ClickUp."),
+              valor: valorDeCampoSchema,
+            }),
+          )
+          .min(1),
       }),
       async execute(entrada, ctx) {
         const args = entrada as {
           tarefaId: string;
-          campoId: string;
-          valor: unknown;
+          campos: { campo: string; valor: unknown }[];
         };
         const { cliente } = contexto(ctx);
 
-        await cliente.definirCampoPersonalizado(
-          args.tarefaId,
-          args.campoId,
-          args.valor,
-        );
-        return "Campo personalizado atualizado.";
+        // Os campos são definidos por lista, então descobrimos a lista pela
+        // própria tarefa — o agente não precisa saber disso.
+        const tarefa = await cliente.obterTarefa(args.tarefaId);
+        const listaId = tarefa.list?.id;
+        if (!listaId) {
+          return "Não consegui descobrir a lista desta tarefa para validar os campos.";
+        }
+
+        const { fields } = await cliente.listarCamposPersonalizados(listaId);
+        const { prontos, problemas } = prepararCampos(args.campos, fields);
+
+        if (problemas.length > 0) {
+          return {
+            erro: "Nada foi alterado — corrija os campos e chame de novo.",
+            problemas,
+            camposDisponiveis: nomesDisponiveis(fields),
+          };
+        }
+
+        // A API grava um campo por requisição; o lote é só para o agente.
+        for (const campo of prontos) {
+          await cliente.definirCampoPersonalizado(
+            args.tarefaId,
+            campo.id,
+            campo.value,
+          );
+        }
+
+        return `${prontos.length} campo(s) preenchido(s) na tarefa ${args.tarefaId}.`;
       },
     },
 

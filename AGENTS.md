@@ -84,6 +84,27 @@ se mexer no cliente, rode-o.
   cronometra em nome de outra pessoa.
 - **Comentário é endereçado direto** (`/comment/{id}`), sem a tarefa na rota.
 
+### Campos personalizados: por que o agente fugia deles
+
+O agente coletava os dados e escrevia tudo num **comentário**. Não era o prompt:
+preencher campo exigia descobrir ids e **uma chamada por campo**, e o caminho
+estourava o `maxToolIterations` (padrão 8) antes de terminar. Modelo que não
+consegue pagar o caminho certo pega o atalho.
+
+`campos.ts` é puro e testado — mexeu, rode `campos.test.ts`.
+
+- **`custom_fields` vai no create** (`[{id, value}]`). Sem isso a única via era
+  criar e depois definir campo a campo.
+- **O id do campo é por lista.** Em tarefa que já existe, descobrimos a lista
+  pela própria tarefa (`obterTarefa().list.id`) — o agente não sabe disso.
+- **`drop_down` e `labels` querem o id da *opção***, não o rótulo. O agente
+  conhece "Mensal"; a API quer o UUID.
+- **`Number("")` é 0.** "a combinar" num campo de moeda gravava **R$ 0,00** em
+  silêncio. Sem dígito no texto, é erro — tem teste.
+- **Campo errado aborta o lote inteiro**, e a resposta devolve os nomes que
+  existem. Tarefa criada com metade dos dados é pior do que pedir correção.
+- **Escrever em `formula`/`rollup` é recusado aqui**, não na API.
+
 ### Catálogo de tools: 32 em 10 categorias
 
 `categoria` em `ToolDefinition` existe **só para a tela do agente** agrupar. A
