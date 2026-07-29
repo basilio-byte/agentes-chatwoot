@@ -86,6 +86,8 @@ export class ChatwootClient {
     const bruta = await this.requisitar<{
       id: number;
       status?: string;
+      inbox_id?: number | null;
+      labels?: string[] | null;
       meta?: { assignee?: { id?: number } | null };
       assignee_id?: number | null;
     }>(`/conversations/${conversationId}`);
@@ -93,6 +95,10 @@ export class ChatwootClient {
     return {
       status: bruta.status ?? null,
       assigneeId: bruta.assignee_id ?? bruta.meta?.assignee?.id ?? null,
+      inboxId: bruta.inbox_id ?? null,
+      // Quem decide se outro bot é o dono da conversa. Vem vazio se a instância
+      // não devolver o campo — nesse caso a regra de label simplesmente não casa.
+      labels: bruta.labels ?? [],
     };
   }
 
@@ -149,11 +155,50 @@ export class ChatwootClient {
     });
   }
 
-  async adicionarLabels(conversationId: number, labels: string[]) {
+  async listarLabels(conversationId: number): Promise<string[]> {
+    const resposta = await this.requisitar<{ payload?: string[] }>(
+      `/conversations/${conversationId}/labels`,
+    );
+    return resposta.payload ?? [];
+  }
+
+  /**
+   * **Substitui** a lista inteira de labels da conversa.
+   *
+   * O endpoint do Chatwoot é `update_labels`, não "append": mandar um label
+   * apaga todos os outros. O nome aqui é explícito de propósito — quem quer
+   * acrescentar deve usar `adicionarLabel`.
+   */
+  async definirLabels(conversationId: number, labels: string[]) {
     return this.requisitar(`/conversations/${conversationId}/labels`, {
       method: "POST",
       body: JSON.stringify({ labels }),
     });
+  }
+
+  /**
+   * Acrescenta preservando os que já existem.
+   *
+   * Vale o custo do GET: labels são o combinado entre nós e qualquer outro bot
+   * na mesma caixa (um fluxo do n8n, por exemplo). Apagar o label do outro é
+   * apagar o critério que decide quem responde.
+   */
+  async adicionarLabel(conversationId: number, label: string) {
+    const atuais = await this.listarLabels(conversationId);
+    if (atuais.includes(label)) return { labels: atuais, mudou: false };
+
+    const novos = [...atuais, label];
+    await this.definirLabels(conversationId, novos);
+    return { labels: novos, mudou: true };
+  }
+
+  async removerLabel(conversationId: number, label: string) {
+    const atuais = await this.listarLabels(conversationId);
+    if (!atuais.includes(label)) return { labels: atuais, mudou: false };
+
+    const novos = atuais.filter((l) => l !== label);
+    await this.definirLabels(conversationId, novos);
+    return { labels: novos, mudou: true };
   }
 }
 

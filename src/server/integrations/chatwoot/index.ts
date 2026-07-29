@@ -87,7 +87,9 @@ export const chatwootIntegration: IntegrationDefinition = {
           await cliente.atribuir(conversa, { teamId: agente.handoffTeamId });
         }
 
-        await cliente.adicionarLabels(conversa, ["transferido-pelo-bot"]);
+        // Acrescenta, não substitui: apagar os labels da conversa apagaria o
+        // critério que outro bot na mesma caixa usa para saber se é a vez dele.
+        await cliente.adicionarLabel(conversa, "transferido-pelo-bot");
 
         // Cala o bot nesta conversa até alguém devolver para `pending`.
         await db.conversation.updateMany({
