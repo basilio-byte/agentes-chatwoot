@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   estimarCusto,
   formatarPrecoMTok,
+  limitarSaida,
   normalizarEffort,
   type ModeloCatalogo,
 } from "./catalogo";
@@ -123,5 +124,28 @@ describe("formatação de preço", () => {
 
   it("usa 2 casas para o resto", () => {
     expect(formatarPrecoMTok(1.5)).toBe("$1.50");
+  });
+});
+
+describe("limite de saída", () => {
+  it("corta pelo teto do modelo", () => {
+    expect(limitarSaida(16384, { maxSaida: 8192 })).toBe(8192);
+  });
+
+  it("mantém quando cabe", () => {
+    expect(limitarSaida(4096, { maxSaida: 8192 })).toBe(4096);
+  });
+
+  it("catálogo sem o limite manda como está", () => {
+    // Chutar um teto para baixo truncaria resposta boa; melhor deixar o
+    // provedor decidir do que inventar um número.
+    expect(limitarSaida(16384, { maxSaida: null })).toBe(16384);
+    expect(limitarSaida(16384, null)).toBe(16384);
+    expect(limitarSaida(16384, undefined)).toBe(16384);
+  });
+
+  it("teto zerado ou negativo é tratado como desconhecido", () => {
+    expect(limitarSaida(16384, { maxSaida: 0 })).toBe(16384);
+    expect(limitarSaida(16384, { maxSaida: -1 })).toBe(16384);
   });
 });

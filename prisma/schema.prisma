@@ -73,8 +73,13 @@ model Agent {
   // `model` é o slug da OpenRouter (ex.: "openai/gpt-5.6-luna").
   model             String @default("openai/gpt-5.6-luna")
   effort            String @default("medium") // none | low | medium | high
-  maxTokens         Int    @default(4096)
-  maxToolIterations Int    @default(8)
+  /// Teto de saída por chamada. Alto de propósito: um turno pode encadear
+  /// transferências e vários usos de tool antes da resposta final, e o runner
+  /// ainda corta pelo limite real do modelo (ModeloCatalogo.maxSaida).
+  maxTokens         Int    @default(16384)
+  /// Rodadas de tool por turno. Descobrir estrutura, consultar e então agir já
+  /// gasta várias — 12 dá folga sem virar laço infinito.
+  maxToolIterations Int    @default(12)
 
   active Boolean @default(false) // nasce desligado: só entra em produção de propósito
 

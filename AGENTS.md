@@ -217,6 +217,16 @@ generosos por isso, e só são seguros porque encostar neles escala para humano.
   imagem do Next busca a origem **server-side, sem o cookie do usuário**: se o
   proxy interceptar `/algo.png`, ele recebe o HTML do login e a imagem quebra.
   O matcher exclui qualquer caminho com extensão.
+- **Mudou um `@default`? Migre as linhas existentes.** Default novo só vale para
+  linha nova — os agentes que já existem ficam no valor antigo e a mudança
+  parece não ter funcionado. Suba só quem está exatamente no default anterior;
+  quem escolheu outro valor de propósito não pode ser sobrescrito. Ver a
+  migration `limites_mais_altos`.
+- **`maxTokens` é cortado pelo limite do modelo** (`limitarSaida`, com o
+  `maxSaida` do catálogo). O padrão é alto — 16k — porque um turno encadeia
+  transferências e usos de tool; mas pedir mais saída do que o modelo aceita é
+  400 em vários provedores, e aí o cliente fica sem resposta por causa de um
+  número de configuração.
 - **Mudou uma lista de valores (`EFFORTS`, enums de UI)? Migre as linhas
   existentes.** Um `<select>` controlado com valor sem opção correspondente
   exibe a primeira opção e **envia ela** — grava algo que ninguém escolheu.

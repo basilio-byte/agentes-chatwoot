@@ -3,7 +3,12 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { mensagemDeContextoTemporal } from "@/lib/tempo";
 import { getOpenRouter } from "./openrouter";
-import { estimarCusto, obterModelo, type UsoTokens } from "./catalogo";
+import {
+  estimarCusto,
+  limitarSaida,
+  obterModelo,
+  type UsoTokens,
+} from "./catalogo";
 import {
   paraFerramentasOpenAI,
   resolverToolsDoAgente,
@@ -181,7 +186,10 @@ export async function executarAgente(
 
       const parametros: ParametrosOpenRouter = {
         model: agente.model,
-        max_tokens: agente.maxTokens,
+        // Cortado pelo limite real do modelo: o padrão é alto para dar folga a
+        // um turno com transferências e tools, mas pedir mais do que o modelo
+        // aceita é 400 em vários provedores.
+        max_tokens: limitarSaida(agente.maxTokens, modelo),
         messages,
         ...(enviarFerramentas ? { tools: ferramentas } : {}),
         // Faz a OpenRouter devolver o custo real da chamada em `usage.cost`.

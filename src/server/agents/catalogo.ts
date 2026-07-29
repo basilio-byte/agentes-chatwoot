@@ -27,6 +27,24 @@ export type ModeloCatalogo = {
 
 export const MODELO_PADRAO = "openai/gpt-5.6-luna";
 
+/**
+ * Corta o teto de saída pelo que o modelo realmente aceita.
+ *
+ * O padrão do agente é alto de propósito — um turno pode encadear
+ * transferências e vários usos de tool. Mas pedir mais saída do que o modelo
+ * suporta é erro 400 em vários provedores, e aí o cliente fica sem resposta por
+ * um número de configuração. Quando o catálogo não sabe o limite, manda como
+ * está: a alternativa seria chutar um teto para baixo e truncar resposta boa.
+ */
+export function limitarSaida(
+  desejado: number,
+  modelo: Pick<ModeloCatalogo, "maxSaida"> | null | undefined,
+): number {
+  const teto = modelo?.maxSaida;
+  if (!teto || teto <= 0) return desejado;
+  return Math.min(desejado, teto);
+}
+
 export const EFFORTS = ["none", "low", "medium", "high"] as const;
 export type Effort = (typeof EFFORTS)[number];
 

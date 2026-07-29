@@ -24,8 +24,8 @@ const PADRAO: ValoresAgente = {
     "Você é um atendente da Seahub Coworking. Responda em português do Brasil, com objetividade e cordialidade.\n\nRegras:\n- Só afirme o que você tem certeza. Se não souber, diga que vai verificar e transfira para um humano.\n- Nunca invente valores, prazos ou disponibilidade.\n- Respostas curtas: no máximo 3 parágrafos.",
   model: MODELO_PADRAO,
   effort: "medium",
-  maxTokens: 4096,
-  maxToolIterations: 8,
+  maxTokens: 16384,
+  maxToolIterations: 12,
   routingDescription: "",
 };
 
@@ -130,7 +130,7 @@ export function AgenteForm({
             label="Máximo de tokens por resposta"
             hint={
               erroDe("maxTokens") ??
-              "Inclui o raciocínio, nos modelos que raciocinam."
+              "Inclui o raciocínio, nos modelos que raciocinam. Alto de propósito: um turno pode encadear transferências e usos de tool. É cortado automaticamente pelo limite do modelo escolhido."
             }
           >
             <Input
@@ -147,7 +147,7 @@ export function AgenteForm({
             label="Máximo de rodadas de tool"
             hint={
               erroDe("maxToolIterations") ??
-              "Teto de segurança: impede loop infinito de chamadas."
+              "Teto de segurança contra laço. Descobrir a estrutura, consultar e então agir já gasta várias rodadas."
             }
           >
             <Input
