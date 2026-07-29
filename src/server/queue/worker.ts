@@ -5,9 +5,31 @@ import { getRedis } from "./conexao";
 import { FILA_ATENDIMENTO, type JobAtendimento } from "./atendimento";
 import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
+import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { montarContexto } from "@/server/integrations/chatwoot/historico";
 import { podeAgir } from "@/server/integrations/chatwoot/regras";
+import {
+  mensagemDeBastao,
+  resolverAgenteAtivo,
+  type AgenteRoteavel,
+} from "@/server/agents/equipe";
+import {
+  explicarParada,
+  novoEstado,
+  podeTransferir,
+  registrarTransferencia,
+  registrarVisita,
+  type MotivoDeParada,
+} from "@/server/agents/travas";
 import { ConversationStatus, RunSource } from "@/generated/prisma/enums";
+import type { SinalDeHandoff } from "@/server/integrations/types";
+
+/** Só o que estas funções usam do logger — evita casar a tipagem do pino. */
+type Registro = {
+  info: (obj: object, msg?: string) => void;
+  warn: (obj: object, msg?: string) => void;
+  error: (obj: object, msg?: string) => void;
+};
 
 /**
  * Marca a conversa como encerrada e corta o histórico.
@@ -15,6 +37,10 @@ import { ConversationStatus, RunSource } from "@/generated/prisma/enums";
  * O corte é o coração da regra: o mesmo cliente costuma voltar por outro
  * assunto, e arrastar o contexto anterior faria o agente responder a pergunta
  * errada. Reabriu, começa do zero.
+ *
+ * Zera junto o dono e o bastão. Sem isso, uma conversa reaberta voltaria direto
+ * para o especialista do atendimento passado — que é justamente o contexto que
+ * a regra manda esquecer.
  */
 export async function marcarResolvida(chatwootConversationId: number) {
   const agora = new Date();
@@ -24,21 +50,28 @@ export async function marcarResolvida(chatwootConversationId: number) {
       status: ConversationStatus.CLOSED,
       resolvidaEm: agora,
       historicoDesde: agora,
+      agentId: null,
+      handoffParaAgentId: null,
+      handoffResumo: null,
+      handoffMotivo: null,
+      handoffDeNome: null,
     },
   });
 }
 
 /**
- * Processa um atendimento: relê a conversa no Chatwoot, roda o agente e
- * responde.
+ * Processa um atendimento: relê a conversa no Chatwoot, roda o agente
+ * responsável e responde. Se ele passar o atendimento a um colega, o colega
+ * assume **no mesmo ciclo** — o cliente recebe uma resposta, não um silêncio até
+ * mandar outra mensagem.
  *
  * O histórico vem do Chatwoot, não do nosso banco — assim o agente enxerga
  * também o que humanos escreveram na conversa, e as mensagens agrupadas pelo
  * debounce chegam juntas sem lógica extra.
  */
 export async function processarAtendimento(job: Job<JobAtendimento>) {
-  const { chatwootConversationId, agentId } = job.data;
-  const log = logger.child({ conversa: chatwootConversationId, agentId });
+  const { chatwootConversationId, agentId: portaId } = job.data;
+  const log = logger.child({ conversa: chatwootConversationId, porta: portaId });
 
   const conversa = await db.conversation.findUnique({
     where: { chatwootConversationId },
@@ -51,13 +84,10 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     return;
   }
 
-  const agente = await db.agent.findUnique({ where: { id: agentId } });
-  if (!agente?.active) {
-    log.info("agente desligado — ignorando");
-    return;
-  }
-
-  const cliente = await clienteDoAgente(agentId);
+  // O bot é a PORTA, não o agente: o Chatwoot amarra um bot por caixa de
+  // entrada, então toda resposta sai por ele, inclusive quando quem pensou foi
+  // um especialista. O cliente vê uma identidade só.
+  const cliente = await clienteDoAgente(portaId);
   if (!cliente) {
     throw new Error("Bot do Chatwoot não configurado para este agente.");
   }
@@ -72,7 +102,6 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     log.info({ motivo: veredito.motivo }, "regra global impede resposta");
 
     if (veredito.resolvida) {
-      // Resolvida: corta o histórico. Se reabrir, começa do zero.
       await marcarResolvida(chatwootConversationId);
     } else {
       await db.conversation.updateMany({
@@ -91,54 +120,293 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     return;
   }
 
-  const resultado = await executarAgente({
-    agentId,
-    source: RunSource.CHATWOOT,
-    conversationId: conversa?.id,
-    chatwootConversationId,
-    historico: contexto.historico,
-    mensagem: contexto.mensagem,
+  const equipe = await db.agent.findMany({
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      routingDescription: true,
+      active: true,
+      isEntry: true,
+    },
   });
 
-  const resposta = resultado.resposta.trim();
+  let ativo = resolverAgenteAtivo(equipe, {
+    donoId: conversa?.agentId,
+    portaId,
+  });
 
-  // A tool de transferência já muda o status; se transferiu e não sobrou texto,
-  // não force uma resposta vazia.
-  if (!resposta) {
-    log.warn({ runId: resultado.runId }, "agente não produziu texto");
+  if (!ativo) {
+    log.info("nenhum agente ativo para atender — ignorando");
     return;
   }
 
-  // Segunda checagem, agora depois da chamada ao modelo: o humano pode ter
-  // assumido justamente enquanto o agente pensava. Uma requisição a mais é
-  // barata perto de o bot atropelar um atendimento.
-  const antesDeEnviar = await cliente.obterConversa(chatwootConversationId);
-  const aindaPode = podeAgir(antesDeEnviar);
-  if (!aindaPode.pode) {
-    log.info(
-      { motivo: aindaPode.motivo, runId: resultado.runId },
-      "estado mudou durante a geração — resposta descartada",
-    );
-    if (aindaPode.resolvida) await marcarResolvida(chatwootConversationId);
-    return;
-  }
+  const estado = novoEstado(Date.now());
+  registrarVisita(estado, ativo.id);
 
-  await cliente.enviarMensagem(chatwootConversationId, resposta);
+  // Bastão só vale para quem ele endereça: se o dono mudou por fora, o resumo
+  // antigo não deve entrar no prompt de outro agente.
+  let bastao =
+    conversa?.handoffParaAgentId === ativo.id
+      ? mensagemDeBastao({
+          deNome: conversa?.handoffDeNome,
+          motivo: conversa?.handoffMotivo,
+          resumo: conversa?.handoffResumo,
+        })
+      : null;
+
+  /** Verdade sobre o turno: só vira true depois de um envio confirmado. */
+  let clienteRecebeuResposta = false;
+
+  try {
+    while (true) {
+      await assumirConversa(chatwootConversationId, ativo.id);
+
+      const resultado = await executarAgente({
+        agentId: ativo.id,
+        source: RunSource.CHATWOOT,
+        conversationId: conversa?.id,
+        chatwootConversationId,
+        historico: contexto.historico,
+        mensagem: contexto.mensagem,
+        bastao,
+      });
+
+      const handoff = resultado.handoff;
+
+      if (!handoff) {
+        const resposta = resultado.resposta.trim();
+
+        // A tool de transferência para humano já muda o status; se transferiu e
+        // não sobrou texto, não force uma resposta vazia.
+        if (!resposta) {
+          log.warn({ runId: resultado.runId }, "agente não produziu texto");
+          break;
+        }
+
+        // Segunda checagem, agora depois da chamada ao modelo: o humano pode ter
+        // assumido justamente enquanto o agente pensava. Uma requisição a mais é
+        // barata perto de o bot atropelar um atendimento.
+        const antesDeEnviar = await cliente.obterConversa(chatwootConversationId);
+        const aindaPode = podeAgir(antesDeEnviar);
+        if (!aindaPode.pode) {
+          log.info(
+            { motivo: aindaPode.motivo, runId: resultado.runId },
+            "estado mudou durante a geração — resposta descartada",
+          );
+          if (aindaPode.resolvida) await marcarResolvida(chatwootConversationId);
+          // Humano assumiu: não é silêncio, é a regra funcionando.
+          clienteRecebeuResposta = true;
+          break;
+        }
+
+        await cliente.enviarMensagem(chatwootConversationId, resposta);
+        clienteRecebeuResposta = true;
+
+        await db.conversation.updateMany({
+          where: { chatwootConversationId },
+          data: { lastMessageAt: new Date() },
+        });
+
+        log.info(
+          {
+            agente: ativo.key,
+            runId: resultado.runId,
+            latenciaMs: resultado.latenciaMs,
+            custoUsd: resultado.custoUsd,
+            tools: resultado.toolCalls.length,
+          },
+          "resposta enviada",
+        );
+        break;
+      }
+
+      const destino = equipe.find((a) => a.id === handoff.destinoId && a.active);
+      if (!destino) {
+        log.warn(
+          { destino: handoff.destinoKey },
+          "colega de destino sumiu ou foi desligado — seguindo sem transferir",
+        );
+        break;
+      }
+
+      const autorizado = podeTransferir(estado, ativo.id, destino.id, Date.now());
+      if (!autorizado.pode) {
+        await escalarParaHumano({
+          cliente,
+          chatwootConversationId,
+          de: ativo,
+          para: destino,
+          motivo: autorizado.motivo,
+          log,
+        });
+        clienteRecebeuResposta = true;
+        break;
+      }
+
+      // O aviso sai daqui, e não da tool, para que todo envio ao cliente saia de
+      // um lugar só: uma transferência que falhasse depois deixaria um "vou te
+      // passar" solto na conversa.
+      await cliente.enviarMensagem(chatwootConversationId, handoff.aviso.trim());
+      clienteRecebeuResposta = true;
+
+      await registrarPassagem({
+        conversaId: conversa?.id,
+        de: ativo,
+        handoff,
+        chatwootConversationId,
+      });
+
+      registrarTransferencia(estado, ativo.id, destino.id);
+      log.info(
+        { de: ativo.key, para: destino.key, motivo: handoff.motivo },
+        "atendimento transferido",
+      );
+
+      bastao = mensagemDeBastao({
+        deNome: ativo.name,
+        motivo: handoff.motivo,
+        resumo: handoff.resumo,
+      });
+      ativo = destino;
+    }
+  } finally {
+    // INVARIANTE: o turno nunca termina com o cliente sem nada. Vale para
+    // exceção no meio do laço, para agente que não produziu texto e para
+    // destino que sumiu — todos os caminhos que, sem isto, viram silêncio.
+    if (!clienteRecebeuResposta) {
+      await garantirRespostaAoCliente({ cliente, chatwootConversationId, log });
+    }
+  }
+}
+
+/** Quem atende agora. Gravado a cada passo para sobreviver a uma queda no meio. */
+async function assumirConversa(chatwootConversationId: number, agentId: string) {
+  await db.conversation.updateMany({
+    where: { chatwootConversationId },
+    data: { agentId },
+  });
+}
+
+async function registrarPassagem(args: {
+  conversaId?: string;
+  de: AgenteRoteavel;
+  handoff: SinalDeHandoff;
+  chatwootConversationId: number;
+}) {
+  const { conversaId, de, handoff, chatwootConversationId } = args;
 
   await db.conversation.updateMany({
     where: { chatwootConversationId },
-    data: { lastMessageAt: new Date() },
+    data: {
+      handoffParaAgentId: handoff.destinoId,
+      handoffDeNome: de.name,
+      handoffMotivo: handoff.motivo ?? null,
+      handoffResumo: handoff.resumo ?? null,
+    },
   });
 
-  log.info(
-    {
-      runId: resultado.runId,
-      latenciaMs: resultado.latenciaMs,
-      custoUsd: resultado.custoUsd,
-      tools: resultado.toolCalls.length,
+  if (!conversaId) return;
+
+  await db.agentHandoff.create({
+    data: {
+      conversationId: conversaId,
+      fromAgentId: de.id,
+      toAgentId: handoff.destinoId,
+      motivo: handoff.motivo,
+      resumo: handoff.resumo,
+      aviso: handoff.aviso,
     },
-    "resposta enviada",
+  });
+}
+
+/**
+ * Trava batida: avisa o cliente, deixa o rastro para a equipe e devolve a
+ * conversa à fila humana.
+ *
+ * Só nota interna não bastaria — a conversa ficaria parada sem ninguém
+ * responsável por ela.
+ */
+async function escalarParaHumano(args: {
+  cliente: ChatwootClient;
+  chatwootConversationId: number;
+  de: AgenteRoteavel;
+  para: AgenteRoteavel;
+  motivo: MotivoDeParada;
+  log: Registro;
+}) {
+  const { cliente, chatwootConversationId, de, para, motivo, log } = args;
+
+  log.warn(
+    { de: de.key, para: para.key, motivo },
+    "transferência bloqueada — escalando para humano",
   );
+
+  try {
+    await cliente.enviarMensagem(
+      chatwootConversationId,
+      [
+        `⚠️ A equipe de agentes não concluiu este atendimento: ${explicarParada(motivo)}.`,
+        `Última tentativa de passagem: "${de.name}" → "${para.name}".`,
+        "Alguém precisa continuar daqui.",
+      ].join("\n"),
+      { privado: true },
+    );
+
+    await cliente.alternarStatus(chatwootConversationId, "open");
+
+    await db.conversation.updateMany({
+      where: { chatwootConversationId },
+      data: {
+        status: ConversationStatus.HUMAN,
+        handoffReason: `equipe de agentes: ${motivo}`,
+        handoffAt: new Date(),
+      },
+    });
+
+    await cliente.enviarMensagem(
+      chatwootConversationId,
+      "Peço desculpas pela demora — um atendente da nossa equipe vai continuar seu atendimento em instantes.",
+    );
+  } catch (erro) {
+    log.error({ erro }, "falha ao escalar para humano");
+  }
+}
+
+/**
+ * Rede de segurança final: se nada chegou ao cliente, manda uma mensagem de
+ * contorno e uma nota com o motivo técnico.
+ *
+ * Melhor esforço — a falha dela é engolida para nunca mascarar o problema
+ * original, que é o que a nota interna carrega.
+ */
+async function garantirRespostaAoCliente(args: {
+  cliente: ChatwootClient;
+  chatwootConversationId: number;
+  log: Registro;
+}) {
+  const { cliente, chatwootConversationId, log } = args;
+
+  try {
+    // Se um humano assumiu no meio, o silêncio do bot é o comportamento certo.
+    const aoVivo = await cliente.obterConversa(chatwootConversationId);
+    if (aoVivo.assigneeId != null) return;
+
+    log.error({}, "turno terminou sem resposta ao cliente — enviando contorno");
+
+    await cliente.enviarMensagem(
+      chatwootConversationId,
+      "⚠️ O agente não concluiu este atendimento e o cliente ficaria sem resposta. Foi enviada uma mensagem de contorno — confira se alguém precisa assumir.",
+      { privado: true },
+    );
+
+    await cliente.enviarMensagem(
+      chatwootConversationId,
+      "Tive uma instabilidade rápida por aqui e não consegui concluir sua resposta agora. Pode mandar de novo, por favor? Se preferir, um atendente pode continuar seu atendimento.",
+    );
+  } catch (erro) {
+    log.error({ erro }, "rede de segurança de resposta também falhou");
+  }
 }
 
 export function iniciarWorker() {

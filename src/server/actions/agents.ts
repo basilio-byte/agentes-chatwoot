@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { exigirPapel } from "@/server/auth-guard";
 import { UserRole } from "@/generated/prisma/enums";
 import { EFFORTS, listarModelos } from "@/server/agents/catalogo";
+import { slugUnico } from "@/lib/slug";
 
 const agenteSchema = z.object({
   name: z.string().min(2, "Informe um nome").max(80),
@@ -19,6 +20,8 @@ const agenteSchema = z.object({
   effort: z.enum(EFFORTS),
   maxTokens: z.coerce.number().int().min(256).max(200000),
   maxToolIterations: z.coerce.number().int().min(1).max(20),
+  /// Vazio esconde o agente do roster dos colegas — ninguém transfere para ele.
+  routingDescription: z.string().max(400).optional().or(z.literal("")),
 });
 
 export type EstadoFormulario = {
@@ -35,6 +38,7 @@ function lerFormulario(formData: FormData) {
     effort: formData.get("effort"),
     maxTokens: formData.get("maxTokens"),
     maxToolIterations: formData.get("maxToolIterations"),
+    routingDescription: formData.get("routingDescription"),
   });
 }
 
@@ -89,10 +93,18 @@ export async function criarAgente(
     };
   }
 
+  // A chave nasce do nome, mas não acompanha renomeações: os colegas já
+  // referenciam este agente por ela nos prompts deles.
+  const usadas = (await db.agent.findMany({ select: { key: true } })).map(
+    (a) => a.key,
+  );
+
   const agente = await db.agent.create({
     data: {
       ...parsed.data,
+      key: slugUnico(parsed.data.name, usadas),
       description: parsed.data.description || null,
+      routingDescription: parsed.data.routingDescription || null,
       ownerId: sessao.user.id,
       updatedById: sessao.user.id,
       versions: {
@@ -141,6 +153,7 @@ export async function atualizarAgente(
       data: {
         ...parsed.data,
         description: parsed.data.description || null,
+        routingDescription: parsed.data.routingDescription || null,
         updatedById: sessao.user.id,
       },
     });
@@ -191,6 +204,41 @@ export async function alternarAtivo(id: string) {
 
   revalidatePath("/agentes");
   revalidatePath(`/agentes/${id}`);
+}
+
+/**
+ * Define o agente de entrada — quem recebe a primeira mensagem e distribui.
+ *
+ * Só um pode existir. A troca acontece numa transação porque desligar o antigo
+ * e ligar o novo em passos separados deixaria uma janela sem entrada nenhuma,
+ * e nessa janela quem atende passa a ser a porta, de forma arbitrária.
+ * O índice parcial no banco é a garantia final contra dois salvamentos
+ * simultâneos.
+ */
+export async function definirAgenteDeEntrada(id: string) {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+  const agente = await db.agent.findUniqueOrThrow({ where: { id } });
+
+  await db.$transaction([
+    db.agent.updateMany({
+      where: { isEntry: true, id: { not: id } },
+      data: { isEntry: false },
+    }),
+    db.agent.update({ where: { id }, data: { isEntry: true } }),
+  ]);
+
+  await registrarAuditoria(sessao.user.id, "agent.entry.set", id);
+
+  revalidatePath("/agentes");
+  revalidatePath(`/agentes/${id}`);
+
+  if (!agente.active) {
+    return {
+      aviso:
+        "Definido como entrada, mas o agente está desligado — enquanto isso, quem atende é o agente do bot que recebeu a mensagem.",
+    };
+  }
+  return {};
 }
 
 export async function excluirAgente(id: string) {

@@ -40,6 +40,16 @@ export default async function ConversasPage() {
             createdAt: true,
           },
         },
+        handoffs: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            motivo: true,
+            createdAt: true,
+            fromAgent: { select: { name: true } },
+            toAgent: { select: { name: true } },
+          },
+        },
         _count: { select: { runs: true } },
       },
     }),
@@ -121,6 +131,27 @@ export default async function ConversasPage() {
                   <p className="text-sm text-accent">
                     Transferida: {conversa.handoffReason}
                   </p>
+                ) : null}
+
+                {conversa.handoffs.length > 0 ? (
+                  <div className="space-y-1 rounded-lg border border-line px-3 py-2">
+                    <p className="text-xs font-medium text-muted">
+                      Passagens entre agentes
+                    </p>
+                    <ol className="space-y-1">
+                      {conversa.handoffs.map((passagem) => (
+                        <li key={passagem.id} className="text-xs text-muted">
+                          <span className="font-medium">
+                            {passagem.fromAgent?.name ?? "—"} →{" "}
+                            {passagem.toAgent.name}
+                          </span>
+                          {passagem.motivo ? ` · ${passagem.motivo}` : ""}
+                          {" · "}
+                          {formatarData(passagem.createdAt)}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
                 ) : null}
 
                 {ultima ? (

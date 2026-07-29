@@ -9,6 +9,11 @@ import {
   resolverToolsDoAgente,
   type ToolResolvida,
 } from "@/server/integrations/resolve";
+import type {
+  SinaisDoTurno,
+  SinalDeHandoff,
+} from "@/server/integrations/types";
+import { blocoDeRoster, montarRoster } from "./equipe";
 import { RunSource, RunStatus } from "@/generated/prisma/enums";
 
 export type MensagemHistorico = {
@@ -24,6 +29,12 @@ export type EntradaExecucao = {
   mensagem: string;
   conversationId?: string;
   chatwootConversationId?: number;
+  /**
+   * Bastão recebido de outro agente. Entra como mensagem `system` junto do
+   * contexto temporal, nunca no systemPrompt — ele muda por conversa e no
+   * prefixo destruiria o cache do provedor.
+   */
+  bastao?: string | null;
 };
 
 export type ToolCallRegistrado = {
@@ -43,6 +54,8 @@ export type ResultadoExecucao = {
   uso: UsoTokens;
   custoUsd: number;
   latenciaMs: number;
+  /** Preenchido quando o agente pediu para passar a conversa a um colega. */
+  handoff?: SinalDeHandoff;
 };
 
 const USO_ZERADO: UsoTokens = {
@@ -92,16 +105,37 @@ export async function executarAgente(
   const enviarFerramentas =
     ferramentas.length > 0 && (modelo?.suportaTools ?? true);
 
+  // O roster vai DENTRO do system prompt porque é estável entre requisições:
+  // só muda quando alguém mexe na equipe. Se fosse mensagem, ocuparia posição
+  // depois do histórico sem ganho nenhum de cache.
+  const equipe = await db.agent.findMany({
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      routingDescription: true,
+      active: true,
+      isEntry: true,
+    },
+  });
+  const roster = montarRoster(equipe, agente.id);
+  const systemPrompt = agente.systemPrompt + blocoDeRoster(roster, agente.name);
+
+  const sinais: SinaisDoTurno = {};
+
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: agente.systemPrompt },
+    { role: "system", content: systemPrompt },
     ...(entrada.historico ?? []).map((m) => ({
       role: m.role,
       content: m.content,
     })),
-    // Contexto temporal vai aqui, e não no system prompt, de propósito: a data
-    // muda a cada requisição e, no início do prompt, invalidaria o cache do
-    // provedor em toda mensagem da conversa. No fim, tudo antes dela continua
+    // Bastão e contexto temporal vão aqui, e não no system prompt, de propósito:
+    // mudam a cada requisição e, no início do prompt, invalidariam o cache do
+    // provedor em toda mensagem da conversa. No fim, tudo antes deles continua
     // cacheável.
+    ...(entrada.bastao
+      ? [{ role: "system" as const, content: entrada.bastao }]
+      : []),
     { role: "system" as const, content: mensagemDeContextoTemporal() },
     { role: "user" as const, content: entrada.mensagem },
   ];
@@ -202,11 +236,16 @@ export async function executarAgente(
             agentId: agente.id,
             conversationId: entrada.conversationId,
             chatwootConversationId: entrada.chatwootConversationId,
+            sinais,
             registro: toolCalls,
           }),
         ),
       );
       messages.push(...resultados);
+
+      // Transferir encerra o turno deste agente: o que ele escrevesse depois
+      // seria falado por quem já não é mais o responsável pela conversa.
+      if (sinais.handoff) break;
     }
 
     const custoUsd = custoRelatado ?? estimarCusto(modelo, uso);
@@ -235,6 +274,7 @@ export async function executarAgente(
       uso,
       custoUsd,
       latenciaMs,
+      handoff: sinais.handoff,
     };
   } catch (erro) {
     const mensagem = erro instanceof Error ? erro.message : String(erro);
@@ -271,6 +311,7 @@ async function executarTool(args: {
   agentId: string;
   conversationId?: string;
   chatwootConversationId?: number;
+  sinais: SinaisDoTurno;
   registro: ToolCallRegistrado[];
 }): Promise<OpenAI.Chat.Completions.ChatCompletionToolMessageParam> {
   const { pedido, resolvidas, runId, registro } = args;
@@ -329,6 +370,7 @@ async function executarTool(args: {
       agentId: args.agentId,
       conversationId: args.conversationId,
       chatwootConversationId: args.chatwootConversationId,
+      sinais: args.sinais,
     });
     return finalizar({ saida, isError: false, input: validacao.data });
   } catch (erro) {

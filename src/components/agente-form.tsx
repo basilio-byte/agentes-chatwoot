@@ -14,6 +14,7 @@ export type ValoresAgente = {
   effort: string;
   maxTokens: number;
   maxToolIterations: number;
+  routingDescription: string;
 };
 
 const PADRAO: ValoresAgente = {
@@ -25,6 +26,7 @@ const PADRAO: ValoresAgente = {
   effort: "medium",
   maxTokens: 4096,
   maxToolIterations: 8,
+  routingDescription: "",
 };
 
 export function AgenteForm({
@@ -70,6 +72,23 @@ export function AgenteForm({
             />
           </Field>
         </div>
+
+        <Field
+          label="Quando me transferir uma conversa"
+          hint={
+            erroDe("routingDescription") ??
+            "Uma frase dizendo o que este agente atende. É o que os COLEGAS leem para decidir passar a conversa para ele. Vazio significa que ninguém transfere para este agente."
+          }
+        >
+          <Textarea
+            name="routingDescription"
+            defaultValue={valores.routingDescription}
+            rows={2}
+            maxLength={400}
+            disabled={somenteLeitura}
+            placeholder="Ex.: cuida de aluguel de salas — disponibilidade, valores e reservas."
+          />
+        </Field>
 
         <Field
           label="Prompt do agente"

@@ -8,6 +8,29 @@ import type { IntegrationProvider } from "@/generated/prisma/enums";
  * `IntegrationDefinition` e registrá-lo em `registry.ts`. Nada além disso muda.
  */
 
+/**
+ * Pedido de transferência que uma tool deixa para quem conduz o turno.
+ *
+ * A tool **não** executa a passagem: ela só registra a intenção. Quem envia o
+ * aviso ao cliente e troca de agente é o worker — assim todo envio ao cliente
+ * sai de um lugar só, e uma transferência que falha não deixa um "vou te
+ * passar para o colega" solto na conversa.
+ */
+export type SinalDeHandoff = {
+  destinoId: string;
+  destinoKey: string;
+  destinoNome: string;
+  motivo?: string;
+  resumo?: string;
+  /** O que o cliente vai ler. Obrigatório: a passagem nunca é silenciosa. */
+  aviso: string;
+};
+
+/** Efeitos que uma tool comunica para fora do turno. */
+export type SinaisDoTurno = {
+  handoff?: SinalDeHandoff;
+};
+
 export type ToolContext = {
   provider: IntegrationProvider;
   /** Config não-sensível já validada pelo `configSchema` da integração. */
@@ -18,6 +41,8 @@ export type ToolContext = {
   conversationId?: string;
   /** Id da conversa no Chatwoot, quando a execução veio de um atendimento. */
   chatwootConversationId?: number;
+  /** Objeto compartilhado do turno: a tool escreve, o worker lê depois. */
+  sinais?: SinaisDoTurno;
 };
 
 export type ToolDefinition<TInput = unknown> = {

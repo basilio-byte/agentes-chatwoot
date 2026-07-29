@@ -46,6 +46,21 @@ model Agent {
   name        String  @unique
   description String?
 
+  /// Identificador curto e estável usado pelos colegas para transferir
+  /// ("vendas", "suporte"). O modelo não consegue usar cuid de forma confiável —
+  /// e mudar o nome do agente não pode quebrar as transferências.
+  key String @unique
+
+  /// "Quando me transferir uma conversa." Entra no prompt de TODOS os outros
+  /// agentes como roster; é por aqui que um colega sabe que este existe.
+  /// Separado do systemPrompt de propósito: o prompt fala com o próprio agente,
+  /// este texto fala com os outros.
+  routingDescription String? @db.Text
+
+  /// O agente de entrada recebe a primeira mensagem e distribui. Só um pode
+  /// estar ligado — sem isso, quem responde primeiro seria arbitrário.
+  isEntry Boolean @default(false)
+
   systemPrompt String @db.Text
 
   // Modelo e custo. Ver docs/00-stack-e-arquitetura.md §7.
@@ -85,6 +100,38 @@ model Agent {
   conversations Conversation[]
   runs          AgentRun[]
   chatwootBot   AgentChatwootBot?
+
+  handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
+  handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
+  conversasEmTransicao Conversation[] @relation("HandoffDestino")
+
+  @@index([isEntry])
+}
+
+/// Registro de cada passagem de bastão entre agentes.
+///
+/// Auditoria, não estado: o estado de quem atende agora fica em
+/// `Conversation.agentId`. Serve para responder "por que este agente respondeu?"
+/// e para achar par de agentes que vive se transferindo.
+model AgentHandoff {
+  id             String  @id @default(cuid())
+  conversationId String
+  /// Nulo quando quem passou foi um humano ou o próprio sistema.
+  fromAgentId    String?
+  toAgentId      String
+
+  motivo String? @db.Text
+  resumo String? @db.Text
+  /// O que o cliente viu no momento da passagem.
+  aviso  String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  fromAgent    Agent?       @relation("HandoffDe", fields: [fromAgentId], references: [id], onDelete: SetNull)
+  toAgent      Agent        @relation("HandoffPara", fields: [toAgentId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }
 
 /// Um Agent Bot do Chatwoot por agente — decisão de 2026-07-28, para cada agente
@@ -253,6 +300,17 @@ model Conversation {
   handoffReason String?
   handoffAt     DateTime?
 
+  /// Bastão da última passagem entre agentes. Lido pelo agente que assumiu e
+  /// injetado como mensagem `system` antes da fala do cliente — nunca no
+  /// systemPrompt, que precisa ficar estável para o cache do provedor.
+  ///
+  /// Zerado junto com `historicoDesde` quando a conversa é resolvida: reabriu,
+  /// volta para o agente de entrada sem herdar o especialista anterior.
+  handoffParaAgentId String?
+  handoffResumo      String? @db.Text
+  handoffMotivo      String? @db.Text
+  handoffDeNome      String?
+
   /// Marco de corte do histórico. Mensagens anteriores a esta data não vão para
   /// o modelo.
   ///
@@ -266,8 +324,10 @@ model Conversation {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  agent Agent?     @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  runs  AgentRun[]
+  agent          Agent?         @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  handoffPara    Agent?         @relation("HandoffDestino", fields: [handoffParaAgentId], references: [id], onDelete: SetNull)
+  runs           AgentRun[]
+  handoffs       AgentHandoff[]
 
   @@index([agentId])
   @@index([status])

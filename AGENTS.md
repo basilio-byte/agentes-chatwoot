@@ -147,6 +147,49 @@ isso existe o webhook **de conta** (`/api/webhooks/chatwoot/conta`), com secret
 próprio: ele dá precisão ao corte quando a conversa é resolvida sem ninguém
 escrever. As regras 1 e 2 não dependem dele — o worker checa ao vivo.
 
+### Equipe de agentes: o bot é a porta
+
+O Chatwoot amarra **um Agent Bot por caixa de entrada**. Por isso o bot não é
+"do agente": ele é a **porta**. Atrás dela, `Conversation.agentId` decide quem
+pensa, e toda resposta sai pela porta — o cliente vê uma identidade só.
+
+- **O worker lê `conversa.agentId` antes do `agentId` do job.** O job carrega a
+  porta; o dono da conversa é quem manda. Ordem: dono → agente de entrada → porta.
+  A porta no fim é o que impede o atendimento de virar silêncio quando não há
+  entrada configurada.
+- **`Agent.key` não acompanha o nome.** Os colegas referenciam o agente por ela
+  nos prompts; renomear não pode quebrar transferência já escrita.
+- **`routingDescription` vazio esconde o agente do roster.** É proposital: sem a
+  descrição, o modelo não tem como decidir e transferiria no escuro.
+- **O roster vai no system prompt; o bastão vai como mensagem.** O roster é
+  estável (só muda quando alguém mexe na equipe), então cacheia. O bastão muda
+  por conversa — no prefixo, destruiria o cache a cada mensagem.
+- **A transferência acontece no mesmo ciclo.** O colega assume e responde no
+  mesmo turno. Se fosse assíncrono, o cliente ficaria mudo até escrever de novo.
+- **A tool só registra a intenção; quem envia é o worker.** Todo envio ao cliente
+  sai de um lugar só — senão uma transferência que falha depois deixaria um
+  "vou te passar" solto na conversa.
+- **`aviso` é parâmetro obrigatório da tool.** O cliente sempre é avisado
+  (decisão do usuário). Deixar isso para o prompt faria o modelo esquecer às
+  vezes; obrigatório, o modelo escreve o texto e o sistema garante o envio.
+- **Resolver zera dono e bastão** junto com `historicoDesde` — senão a conversa
+  reabre direto no especialista do atendimento anterior.
+
+#### Travas do laço (`travas.ts`)
+
+Quatro, porque pegam coisas diferentes. `LIMITE_POR_PAR` **tem de ser ≤**
+`LIMITE_DE_VISITAS`: se as visitas mordessem antes, o pinga-pong seria
+diagnosticado como "agente acionado demais" e a nota interna perderia a
+informação que resolve o problema. Tem teste travando essa ordem.
+
+Cadeia longa é **legítima** (reservas → documentos → serviços → suporte →
+recurso), e um agente concentrador é visitado várias vezes — os limites são
+generosos por isso, e só são seguros porque encostar neles escala para humano.
+
+- **Invariante acima de tudo: o turno nunca termina com o cliente sem nada.**
+  `garantirRespostaAoCliente` roda no `finally` e cobre exceção, agente sem
+  texto e destino que sumiu. Humano assumido no meio não conta como falha.
+
 ### Regras do projeto
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`

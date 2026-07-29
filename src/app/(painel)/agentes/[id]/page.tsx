@@ -8,6 +8,7 @@ import { listarIntegracoes } from "@/server/integrations/registry";
 import { tokensAproximadosDaTool } from "@/server/integrations/resolve";
 import { ChatwootBotCard } from "@/components/chatwoot-bot";
 import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
+import { EquipeDoAgente } from "@/components/equipe-do-agente";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import {
@@ -55,6 +56,19 @@ export default async function AgentePage({
   const host = cabecalhos.get("host") ?? "localhost:3000";
   const urlWebhook = `${protocolo}://${host}/api/webhooks/chatwoot/${agente.id}`;
   const resumoBot = await resumoDoBot(agente.id);
+
+  const colegas = await db.agent.findMany({
+    where: { id: { not: agente.id } },
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      routingDescription: true,
+      active: true,
+      isEntry: true,
+    },
+    orderBy: [{ isEntry: "desc" }, { name: "asc" }],
+  });
 
   // Todas as integrações que existem no registry, com o estado dos dois níveis
   // do toggle e a allowlist de tools deste agente.
@@ -143,6 +157,7 @@ export default async function AgentePage({
               effort: agente.effort,
               maxTokens: agente.maxTokens,
               maxToolIterations: agente.maxToolIterations,
+              routingDescription: agente.routingDescription ?? "",
             }}
           />
 
@@ -152,6 +167,17 @@ export default async function AgentePage({
             resumo={resumoBot}
             urlWebhook={urlWebhook}
             podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+          />
+
+          <EquipeDoAgente
+            agenteId={agente.id}
+            agenteKey={agente.key}
+            ehEntrada={agente.isEntry}
+            temDescricaoDeRoteamento={
+              (agente.routingDescription ?? "").trim().length > 0
+            }
+            colegas={colegas}
+            editavel={editavel}
           />
 
           <IntegracoesDoAgente

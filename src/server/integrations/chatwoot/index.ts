@@ -5,6 +5,7 @@ import { ConversationStatus, IntegrationProvider } from "@/generated/prisma/enum
 import type { IntegrationDefinition } from "../types";
 import { chatwootConfigSchema } from "./config";
 import { clienteDoAgente } from "./credenciais";
+import { montarRoster, resolverDestino } from "@/server/agents/equipe";
 
 const transferirSchema = z.object({
   motivo: z
@@ -43,6 +44,88 @@ export const chatwootIntegration: IntegrationDefinition = {
   },
 
   tools: [
+    {
+      name: "transferir_para_agente",
+      categoria: "Atendimento",
+      description:
+        "Passa o atendimento para outro agente da equipe, listado em 'COLEGAS PARA QUEM VOCÊ PODE TRANSFERIR'. Quem recebe assume por inteiro e continua na hora. Use quando o assunto for da especialidade de um colega. Depois de chamar, encerre o turno — quem fala com o cliente a partir daí é ele.",
+      inputSchema: z.object({
+        destino: z
+          .string()
+          .describe("A chave do colega, exatamente como está na lista."),
+        motivo: z
+          .string()
+          .min(3)
+          .describe("Por que está passando, em uma frase. Fica em nota interna."),
+        resumo: z
+          .string()
+          .min(10)
+          .describe(
+            "O que o cliente quer, o que já foi coletado e o que falta. É só isto que o colega recebe — ele não vê o que você pensou.",
+          ),
+        aviso: z
+          .string()
+          .min(5)
+          .describe(
+            "A mensagem que o CLIENTE vai ler avisando da passagem. Escreva natural, na primeira pessoa (ex.: 'Vou te passar para quem cuida de reservas, um instante').",
+          ),
+      }),
+      async execute(entrada, ctx) {
+        const args = entrada as {
+          destino: string;
+          motivo: string;
+          resumo: string;
+          aviso: string;
+        };
+
+        if (!ctx.chatwootConversationId) {
+          return "Sem conversa do Chatwoot neste contexto — não há atendimento para transferir.";
+        }
+        if (!ctx.sinais) {
+          return "Transferência entre agentes não está disponível nesta execução.";
+        }
+
+        const equipe = await db.agent.findMany({
+          select: {
+            id: true,
+            key: true,
+            name: true,
+            routingDescription: true,
+            active: true,
+            isEntry: true,
+          },
+        });
+
+        const roster = montarRoster(equipe, ctx.agentId);
+        const achado = resolverDestino(args.destino, roster);
+
+        if (achado.tipo === "nenhum") {
+          // Devolve as chaves válidas em vez de só falhar: o modelo corrige e
+          // chama de novo no mesmo turno, sem perder a transferência.
+          return {
+            erro: `"${args.destino}" não é um colega disponível.`,
+            chavesValidas: achado.chavesValidas,
+          };
+        }
+
+        ctx.sinais.handoff = {
+          destinoId: achado.destino.id,
+          destinoKey: achado.destino.key,
+          destinoNome: achado.destino.name,
+          motivo: args.motivo,
+          resumo: args.resumo,
+          aviso: args.aviso,
+        };
+
+        return {
+          transferido: true,
+          para: achado.destino.name,
+          observacao:
+            "O cliente será avisado e o colega assume agora. Encerre seu turno.",
+        };
+      },
+    },
+
     {
       name: "transferir_para_humano",
       description:
