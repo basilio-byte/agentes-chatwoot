@@ -77,10 +77,41 @@ se mexer no cliente, rode-o.
 - **Status é texto livre por lista.** Antes de atualizar, o agente precisa dos
   status válidos — vêm de `clickup_listar_estrutura`.
 
+### Regras globais de atendimento
+
+Em `src/server/integrations/chatwoot/regras.ts`, puras e testadas. Aplicadas em
+três pontos, e o terceiro é o que as torna absolutas:
+
+1. Na chegada do webhook — filtro barato, evita encher a fila.
+2. No início do processamento — estado do nosso banco.
+3. **Antes de enviar, contra o estado ao vivo do Chatwoot** — e de novo depois da
+   chamada ao modelo, porque um humano pode assumir enquanto o agente pensa.
+
+As regras:
+
+- **Conversa atribuída a humano: o agente cala.** Vale mesmo com a conversa aberta.
+- **Conversa resolvida: nenhuma interação.**
+- **Resolver corta o histórico** (`Conversation.historicoDesde`). Reabriu, começa
+  do zero: o mesmo cliente costuma voltar por outro assunto, e arrastar contexto
+  antigo faz o agente responder a pergunta errada.
+
+⚠ O webhook de **Agent Bot pode não entregar `conversation_status_changed`**. Por
+isso existe o webhook **de conta** (`/api/webhooks/chatwoot/conta`), com secret
+próprio: ele dá precisão ao corte quando a conversa é resolvida sem ninguém
+escrever. As regras 1 e 2 não dependem dele — o worker checa ao vivo.
+
 ### Regras do projeto
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`
   de propósito: um redirect devolveria HTML onde o cliente espera JSON.
+- **O `proxy.ts` também não pode cobrir arquivos estáticos.** O otimizador de
+  imagem do Next busca a origem **server-side, sem o cookie do usuário**: se o
+  proxy interceptar `/algo.png`, ele recebe o HTML do login e a imagem quebra.
+  O matcher exclui qualquer caminho com extensão.
+- **Mudou uma lista de valores (`EFFORTS`, enums de UI)? Migre as linhas
+  existentes.** Um `<select>` controlado com valor sem opção correspondente
+  exibe a primeira opção e **envia ela** — grava algo que ninguém escolheu.
+  Ver `normalizarEffort` e a migration `normaliza_effort_legado`.
 - **Nada de timestamp, UUID ou data dentro do system prompt.** Invalida o prompt
   cache a cada request e multiplica o custo. Contexto dinâmico entra como mensagem.
 - **Todo agente recebe data/hora de São Paulo** em toda execução, como mensagem

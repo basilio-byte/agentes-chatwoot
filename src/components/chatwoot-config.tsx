@@ -12,11 +12,15 @@ export function ChatwootConfigForm({
   accountId,
   habilitada,
   somenteLeitura,
+  temSecretDaConta,
+  urlWebhookConta,
 }: {
   baseUrl: string;
   accountId: string;
   habilitada: boolean;
   somenteLeitura: boolean;
+  temSecretDaConta: boolean;
+  urlWebhookConta: string;
 }) {
   const [estado, acao, pendente] = useActionState<EstadoChatwoot, FormData>(
     salvarConfigChatwoot,
@@ -56,6 +60,35 @@ export function ChatwootConfigForm({
             required
           />
         </Field>
+      </div>
+
+      <Field
+        label="Secret do webhook de conta (opcional)"
+        hint={
+          temSecretDaConta
+            ? "Já configurado. Preencha de novo só para rotacionar."
+            : "Sem ele, o histórico só é cortado quando alguém escreve na conversa. Ver instruções abaixo."
+        }
+      >
+        <Input
+          name="secretDaConta"
+          type="password"
+          placeholder={temSecretDaConta ? "••••••••" : ""}
+          disabled={somenteLeitura}
+        />
+      </Field>
+
+      <div className="rounded-lg border border-line bg-foreground/[0.02] p-3 text-xs leading-relaxed text-muted">
+        <p className="mb-1 font-medium text-foreground">
+          Corte de histórico ao resolver
+        </p>
+        <p>
+          Em <strong>Configurações → Integrações → Webhooks</strong> do Chatwoot,
+          cadastre o endereço abaixo assinando{" "}
+          <code>conversation_status_changed</code> e{" "}
+          <code>conversation_updated</code>, e cole aqui o secret que ele mostrar.
+        </p>
+        <code className="mt-1.5 block font-mono break-all">{urlWebhookConta}</code>
       </div>
 
       <label className="flex items-center gap-2 text-sm">

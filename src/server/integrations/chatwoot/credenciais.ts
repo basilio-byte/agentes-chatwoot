@@ -26,6 +26,48 @@ export async function obterConfigChatwoot(): Promise<{
   };
 }
 
+/**
+ * Secret do webhook **de conta** (Configurações → Integrações → Webhooks).
+ *
+ * Separado do secret de cada bot: é esse canal que entrega
+ * `conversation_status_changed`, evento que o webhook de Agent Bot pode não
+ * receber. Sem ele as regras continuam valendo (o worker checa ao vivo), mas o
+ * corte de histórico só acontece quando alguém escreve na conversa.
+ */
+export async function salvarSecretDaConta(secret: string) {
+  const integracao = await db.integration.upsert({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    update: {},
+    create: {
+      provider: IntegrationProvider.CHATWOOT,
+      label: "Chatwoot",
+      config: {},
+      enabled: false,
+    },
+  });
+
+  const cifrado = cifrar(secret);
+  await db.integrationCredential.upsert({
+    where: { integrationId: integracao.id },
+    update: { ...cifrado, rotatedAt: new Date() },
+    create: { integrationId: integracao.id, ...cifrado },
+  });
+}
+
+export async function obterSecretDaConta(): Promise<string | null> {
+  const integracao = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    include: { credential: true },
+  });
+  if (!integracao?.credential) return null;
+
+  try {
+    return decifrar(integracao.credential);
+  } catch {
+    return null;
+  }
+}
+
 export async function salvarSegredosDoBot(args: {
   agentId: string;
   botName: string;

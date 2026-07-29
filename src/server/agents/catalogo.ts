@@ -30,6 +30,24 @@ export const MODELO_PADRAO = "openai/gpt-5.6-luna";
 export const EFFORTS = ["none", "low", "medium", "high"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
+/**
+ * Converte um effort guardado para um da lista atual.
+ *
+ * Existe porque a lista mudou na migração para a OpenRouter: era
+ * `low/medium/high/xhigh/max` (Anthropic) e virou `none/low/medium/high`. Linhas
+ * antigas ficaram com valores que a interface não conhece — e um `<select>`
+ * controlado com valor sem opção correspondente exibe a **primeira** opção e
+ * envia ela, gravando `none` sem ninguém pedir.
+ */
+export function normalizarEffort(valor: string | null | undefined): Effort {
+  const alvo = (valor ?? "").toLowerCase().trim();
+  if ((EFFORTS as readonly string[]).includes(alvo)) return alvo as Effort;
+
+  // Os dois níveis acima de `high` que existiam antes viram `high`.
+  if (alvo === "xhigh" || alvo === "max") return "high";
+  return "medium";
+}
+
 export const DICAS_EFFORT: Record<Effort, string> = {
   none: "Sem raciocínio extra. Menor latência e custo.",
   low: "Raciocínio curto. Bom para perguntas diretas.",

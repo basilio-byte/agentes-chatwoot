@@ -19,11 +19,27 @@ export type ContextoConversa = {
  */
 export function montarContexto(
   mensagens: MensagemChatwoot[],
+  /**
+   * Corte do histórico. Mensagens anteriores são descartadas — é o que faz uma
+   * conversa reaberta começar do zero depois de resolvida.
+   */
+  historicoDesde?: Date | null,
 ): ContextoConversa | null {
+  const corteEmSegundos = historicoDesde
+    ? Math.floor(historicoDesde.getTime() / 1000)
+    : null;
+
   const uteis = mensagens
     .filter((m) => !m.private) // nota interna não é conversa com o cliente
     .filter((m) => m.message_type === 0 || m.message_type === 1) // fora atividade/template
-    .filter((m) => (m.content ?? "").trim().length > 0);
+    .filter((m) => (m.content ?? "").trim().length > 0)
+    .filter((m) => {
+      if (corteEmSegundos == null) return true;
+      // `created_at` do Chatwoot vem em segundos. Sem data, mantém a mensagem:
+      // perder contexto é pior que carregar uma linha a mais.
+      if (typeof m.created_at !== "number") return true;
+      return m.created_at >= corteEmSegundos;
+    });
 
   if (uteis.length === 0) return null;
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { podeAgir } from "./regras";
 
 /**
  * Leitura do payload de webhook do Chatwoot.
@@ -107,14 +108,13 @@ export function decidirSeResponde(bruto: unknown): Decisao {
     return { responder: false, motivo: "sem conversa no payload" };
   }
 
-  // Humano assumiu: o bot cala até devolverem para `pending`.
-  const responsavel = conversa.assignee_id ?? conversa.meta?.assignee?.id ?? null;
-  if (responsavel) {
-    return { responder: false, motivo: "conversa atribuída a um humano" };
-  }
-
-  if (conversa.status && !["pending", "open"].includes(conversa.status)) {
-    return { responder: false, motivo: `conversa ${conversa.status}` };
+  // Regras globais — mesmas usadas no worker e na checagem ao vivo.
+  const veredito = podeAgir({
+    status: conversa.status,
+    assigneeId: conversa.assignee_id ?? conversa.meta?.assignee?.id ?? null,
+  });
+  if (!veredito.pode) {
+    return { responder: false, motivo: veredito.motivo };
   }
 
   const texto = (evento.content ?? "").trim();

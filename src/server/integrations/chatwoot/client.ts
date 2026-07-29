@@ -76,6 +76,27 @@ export class ChatwootClient {
   }
 
   /**
+   * Estado atual da conversa direto do Chatwoot.
+   *
+   * É a fonte da verdade das regras globais: consultado imediatamente antes de
+   * responder, fecha a janela entre o humano assumir e o agente enviar. Não
+   * depende de qual webhook o Agent Bot recebe.
+   */
+  async obterConversa(conversationId: number) {
+    const bruta = await this.requisitar<{
+      id: number;
+      status?: string;
+      meta?: { assignee?: { id?: number } | null };
+      assignee_id?: number | null;
+    }>(`/conversations/${conversationId}`);
+
+    return {
+      status: bruta.status ?? null,
+      assigneeId: bruta.assignee_id ?? bruta.meta?.assignee?.id ?? null,
+    };
+  }
+
+  /**
    * Mensagens da conversa, da mais antiga para a mais recente.
    *
    * Atenção ao `message_type`: aqui ele é **numérico** (0 entrada, 1 saída,

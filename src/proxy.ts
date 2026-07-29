@@ -8,10 +8,17 @@ export default NextAuth(authConfig).auth;
 
 export const config = {
   matcher: [
-    // Só as páginas. `/api/*` fica de fora de propósito: um redirect para a tela
-    // de login devolveria HTML onde o cliente espera JSON.
+    // Só as páginas. Ficam de fora, de propósito:
     //
-    // ⚠ Toda rota em /api/ é responsável pela própria checagem de sessão.
-    "/((?!api|_next/static|_next/image|favicon.ico).*)",
+    //  - `/api/*`: um redirect para o login devolveria HTML onde o cliente
+    //    espera JSON. ⚠ Cada rota em /api/ checa a própria sessão.
+    //  - `/_next/*`: assets e o otimizador de imagem.
+    //  - qualquer caminho com extensão (`.png`, `.svg`, `.woff2`…) e os ícones
+    //    gerados pelo Next. Sem isto o proxy engole os arquivos de `public/`, e
+    //    o otimizador — que busca a imagem server-side, **sem o cookie do
+    //    usuário** — recebe o HTML do login no lugar do PNG.
+    //
+    // Páginas não têm extensão, então continuam protegidas.
+    "/((?!api|_next|favicon\\.ico|icon|apple-icon|opengraph-image|.*\\.[\\w]+$).*)",
   ],
 };

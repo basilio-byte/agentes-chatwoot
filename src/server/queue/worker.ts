@@ -6,7 +6,27 @@ import { FILA_ATENDIMENTO, type JobAtendimento } from "./atendimento";
 import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { montarContexto } from "@/server/integrations/chatwoot/historico";
+import { podeAgir } from "@/server/integrations/chatwoot/regras";
 import { ConversationStatus, RunSource } from "@/generated/prisma/enums";
+
+/**
+ * Marca a conversa como encerrada e corta o histórico.
+ *
+ * O corte é o coração da regra: o mesmo cliente costuma voltar por outro
+ * assunto, e arrastar o contexto anterior faria o agente responder a pergunta
+ * errada. Reabriu, começa do zero.
+ */
+export async function marcarResolvida(chatwootConversationId: number) {
+  const agora = new Date();
+  await db.conversation.updateMany({
+    where: { chatwootConversationId },
+    data: {
+      status: ConversationStatus.CLOSED,
+      resolvidaEm: agora,
+      historicoDesde: agora,
+    },
+  });
+}
 
 /**
  * Processa um atendimento: relê a conversa no Chatwoot, roda o agente e
@@ -42,8 +62,29 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     throw new Error("Bot do Chatwoot não configurado para este agente.");
   }
 
+  // Estado ao vivo do Chatwoot — é o que torna as regras globais absolutas.
+  // Não depende de qual webhook o Agent Bot recebe, e fecha a janela entre um
+  // humano assumir a conversa e o agente enviar a resposta.
+  const aoVivo = await cliente.obterConversa(chatwootConversationId);
+  const veredito = podeAgir(aoVivo);
+
+  if (!veredito.pode) {
+    log.info({ motivo: veredito.motivo }, "regra global impede resposta");
+
+    if (veredito.resolvida) {
+      // Resolvida: corta o histórico. Se reabrir, começa do zero.
+      await marcarResolvida(chatwootConversationId);
+    } else {
+      await db.conversation.updateMany({
+        where: { chatwootConversationId },
+        data: { status: ConversationStatus.HUMAN },
+      });
+    }
+    return;
+  }
+
   const mensagens = await cliente.listarMensagens(chatwootConversationId);
-  const contexto = montarContexto(mensagens);
+  const contexto = montarContexto(mensagens, conversa?.historicoDesde);
 
   if (!contexto) {
     log.info("nada novo do cliente para responder");
@@ -65,6 +106,20 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
   // não force uma resposta vazia.
   if (!resposta) {
     log.warn({ runId: resultado.runId }, "agente não produziu texto");
+    return;
+  }
+
+  // Segunda checagem, agora depois da chamada ao modelo: o humano pode ter
+  // assumido justamente enquanto o agente pensava. Uma requisição a mais é
+  // barata perto de o bot atropelar um atendimento.
+  const antesDeEnviar = await cliente.obterConversa(chatwootConversationId);
+  const aindaPode = podeAgir(antesDeEnviar);
+  if (!aindaPode.pode) {
+    log.info(
+      { motivo: aindaPode.motivo, runId: resultado.runId },
+      "estado mudou durante a geração — resposta descartada",
+    );
+    if (aindaPode.resolvida) await marcarResolvida(chatwootConversationId);
     return;
   }
 

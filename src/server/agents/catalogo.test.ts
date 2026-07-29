@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   estimarCusto,
   formatarPrecoMTok,
+  normalizarEffort,
   type ModeloCatalogo,
 } from "./catalogo";
 
@@ -81,6 +82,33 @@ describe("estimativa de custo", () => {
         cacheCreationTokens: 0,
       }),
     ).toBe(0);
+  });
+});
+
+describe("normalização de effort", () => {
+  it("mantém os valores da lista atual", () => {
+    for (const v of ["none", "low", "medium", "high"] as const) {
+      expect(normalizarEffort(v)).toBe(v);
+    }
+  });
+
+  it("converte os níveis da era Anthropic que não existem mais", () => {
+    // `xhigh` e `max` vinham do tempo da API da Anthropic. Deixados como estavam,
+    // o select não achava opção correspondente, exibia `none` e salvava `none`.
+    expect(normalizarEffort("xhigh")).toBe("high");
+    expect(normalizarEffort("max")).toBe("high");
+  });
+
+  it("qualquer coisa desconhecida vira o default, nunca a primeira opção", () => {
+    expect(normalizarEffort("turbo")).toBe("medium");
+    expect(normalizarEffort("")).toBe("medium");
+    expect(normalizarEffort(null)).toBe("medium");
+    expect(normalizarEffort(undefined)).toBe("medium");
+  });
+
+  it("ignora caixa e espaço", () => {
+    expect(normalizarEffort("  HIGH ")).toBe("high");
+    expect(normalizarEffort("XHigh")).toBe("high");
   });
 });
 

@@ -80,7 +80,7 @@ describe("decisão de responder", () => {
       evento({ conversation: { id: 55, status: "resolved" } }),
     );
 
-    expect(d).toEqual({ responder: false, motivo: "conversa resolved" });
+    expect(d).toEqual({ responder: false, motivo: "conversa resolvida" });
   });
 
   it("ignora outros eventos", () => {

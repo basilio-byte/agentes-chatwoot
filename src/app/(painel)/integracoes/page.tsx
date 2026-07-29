@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import { obterIntegracao } from "@/server/integrations/registry";
@@ -34,6 +35,11 @@ export default async function IntegracoesPage() {
     obterIntegracao(IntegrationProvider.CLICKUP)?.tools.length ?? 0;
 
   const comBot = await db.agentChatwootBot.count();
+
+  const cabecalhos = await headers();
+  const origem = `${cabecalhos.get("x-forwarded-proto") ?? "https"}://${
+    cabecalhos.get("host") ?? "localhost:3000"
+  }`;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -76,6 +82,8 @@ export default async function IntegracoesPage() {
           }
           habilitada={chatwoot?.enabled ?? false}
           somenteLeitura={!editavel}
+          temSecretDaConta={Boolean(chatwoot?.credential)}
+          urlWebhookConta={`${origem}/api/webhooks/chatwoot/conta`}
         />
 
         {chatwoot?.lastError ? (

@@ -253,6 +253,15 @@ model Conversation {
   handoffReason String?
   handoffAt     DateTime?
 
+  /// Marco de corte do histórico. Mensagens anteriores a esta data não vão para
+  /// o modelo.
+  ///
+  /// É gravado toda vez que a conversa é vista como resolvida: se ela reabrir, o
+  /// atendimento começa do zero, porque o mesmo cliente costuma voltar por outro
+  /// assunto e o contexto antigo atrapalharia mais do que ajudaria.
+  historicoDesde DateTime?
+  resolvidaEm    DateTime?
+
   lastMessageAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

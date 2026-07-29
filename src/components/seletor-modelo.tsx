@@ -6,6 +6,7 @@ import {
   DICAS_EFFORT,
   EFFORTS,
   formatarPrecoMTok,
+  normalizarEffort,
   type Effort,
   type ModeloCatalogo,
 } from "@/server/agents/catalogo";
@@ -32,7 +33,9 @@ export function SeletorModelo({
   somenteLeitura?: boolean;
 }) {
   const [selecionado, setSelecionado] = useState(modeloInicial);
-  const [effort, setEffort] = useState<Effort>(effortInicial as Effort);
+  // Normalizar é obrigatório: valor fora da lista faz o select exibir e enviar a
+  // primeira opção (`none`), gravando algo que ninguém escolheu.
+  const [effort, setEffort] = useState<Effort>(normalizarEffort(effortInicial));
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState(false);
 

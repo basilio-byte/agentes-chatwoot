@@ -15,6 +15,7 @@ import {
 import {
   clienteDoAgente,
   obterConfigChatwoot,
+  salvarSecretDaConta,
   salvarSegredosDoBot,
 } from "@/server/integrations/chatwoot/credenciais";
 
@@ -64,6 +65,11 @@ export async function salvarConfigChatwoot(
       entityId: IntegrationProvider.CHATWOOT,
     },
   });
+
+  const secretDaConta = String(formData.get("secretDaConta") ?? "").trim();
+  if (secretDaConta) {
+    await salvarSecretDaConta(secretDaConta);
+  }
 
   revalidatePath("/integracoes");
   return { ok: "Configuração salva." };
