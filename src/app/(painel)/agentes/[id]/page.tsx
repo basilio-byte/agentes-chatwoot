@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { UserRole } from "@/generated/prisma/enums";
 import { resumoDoBot } from "@/server/actions/chatwoot";
 import { listarIntegracoes } from "@/server/integrations/registry";
+import { tokensAproximadosDaTool } from "@/server/integrations/resolve";
 import { ChatwootBotCard } from "@/components/chatwoot-bot";
 import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
 import { db } from "@/lib/db";
@@ -78,6 +79,8 @@ export default async function AgentePage({
         name: t.name,
         description: t.description,
         escreve: Boolean(t.requiresConfirmation),
+        categoria: t.categoria ?? "Geral",
+        tokens: tokensAproximadosDaTool(t),
       })),
     };
   });

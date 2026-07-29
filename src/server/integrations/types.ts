@@ -25,6 +25,11 @@ export type ToolDefinition<TInput = unknown> = {
   name: string;
   /** É este texto que o modelo lê para decidir usar a tool. Seja prescritivo. */
   description: string;
+  /**
+   * Agrupa a tool na tela do agente ("Tarefas", "Comentários"...). Serve só
+   * para a interface — a ordem que vai para a API continua sendo por nome.
+   */
+  categoria?: string;
   inputSchema: z.ZodType<TInput>;
   /**
    * Ações que escrevem em sistema externo (criar tarefa, alterar cadastro).

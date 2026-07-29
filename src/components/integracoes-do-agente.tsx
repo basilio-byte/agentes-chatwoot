@@ -21,10 +21,34 @@ export type IntegracaoDoAgente = {
   configurada: boolean;
   /** Toggle deste agente. */
   ligadaNoAgente: boolean;
-  tools: { name: string; description: string; escreve: boolean }[];
+  tools: {
+    name: string;
+    description: string;
+    escreve: boolean;
+    categoria: string;
+    /** Quanto a tool ocupa no prompt de cada mensagem, aproximado. */
+    tokens: number;
+  }[];
   /** Vazio = todas liberadas. */
   permitidas: string[];
 };
+
+type Grupo = { categoria: string; tools: IntegracaoDoAgente["tools"] };
+
+function formatarTokens(total: number) {
+  return total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
+}
+
+/** Preserva a ordem em que as categorias aparecem no catálogo. */
+function agrupar(tools: IntegracaoDoAgente["tools"]): Grupo[] {
+  const grupos: Grupo[] = [];
+  for (const tool of tools) {
+    const existente = grupos.find((g) => g.categoria === tool.categoria);
+    if (existente) existente.tools.push(tool);
+    else grupos.push({ categoria: tool.categoria, tools: [tool] });
+  }
+  return grupos;
+}
 
 export function IntegracoesDoAgente({
   agentId,
@@ -164,9 +188,14 @@ function SelecaoDeTools({
   onPronto: (r: EstadoIntegracaoAgente) => void;
 }) {
   const todas = integracao.tools.map((t) => t.name);
+  const grupos = agrupar(integracao.tools);
+
   const [selecionadas, setSelecionadas] = useState<string[]>(
     integracao.permitidas.length === 0 ? todas : integracao.permitidas,
   );
+  // Fechados por padrão: com dezenas de ferramentas, a contagem por categoria
+  // já mostra o estado sem precisar abrir tudo.
+  const [abertos, setAbertos] = useState<string[]>([]);
   const [ocupado, iniciar] = useTransition();
 
   const alternar = (nome: string) =>
@@ -176,35 +205,20 @@ function SelecaoDeTools({
         : [...atual, nome],
     );
 
+  const alternarGrupo = (grupo: Grupo, marcar: boolean) =>
+    setSelecionadas((atual) => {
+      const nomes = grupo.tools.map((t) => t.name);
+      const sem = atual.filter((n) => !nomes.includes(n));
+      return marcar ? [...sem, ...nomes] : sem;
+    });
+
   return (
     <div className="mt-3 space-y-3 border-t border-line pt-3">
       <p className="text-xs text-muted">
-        Cada ferramenta liberada entra no prompt de toda mensagem. Liberar só o
-        necessário reduz custo e a chance do modelo escolher errado.
+        Cada ferramenta liberada entra no prompt de <strong>toda</strong>{" "}
+        mensagem. Liberar só o necessário reduz custo e a chance do modelo
+        escolher errado.
       </p>
-
-      <ul className="space-y-1.5">
-        {integracao.tools.map((t) => (
-          <li key={t.name}>
-            <label className="flex cursor-pointer items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-0.5 size-3.5 shrink-0"
-                checked={selecionadas.includes(t.name)}
-                disabled={!editavel}
-                onChange={() => alternar(t.name)}
-              />
-              <span className="min-w-0">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <code className="font-mono text-xs">{t.name}</code>
-                  {t.escreve ? <Badge tone="accent">escreve</Badge> : null}
-                </span>
-                <Meta className="block">{t.description}</Meta>
-              </span>
-            </label>
-          </li>
-        ))}
-      </ul>
 
       {editavel ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -232,10 +246,104 @@ function SelecaoDeTools({
             onClick={() => setSelecionadas(todas)}
             disabled={ocupado}
           >
-            Selecionar todas
+            Marcar todas
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelecionadas([])}
+            disabled={ocupado}
+          >
+            Desmarcar todas
+          </Button>
+
+          <span className="ml-auto text-xs text-muted">
+            {selecionadas.length} de {todas.length} · ~
+            {formatarTokens(
+              integracao.tools
+                .filter((t) => selecionadas.includes(t.name))
+                .reduce((soma, t) => soma + t.tokens, 0),
+            )}{" "}
+            tokens por mensagem
+          </span>
         </div>
       ) : null}
+
+      <div className="divide-y divide-line rounded-lg border border-line">
+        {grupos.map((grupo) => {
+          const nomes = grupo.tools.map((t) => t.name);
+          const marcadas = nomes.filter((n) => selecionadas.includes(n)).length;
+          const aberto = abertos.includes(grupo.categoria);
+
+          return (
+            <div key={grupo.categoria}>
+              <div className="flex items-center gap-2 px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="size-3.5 shrink-0"
+                  aria-label={`Todas as ferramentas de ${grupo.categoria}`}
+                  checked={marcadas === nomes.length}
+                  ref={(el) => {
+                    if (el) el.indeterminate = marcadas > 0 && marcadas < nomes.length;
+                  }}
+                  disabled={!editavel}
+                  onChange={(e) => alternarGrupo(grupo, e.target.checked)}
+                />
+
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  onClick={() =>
+                    setAbertos((atual) =>
+                      aberto
+                        ? atual.filter((c) => c !== grupo.categoria)
+                        : [...atual, grupo.categoria],
+                    )
+                  }
+                >
+                  <span className="text-sm font-medium">{grupo.categoria}</span>
+                  <span className="text-xs text-muted">
+                    ({marcadas}/{nomes.length})
+                  </span>
+                  <ChevronDown
+                    size={14}
+                    aria-hidden
+                    className={cn(
+                      "ml-auto shrink-0 text-muted transition",
+                      aberto && "rotate-180",
+                    )}
+                  />
+                </button>
+              </div>
+
+              {aberto ? (
+                <ul className="space-y-1.5 px-3 pb-3 pl-8">
+                  {grupo.tools.map((t) => (
+                    <li key={t.name}>
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 size-3.5 shrink-0"
+                          checked={selecionadas.includes(t.name)}
+                          disabled={!editavel}
+                          onChange={() => alternar(t.name)}
+                        />
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <code className="font-mono text-xs">{t.name}</code>
+                            {t.escreve ? <Badge tone="accent">escreve</Badge> : null}
+                          </span>
+                          <Meta className="block">{t.description}</Meta>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

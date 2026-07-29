@@ -1,8 +1,12 @@
 import type {
+  ClickUpCampoPersonalizado,
+  ClickUpChecklist,
   ClickUpComentario,
   ClickUpFolder,
   ClickUpList,
+  ClickUpRegistroDeTempo,
   ClickUpSpace,
+  ClickUpTag,
   ClickUpTarefa,
   ClickUpWorkspace,
 } from "./tipos";
@@ -235,6 +239,211 @@ export class ClickUpClient {
         notify_all: opcoes.notificarTodos ?? false,
         ...(opcoes.responsavelId ? { assignee: opcoes.responsavelId } : {}),
       }),
+    });
+  }
+
+  /** O comentário é endereçado direto, sem a tarefa no caminho. */
+  editarComentario(
+    commentId: string,
+    dados: { comment_text?: string; resolved?: boolean },
+  ) {
+    return this.requisitar<unknown>(`/comment/${commentId}`, {
+      method: "PUT",
+      body: JSON.stringify(dados),
+    });
+  }
+
+  excluirComentario(commentId: string) {
+    return this.requisitar<unknown>(`/comment/${commentId}`, {
+      method: "DELETE",
+    });
+  }
+
+  // --- tarefas: exclusão ---------------------------------------------------
+
+  excluirTarefa(taskId: string) {
+    return this.requisitar<unknown>(`/task/${taskId}`, { method: "DELETE" });
+  }
+
+  // --- criação de estrutura ------------------------------------------------
+
+  criarFolder(spaceId: string, name: string) {
+    return this.requisitar<ClickUpFolder>(`/space/${spaceId}/folder`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  /** Dentro de uma pasta. Para lista solta no espaço use `criarListaEmSpace`. */
+  criarListaEmFolder(folderId: string, dados: { name: string; content?: string }) {
+    return this.requisitar<ClickUpList>(`/folder/${folderId}/list`, {
+      method: "POST",
+      body: JSON.stringify(dados),
+    });
+  }
+
+  criarListaEmSpace(spaceId: string, dados: { name: string; content?: string }) {
+    return this.requisitar<ClickUpList>(`/space/${spaceId}/list`, {
+      method: "POST",
+      body: JSON.stringify(dados),
+    });
+  }
+
+  // --- tags ----------------------------------------------------------------
+
+  listarTags(spaceId: string) {
+    return this.requisitar<{ tags: ClickUpTag[] }>(`/space/${spaceId}/tag`);
+  }
+
+  /**
+   * A tag vai no **caminho**, não no corpo, e precisa já existir no espaço —
+   * a API não cria tag por este endpoint.
+   */
+  adicionarTag(taskId: string, tag: string) {
+    return this.requisitar<unknown>(
+      `/task/${taskId}/tag/${encodeURIComponent(tag)}`,
+      { method: "POST" },
+    );
+  }
+
+  /** Tira a tag da tarefa; a tag continua existindo no espaço. */
+  removerTag(taskId: string, tag: string) {
+    return this.requisitar<unknown>(
+      `/task/${taskId}/tag/${encodeURIComponent(tag)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  // --- checklists ----------------------------------------------------------
+
+  criarChecklist(taskId: string, name: string) {
+    return this.requisitar<{ checklist: ClickUpChecklist }>(
+      `/task/${taskId}/checklist`,
+      { method: "POST", body: JSON.stringify({ name }) },
+    );
+  }
+
+  adicionarItemChecklist(
+    checklistId: string,
+    dados: { name: string; assignee?: number; resolved?: boolean },
+  ) {
+    return this.requisitar<{ checklist: ClickUpChecklist }>(
+      `/checklist/${checklistId}/checklist_item`,
+      { method: "POST", body: JSON.stringify(dados) },
+    );
+  }
+
+  /** O id do checklist entra no caminho junto com o do item. */
+  atualizarItemChecklist(
+    checklistId: string,
+    itemId: string,
+    dados: { name?: string; resolved?: boolean },
+  ) {
+    return this.requisitar<{ checklist: ClickUpChecklist }>(
+      `/checklist/${checklistId}/checklist_item/${itemId}`,
+      { method: "PUT", body: JSON.stringify(dados) },
+    );
+  }
+
+  excluirItemChecklist(checklistId: string, itemId: string) {
+    return this.requisitar<unknown>(
+      `/checklist/${checklistId}/checklist_item/${itemId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  // --- registro de tempo ---------------------------------------------------
+
+  /**
+   * O cronômetro é sempre do **dono do token** — a API não permite iniciar
+   * tempo em nome de outra pessoa.
+   */
+  iniciarCronometro(
+    teamId: string,
+    dados: { tid: string; description?: string; billable?: boolean },
+  ) {
+    return this.requisitar<{ data: ClickUpRegistroDeTempo }>(
+      `/team/${teamId}/time_entries/start`,
+      { method: "POST", body: JSON.stringify(dados) },
+    );
+  }
+
+  pararCronometro(teamId: string) {
+    return this.requisitar<{ data: ClickUpRegistroDeTempo }>(
+      `/team/${teamId}/time_entries/stop`,
+      { method: "POST" },
+    );
+  }
+
+  /** `start` e `duration` em milissegundos. */
+  registrarTempo(
+    teamId: string,
+    dados: {
+      tid: string;
+      start: number;
+      duration: number;
+      description?: string;
+      billable?: boolean;
+    },
+  ) {
+    return this.requisitar<{ data: ClickUpRegistroDeTempo }>(
+      `/team/${teamId}/time_entries`,
+      { method: "POST", body: JSON.stringify(dados) },
+    );
+  }
+
+  listarRegistrosDeTempo(
+    teamId: string,
+    opcoes: { taskId?: string; inicio?: number; fim?: number } = {},
+  ) {
+    const q = new URLSearchParams();
+    if (opcoes.taskId) q.set("task_id", opcoes.taskId);
+    if (opcoes.inicio) q.set("start_date", String(opcoes.inicio));
+    if (opcoes.fim) q.set("end_date", String(opcoes.fim));
+
+    const query = q.toString();
+    return this.requisitar<{ data: ClickUpRegistroDeTempo[] }>(
+      `/team/${teamId}/time_entries${query ? `?${query}` : ""}`,
+    );
+  }
+
+  // --- relacionamentos -----------------------------------------------------
+
+  /**
+   * `depends_on`: esta tarefa espera a outra.
+   * `dependency_of`: a outra espera esta.
+   */
+  definirDependencia(
+    taskId: string,
+    dados: { depends_on?: string; dependency_of?: string },
+  ) {
+    return this.requisitar<unknown>(`/task/${taskId}/dependency`, {
+      method: "POST",
+      body: JSON.stringify(dados),
+    });
+  }
+
+  /** Vínculo simples entre duas tarefas — ambos os ids vão no caminho. */
+  vincularTarefas(taskId: string, outraTarefaId: string) {
+    return this.requisitar<{ task: ClickUpTarefa }>(
+      `/task/${taskId}/link/${outraTarefaId}`,
+      { method: "POST" },
+    );
+  }
+
+  // --- campos personalizados -----------------------------------------------
+
+  listarCamposPersonalizados(listId: string) {
+    return this.requisitar<{ fields: ClickUpCampoPersonalizado[] }>(
+      `/list/${listId}/field`,
+    );
+  }
+
+  /** O valor vai em `{ value }`; o formato depende do tipo do campo. */
+  definirCampoPersonalizado(taskId: string, fieldId: string, value: unknown) {
+    return this.requisitar<unknown>(`/task/${taskId}/field/${fieldId}`, {
+      method: "POST",
+      body: JSON.stringify({ value }),
     });
   }
 }

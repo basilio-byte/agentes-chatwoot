@@ -77,6 +77,45 @@ export type ClickUpComentario = {
   resolved?: boolean;
 };
 
+export type ClickUpTag = {
+  name: string;
+  tag_fg?: string | null;
+  tag_bg?: string | null;
+};
+
+export type ClickUpItemChecklist = {
+  id: string;
+  name: string;
+  resolved?: boolean;
+};
+
+export type ClickUpChecklist = {
+  id: string;
+  name: string;
+  task_id?: string;
+  items?: ClickUpItemChecklist[];
+};
+
+export type ClickUpRegistroDeTempo = {
+  id: string;
+  /** Milissegundos em string, como o resto da API. */
+  start?: string | null;
+  end?: string | null;
+  duration?: string | null;
+  description?: string | null;
+  user?: ClickUpUsuario;
+  task?: { id: string; name?: string } | null;
+};
+
+export type ClickUpCampoPersonalizado = {
+  id: string;
+  name: string;
+  type: string;
+  type_config?: {
+    options?: Array<{ id: string; name?: string; label?: string }>;
+  };
+};
+
 /** 1 urgente · 2 alta · 3 normal · 4 baixa — a ordem é do ClickUp, não nossa. */
 export const PRIORIDADES = {
   urgente: 1,

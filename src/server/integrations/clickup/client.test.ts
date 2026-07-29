@@ -135,6 +135,152 @@ describe("comentários", () => {
   });
 });
 
+/** Só o caminho, sem a base — deixa a expectativa legível. */
+const rota = (i = 0) =>
+  chamadas[i].url.replace("https://api.clickup.com/api/v2", "");
+
+describe("estrutura: criação", () => {
+  it("cria pasta no espaço e lista dentro da pasta ou solta no espaço", async () => {
+    const c = cliente();
+    await c.criarFolder("space1", "Manutenção");
+    await c.criarListaEmFolder("folder1", { name: "Elétrica" });
+    await c.criarListaEmSpace("space1", { name: "Avulsas" });
+
+    expect(chamadas.map((ch) => [ch.method, ch.url.replace("https://api.clickup.com/api/v2", "")])).toEqual([
+      ["POST", "/space/space1/folder"],
+      ["POST", "/folder/folder1/list"],
+      ["POST", "/space/space1/list"],
+    ]);
+    expect(chamadas[0].body).toEqual({ name: "Manutenção" });
+  });
+});
+
+describe("exclusão de tarefa", () => {
+  it("é DELETE direto na tarefa", async () => {
+    await cliente().excluirTarefa("task1");
+
+    expect(chamadas[0].method).toBe("DELETE");
+    expect(rota()).toBe("/task/task1");
+  });
+});
+
+describe("comentários: edição e exclusão", () => {
+  it("endereça o comentário sem a tarefa no caminho", async () => {
+    const c = cliente();
+    await c.editarComentario("c1", { comment_text: "corrigido" });
+    await c.excluirComentario("c1");
+
+    expect([chamadas[0].method, rota(0)]).toEqual(["PUT", "/comment/c1"]);
+    expect([chamadas[1].method, rota(1)]).toEqual(["DELETE", "/comment/c1"]);
+    expect(chamadas[0].body).toEqual({ comment_text: "corrigido" });
+  });
+});
+
+describe("tags", () => {
+  it("manda a tag no CAMINHO, não no corpo", async () => {
+    const c = cliente();
+    await c.adicionarTag("task1", "urgente");
+    await c.removerTag("task1", "urgente");
+
+    expect([chamadas[0].method, rota(0)]).toEqual(["POST", "/task/task1/tag/urgente"]);
+    expect([chamadas[1].method, rota(1)]).toEqual(["DELETE", "/task/task1/tag/urgente"]);
+    expect(chamadas[0].body).toBeUndefined();
+  });
+
+  it("escapa tag com espaço e acento", async () => {
+    await cliente().adicionarTag("task1", "manutenção elétrica");
+
+    expect(rota()).toBe("/task/task1/tag/manuten%C3%A7%C3%A3o%20el%C3%A9trica");
+  });
+
+  it("lista as tags do espaço", async () => {
+    await cliente().listarTags("space1");
+    expect(rota()).toBe("/space/space1/tag");
+  });
+});
+
+describe("checklists", () => {
+  it("cria na tarefa, mas os itens penduram no checklist", async () => {
+    const c = cliente();
+    await c.criarChecklist("task1", "Vistoria");
+    await c.adicionarItemChecklist("chk1", { name: "Conferir hidrômetro" });
+    await c.atualizarItemChecklist("chk1", "item1", { resolved: true });
+    await c.excluirItemChecklist("chk1", "item1");
+
+    expect(chamadas.map((ch) => [ch.method, ch.url.replace("https://api.clickup.com/api/v2", "")])).toEqual([
+      ["POST", "/task/task1/checklist"],
+      ["POST", "/checklist/chk1/checklist_item"],
+      // O id do checklist continua no caminho ao mexer no item.
+      ["PUT", "/checklist/chk1/checklist_item/item1"],
+      ["DELETE", "/checklist/chk1/checklist_item/item1"],
+    ]);
+  });
+});
+
+describe("registro de tempo", () => {
+  it("usa tid (não task_id) no corpo e pendura tudo no team", async () => {
+    const c = cliente();
+    await c.iniciarCronometro("team1", { tid: "task1" });
+    await c.pararCronometro("team1");
+    await c.registrarTempo("team1", {
+      tid: "task1",
+      start: 1_760_000_000_000,
+      duration: 1_800_000,
+    });
+
+    expect(chamadas.map((ch) => [ch.method, ch.url.replace("https://api.clickup.com/api/v2", "")])).toEqual([
+      ["POST", "/team/team1/time_entries/start"],
+      ["POST", "/team/team1/time_entries/stop"],
+      ["POST", "/team/team1/time_entries"],
+    ]);
+    expect(chamadas[0].body).toEqual({ tid: "task1" });
+    expect(chamadas[2].body).toMatchObject({ tid: "task1", duration: 1_800_000 });
+  });
+
+  it("filtra por tarefa e período na listagem", async () => {
+    await cliente().listarRegistrosDeTempo("team1", {
+      taskId: "task1",
+      inicio: 1_760_000_000_000,
+      fim: 1_770_000_000_000,
+    });
+
+    const url = new URL(chamadas[0].url);
+    expect(url.pathname).toBe("/api/v2/team/team1/time_entries");
+    expect(url.searchParams.get("task_id")).toBe("task1");
+    expect(url.searchParams.get("start_date")).toBe("1760000000000");
+    expect(url.searchParams.get("end_date")).toBe("1770000000000");
+  });
+
+  it("sem filtro, não deixa '?' sobrando na URL", async () => {
+    await cliente().listarRegistrosDeTempo("team1");
+    expect(rota()).toBe("/team/team1/time_entries");
+  });
+});
+
+describe("relacionamentos", () => {
+  it("dependência vai no corpo; link vai no caminho", async () => {
+    const c = cliente();
+    await c.definirDependencia("task1", { depends_on: "task2" });
+    await c.vincularTarefas("task1", "task3");
+
+    expect([chamadas[0].method, rota(0)]).toEqual(["POST", "/task/task1/dependency"]);
+    expect(chamadas[0].body).toEqual({ depends_on: "task2" });
+    expect([chamadas[1].method, rota(1)]).toEqual(["POST", "/task/task1/link/task3"]);
+  });
+});
+
+describe("campos personalizados", () => {
+  it("lista pela lista e grava pela tarefa, com o valor em { value }", async () => {
+    const c = cliente();
+    await c.listarCamposPersonalizados("list1");
+    await c.definirCampoPersonalizado("task1", "field1", "sala 3");
+
+    expect(rota(0)).toBe("/list/list1/field");
+    expect([chamadas[1].method, rota(1)]).toEqual(["POST", "/task/task1/field/field1"]);
+    expect(chamadas[1].body).toEqual({ value: "sala 3" });
+  });
+});
+
 describe("erros", () => {
   it("traduz 401 em orientação sobre o token", async () => {
     vi.stubGlobal("fetch", async () => responder({ err: "Token invalid" }, 401));

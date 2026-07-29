@@ -76,6 +76,32 @@ se mexer no cliente, rode-o.
   aceita as três.
 - **Status é texto livre por lista.** Antes de atualizar, o agente precisa dos
   status válidos — vêm de `clickup_listar_estrutura`.
+- **Tag vai no caminho, não no corpo** (`/task/{id}/tag/{nome}`), precisa
+  `encodeURIComponent` e só aplica tag que **já existe** no espaço.
+- **Item de checklist carrega o id do checklist na rota**
+  (`/checklist/{chk}/checklist_item/{item}`), não só o id do item.
+- **Tempo usa `tid`**, não `task_id`, e é sempre do dono do token — a API não
+  cronometra em nome de outra pessoa.
+- **Comentário é endereçado direto** (`/comment/{id}`), sem a tarefa na rota.
+
+### Catálogo de tools: 32 em 10 categorias
+
+`categoria` em `ToolDefinition` existe **só para a tela do agente** agrupar. A
+ordem que vai para a API continua sendo alfabética por nome.
+
+- **A UI agrupa na ordem do catálogo.** Espalhar tools da mesma categoria em
+  pontos diferentes do array cria dois grupos com o mesmo título — tem teste
+  em `clickup/catalogo.test.ts`.
+- **`requiresConfirmation` é o que marca "escreve" na interface.** Toda tool que
+  altera o ClickUp precisa dele; consulta nenhuma pode ter. O teste trava a
+  lista inteira, então incluir tool nova exige atualizá-lo conscientemente.
+- **Capacidade duplicada fura a allowlist.** Status saiu de
+  `clickup_atualizar_tarefa` e virou `clickup_mudar_status`: bloquear uma tool
+  não adianta se outra faz a mesma coisa.
+- **A allowlist de espaços vale para escrita também** (`espacoBloqueado`) —
+  senão restringir espaços só limitaria a leitura.
+- Todas as 32 ligadas pesam **~3,9k tokens em toda mensagem**. A tela mostra a
+  estimativa (`tokensAproximadosDaTool`) para a escolha ser informada.
 
 ### Regras globais de atendimento
 
