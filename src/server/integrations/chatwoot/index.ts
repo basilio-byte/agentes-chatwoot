@@ -86,6 +86,9 @@ export const chatwootIntegration: IntegrationDefinition = {
         }
 
         const equipe = await db.agent.findMany({
+          // Arquivado não entra na equipe: não roteia, não recebe transferência e
+          // não aparece no prompt de ninguém.
+          where: { archivedAt: null },
           select: {
             id: true,
             key: true,

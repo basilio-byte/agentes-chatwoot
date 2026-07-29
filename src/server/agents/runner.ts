@@ -116,6 +116,9 @@ export async function executarAgente(
   // só muda quando alguém mexe na equipe. Se fosse mensagem, ocuparia posição
   // depois do histórico sem ganho nenhum de cache.
   const equipe = await db.agent.findMany({
+    // Arquivado não entra na equipe: não roteia, não recebe transferência e
+    // não aparece no prompt de ninguém.
+    where: { archivedAt: null },
     select: {
       id: true,
       key: true,

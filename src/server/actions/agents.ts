@@ -191,6 +191,10 @@ export async function alternarAtivo(id: string) {
   const sessao = await exigirPapel(UserRole.ADMIN);
   const agente = await db.agent.findUniqueOrThrow({ where: { id } });
 
+  // Arquivado não liga: teria um agente fora da lista principal atendendo
+  // cliente. Restaurar primeiro é a ordem certa, e é decisão consciente.
+  if (agente.archivedAt && !agente.active) return;
+
   await db.agent.update({
     where: { id },
     data: { active: !agente.active },
@@ -241,12 +245,90 @@ export async function definirAgenteDeEntrada(id: string) {
   return {};
 }
 
+export type EstadoArquivo = { ok?: string; erro?: string };
+
+/**
+ * Tira o agente de circulação sem perder nada.
+ *
+ * Desliga na hora — arquivado que continuasse atendendo seria o pior dos dois
+ * mundos — e limpa `isEntry`, senão o painel ficaria com um agente de entrada
+ * que não atende e o roteamento cairia silenciosamente na porta.
+ *
+ * Prompt, modelo, integrações, versões e histórico ficam intactos.
+ */
+export async function arquivarAgente(id: string): Promise<EstadoArquivo> {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+  const agente = await db.agent.findUniqueOrThrow({ where: { id } });
+
+  if (agente.archivedAt) return { erro: "Este agente já está arquivado." };
+
+  await db.agent.update({
+    where: { id },
+    data: {
+      archivedAt: new Date(),
+      active: false,
+      isEntry: false,
+      updatedById: sessao.user.id,
+    },
+  });
+
+  await registrarAuditoria(sessao.user.id, "agent.archived", id);
+  revalidatePath("/agentes");
+  revalidatePath(`/agentes/${id}`);
+
+  if (agente.isEntry) {
+    return {
+      ok: "Arquivado. Ele era o agente de entrada — defina outro, senão quem atende primeiro passa a ser o agente do bot que recebeu a mensagem.",
+    };
+  }
+  return { ok: "Agente arquivado e desligado." };
+}
+
+/**
+ * Devolve o agente para a lista principal — **desligado**.
+ *
+ * Voltar a atender é uma segunda decisão: restaurar e religar de uma vez faria
+ * um agente antigo voltar a falar com cliente sem ninguém conferir se o prompt
+ * ainda faz sentido.
+ */
+export async function restaurarAgente(id: string): Promise<EstadoArquivo> {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+
+  await db.agent.update({
+    where: { id },
+    data: { archivedAt: null, active: false, updatedById: sessao.user.id },
+  });
+
+  await registrarAuditoria(sessao.user.id, "agent.restored", id);
+  revalidatePath("/agentes");
+  revalidatePath(`/agentes/${id}`);
+
+  return { ok: "Restaurado, e desligado. Confira o prompt antes de ligar." };
+}
+
 export async function excluirAgente(id: string) {
   const sessao = await exigirPapel(UserRole.ADMIN);
   await db.agent.delete({ where: { id } });
   await registrarAuditoria(sessao.user.id, "agent.deleted", id);
   revalidatePath("/agentes");
   redirect("/agentes");
+}
+
+/** O que a exclusão leva junto, para a tela poder avisar antes. */
+export async function impactoDaExclusao(id: string) {
+  await exigirPapel(UserRole.ADMIN);
+  const agente = await db.agent.findUnique({
+    where: { id },
+    select: {
+      _count: { select: { runs: true, conversations: true, versions: true } },
+    },
+  });
+
+  return {
+    execucoes: agente?._count.runs ?? 0,
+    conversas: agente?._count.conversations ?? 0,
+    versoes: agente?._count.versions ?? 0,
+  };
 }
 
 async function registrarAuditoria(

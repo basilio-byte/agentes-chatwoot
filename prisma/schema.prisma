@@ -83,6 +83,14 @@ model Agent {
 
   active Boolean @default(false) // nasce desligado: só entra em produção de propósito
 
+  /// Guardado sem apagar: some da lista principal e não atende, mas mantém
+  /// prompt, modelo, integrações e histórico intactos.
+  ///
+  /// Estado separado de `active` de propósito. Desligado é pausa; arquivado é
+  /// "tirei de circulação". Restaurar devolve o agente **desligado** — voltar a
+  /// atender é uma segunda decisão, consciente.
+  archivedAt DateTime?
+
   /// Espera antes de responder, para agrupar mensagens picotadas do cliente
   /// ("oi" / "tudo bem?" / "queria saber sobre sala") numa resposta só.
   /// Canal mais conversacional pede mais; e-mail pede menos.
@@ -116,6 +124,7 @@ model Agent {
   conversasEmTransicao Conversation[] @relation("HandoffDestino")
 
   @@index([isEntry])
+  @@index([archivedAt])
 }
 
 /// Registro de cada passagem de bastão entre agentes.

@@ -175,6 +175,25 @@ pensa, e toda resposta sai pela porta — o cliente vê uma identidade só.
 - **Resolver zera dono e bastão** junto com `historicoDesde` — senão a conversa
   reabre direto no especialista do atendimento anterior.
 
+#### Arquivar é diferente de desligar
+
+`Agent.archivedAt` é um terceiro estado, não um sinônimo de `active: false`.
+Desligado é pausa e continua na lista; arquivado saiu de circulação.
+
+- **Arquivar desliga e limpa `isEntry`** na mesma operação — arquivado que
+  seguisse atendendo, ou que continuasse sendo a entrada, seria pior que não ter
+  arquivado.
+- **Restaurar devolve DESLIGADO.** Voltar a falar com cliente é uma segunda
+  decisão; religar junto faria um agente antigo reaparecer sem ninguém conferir
+  o prompt.
+- **`alternarAtivo` recusa ligar agente arquivado** — restaurar primeiro.
+- **Arquivado sai das consultas de equipe** (`where: { archivedAt: null }` no
+  runner, no worker e na tool de transferência): não roteia, não recebe
+  transferência e não aparece no prompt de ninguém.
+- **Excluir cascateia para `AgentRun`** e leva junto histórico de custo e tool
+  calls. Por isso a exclusão fica atrás de confirmação que diz quantas execuções
+  e versões somem, e sugere arquivar.
+
 #### Escopo: conta e caixa de entrada
 
 - **Só um agente de entrada, garantido por índice parcial** (`Agent_unico_de_entrada`).
