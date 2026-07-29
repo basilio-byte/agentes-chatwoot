@@ -12,6 +12,7 @@ import {
   PageHeader,
   Ponto,
 } from "@/components/ui";
+import { SeletorDeEntrada } from "@/components/seletor-de-entrada";
 import { formatarData } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,8 @@ export default async function AgentesPage() {
   const editavel = podeEditar(sessao.user.role);
 
   const agentes = await db.agent.findMany({
-    orderBy: [{ active: "desc" }, { name: "asc" }],
+    // Entrada primeiro: é o agente que define o comportamento do painel inteiro.
+    orderBy: [{ isEntry: "desc" }, { active: "desc" }, { name: "asc" }],
     include: {
       owner: { select: { name: true } },
       updatedBy: { select: { name: true } },
@@ -87,6 +89,13 @@ export default async function AgentesPage() {
                   ) : (
                     <Badge>sem bot</Badge>
                   )}
+                  {agente.inboxMode === "specific" &&
+                  agente.inboxIds.length > 0 ? (
+                    <Badge title="Caixas de entrada em que atua">
+                      caixa{agente.inboxIds.length > 1 ? "s" : ""}{" "}
+                      {agente.inboxIds.join(", ")}
+                    </Badge>
+                  ) : null}
                 </div>
 
                 <p className="truncate text-[13px] text-muted">
@@ -110,13 +119,22 @@ export default async function AgentesPage() {
                 </Meta>
               </div>
 
-              {editavel ? (
-                <form action={alternarAtivo.bind(null, agente.id)}>
-                  <Button variant="secondary" size="sm">
-                    {agente.active ? "Desligar" : "Ligar"}
-                  </Button>
-                </form>
-              ) : null}
+              <div className="flex items-center gap-2">
+                {editavel || agente.isEntry ? (
+                  <SeletorDeEntrada
+                    agenteId={agente.id}
+                    ehEntrada={agente.isEntry}
+                  />
+                ) : null}
+
+                {editavel ? (
+                  <form action={alternarAtivo.bind(null, agente.id)}>
+                    <Button variant="secondary" size="sm">
+                      {agente.active ? "Desligar" : "Ligar"}
+                    </Button>
+                  </form>
+                ) : null}
+              </div>
             </Card>
           ))}
         </div>

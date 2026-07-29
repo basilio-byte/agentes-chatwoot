@@ -13,11 +13,13 @@ import {
 import { Abas } from "@/components/abas";
 import { UserRole } from "@/generated/prisma/enums";
 import { resumoDoBot } from "@/server/actions/chatwoot";
+import { obterConfigChatwoot } from "@/server/integrations/chatwoot/credenciais";
 import { listarIntegracoes } from "@/server/integrations/registry";
 import { tokensAproximadosDaTool } from "@/server/integrations/resolve";
 import { ChatwootBotCard } from "@/components/chatwoot-bot";
 import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
 import { EquipeDoAgente } from "@/components/equipe-do-agente";
+import { EscopoDoAgente } from "@/components/escopo-do-agente";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import {
@@ -53,6 +55,7 @@ export default async function AgentePage({
         include: { createdBy: { select: { name: true } } },
       },
       integrations: { include: { integration: true } },
+      chatwootBot: { select: { accountId: true } },
       owner: { select: { name: true } },
       updatedBy: { select: { name: true } },
     },
@@ -68,6 +71,8 @@ export default async function AgentePage({
   const host = cabecalhos.get("host") ?? "localhost:3000";
   const urlWebhook = `${protocolo}://${host}/api/webhooks/chatwoot/${agente.id}`;
   const resumoBot = await resumoDoBot(agente.id);
+  const { config: configChatwoot } = await obterConfigChatwoot();
+  const contaPadrao = configChatwoot?.accountId ?? null;
 
   const colegas = await db.agent.findMany({
     where: { id: { not: agente.id } },
@@ -225,13 +230,23 @@ export default async function AgentePage({
             // ter de abrir a aba para descobrir isso.
             alerta: !resumoBot.configurado || !resumoBot.instanciaOk,
             conteudo: (
-              <div className="max-w-3xl">
+              <div className="max-w-3xl space-y-6">
                 <ChatwootBotCard
                   agentId={agente.id}
                   agentName={agente.name}
                   resumo={resumoBot}
                   urlWebhook={urlWebhook}
                   podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                />
+
+                <EscopoDoAgente
+                  agentId={agente.id}
+                  inboxMode={agente.inboxMode}
+                  inboxIds={agente.inboxIds}
+                  accountId={agente.chatwootBot?.accountId ?? null}
+                  contaPadrao={contaPadrao}
+                  temBot={Boolean(agente.chatwootBot)}
+                  somenteLeitura={!editavel}
                 />
               </div>
             ),

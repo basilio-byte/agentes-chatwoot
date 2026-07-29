@@ -18,6 +18,9 @@ import {
   salvarSecretDaConta,
   salvarSegredosDoBot,
 } from "@/server/integrations/chatwoot/credenciais";
+import { lerIdsDeCaixa, MODOS_DE_CAIXA } from "@/server/agents/equipe";
+
+export type EstadoEscopo = { ok?: string; erro?: string };
 
 export type EstadoChatwoot = {
   ok?: string;
@@ -170,6 +173,71 @@ export async function testarConexaoDoAgente(
 }
 
 /** Só para a tela: nunca devolve o segredo em si. */
+/**
+ * Onde o agente atua: conta do Chatwoot e caixas de entrada.
+ *
+ * A conta fica no bot (é dele o token que fala com aquela conta); o escopo de
+ * caixas fica no agente, porque vale também para o roteamento e para o roster —
+ * um colega que não atua na caixa não deve nem aparecer para transferência.
+ */
+export async function salvarEscopoDoAgente(
+  agentId: string,
+  _estado: EstadoEscopo,
+  formData: FormData,
+): Promise<EstadoEscopo> {
+  await exigirPapel(UserRole.ADMIN);
+
+  const modo = String(formData.get("inboxMode") ?? "all");
+  if (!MODOS_DE_CAIXA.includes(modo as (typeof MODOS_DE_CAIXA)[number])) {
+    return { erro: "Modo de caixa inválido." };
+  }
+
+  const ids = lerIdsDeCaixa(String(formData.get("inboxIds") ?? ""));
+  if (modo === "specific" && ids.length === 0) {
+    return {
+      erro: 'Informe pelo menos um id de caixa, ou deixe em "todas as caixas".',
+    };
+  }
+
+  const contaBruta = String(formData.get("accountId") ?? "").trim();
+  let accountId: number | null = null;
+  if (contaBruta) {
+    const n = Number.parseInt(contaBruta, 10);
+    if (!Number.isInteger(n) || n <= 0) {
+      return { erro: "O id da conta precisa ser um número positivo." };
+    }
+    accountId = n;
+  }
+
+  await db.agent.update({
+    where: { id: agentId },
+    data: { inboxMode: modo, inboxIds: modo === "specific" ? ids : [] },
+  });
+
+  // Só mexe na conta se o bot já existe — sem bot não há token a que associá-la.
+  const bot = await db.agentChatwootBot.findUnique({ where: { agentId } });
+  if (bot) {
+    await db.agentChatwootBot.update({
+      where: { agentId },
+      data: { accountId },
+    });
+  }
+
+  revalidatePath(`/agentes/${agentId}`);
+
+  if (accountId && !bot) {
+    return {
+      ok: "Escopo salvo. A conta só vale depois de cadastrar o bot deste agente.",
+    };
+  }
+  return {
+    ok:
+      modo === "all"
+        ? "Agente atuando em todas as caixas."
+        : `Agente restrito à(s) caixa(s) ${ids.join(", ")}.`,
+  };
+}
+
 export async function resumoDoBot(agentId: string) {
   const [bot, { config, habilitada }] = await Promise.all([
     db.agentChatwootBot.findUnique({ where: { agentId } }),

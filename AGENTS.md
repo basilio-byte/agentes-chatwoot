@@ -175,6 +175,25 @@ pensa, e toda resposta sai pela porta — o cliente vê uma identidade só.
 - **Resolver zera dono e bastão** junto com `historicoDesde` — senão a conversa
   reabre direto no especialista do atendimento anterior.
 
+#### Escopo: conta e caixa de entrada
+
+- **Só um agente de entrada, garantido por índice parcial** (`Agent_unico_de_entrada`).
+  A checagem na ação existe para dar mensagem boa; quem realmente impede dois é
+  o banco — tem verificação mostrando o `Unique constraint` disparando.
+- **`Agent.inboxMode`/`inboxIds`** definem onde o agente atua. Filtra a escolha
+  da **entrada** e o **roster** (não adianta oferecer colega que não atende
+  aquela caixa), mas **nunca** o dono da conversa nem a porta — tirar o
+  atendimento de quem já assumiu, ou calar a porta, é pior que atender fora do
+  escopo.
+- **Escopo ausente ou pela metade atende.** `specific` com lista vazia, ou caixa
+  desconhecida, resolve como "atende": transformar campo esquecido em silêncio é
+  o pior desfecho possível. `atendeInbox` tem teste para os dois casos.
+- **`AgentChatwootBot.accountId` sobrescreve a conta global.** A instância
+  (`baseUrl`) continua uma só; a conta é por bot, porque é o token dele que fala
+  com aquela conta. Nulo = herda a de Integrações.
+- O model `AgentInbox` foi **removido** (estava vazio e nunca foi lido) — o
+  escopo vive em `Agent.inboxIds`, que é o que a tela edita por vírgula.
+
 #### Travas do laço (`travas.ts`)
 
 Quatro, porque pegam coisas diferentes. `LIMITE_POR_PAR` **tem de ser ≤**

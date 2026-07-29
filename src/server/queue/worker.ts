@@ -70,7 +70,7 @@ export async function marcarResolvida(chatwootConversationId: number) {
  * debounce chegam juntas sem lógica extra.
  */
 export async function processarAtendimento(job: Job<JobAtendimento>) {
-  const { chatwootConversationId, agentId: portaId } = job.data;
+  const { chatwootConversationId, agentId: portaId, inboxId } = job.data;
   const log = logger.child({ conversa: chatwootConversationId, porta: portaId });
 
   const conversa = await db.conversation.findUnique({
@@ -128,12 +128,17 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
       routingDescription: true,
       active: true,
       isEntry: true,
+      inboxMode: true,
+      inboxIds: true,
     },
   });
 
+  // A caixa vem do job (o webhook a conhece) e cai para a que o Chatwoot
+  // devolveu ao vivo, para o escopo valer mesmo em job antigo na fila.
   let ativo = resolverAgenteAtivo(equipe, {
     donoId: conversa?.agentId,
     portaId,
+    inboxId: inboxId ?? aoVivo.inboxId ?? conversa?.chatwootInboxId,
   });
 
   if (!ativo) {
@@ -169,6 +174,7 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
         chatwootConversationId,
         historico: contexto.historico,
         mensagem: contexto.mensagem,
+        inboxId: inboxId ?? aoVivo.inboxId ?? conversa?.chatwootInboxId,
         bastao,
       });
 

@@ -61,6 +61,12 @@ model Agent {
   /// estar ligado — sem isso, quem responde primeiro seria arbitrário.
   isEntry Boolean @default(false)
 
+  /// Em quais caixas de entrada do Chatwoot este agente atua.
+  /// `all` = qualquer uma; `specific` = só as listadas em `inboxIds`.
+  inboxMode String @default("all") // all | specific
+  /// Ids das caixas no Chatwoot. Só vale com `inboxMode = specific`.
+  inboxIds  Int[]  @default([])
+
   systemPrompt String @db.Text
 
   // Modelo e custo. Ver docs/00-stack-e-arquitetura.md §7.
@@ -95,7 +101,6 @@ model Agent {
   updatedBy User? @relation("UltimaAlteracaoDoAgente", fields: [updatedById], references: [id], onDelete: SetNull)
 
   versions      AgentVersion[]
-  inboxes       AgentInbox[]
   integrations  AgentIntegration[]
   conversations Conversation[]
   runs          AgentRun[]
@@ -150,6 +155,10 @@ model AgentChatwootBot {
   botId   Int?
   botName String
 
+  /// Conta do Chatwoot deste bot. Nulo = usa a conta da configuração global.
+  /// Permite ter agentes em contas diferentes da mesma instância.
+  accountId Int?
+
   /// JSON cifrado (AES-256-GCM): { token, webhookSecret }.
   /// Um blob só em vez de duas colunas cifradas — menos ruído no schema.
   ciphertext String @db.Text
@@ -183,19 +192,6 @@ model AgentVersion {
   createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@unique([agentId, version])
-  @@index([agentId])
-}
-
-/// Qual agente atende qual inbox do Chatwoot. Uma inbox tem no máximo um agente.
-model AgentInbox {
-  id              String   @id @default(cuid())
-  agentId         String
-  chatwootInboxId Int      @unique
-  label           String?
-  createdAt       DateTime @default(now())
-
-  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
-
   @@index([agentId])
 }
 

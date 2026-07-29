@@ -143,11 +143,21 @@ export async function obterSegredosDoBot(
 export async function clienteDoAgente(
   agentId: string,
 ): Promise<ChatwootClient | null> {
-  const [{ config }, segredos] = await Promise.all([
+  const [{ config }, segredos, bot] = await Promise.all([
     obterConfigChatwoot(),
     obterSegredosDoBot(agentId),
+    db.agentChatwootBot.findUnique({
+      where: { agentId },
+      select: { accountId: true },
+    }),
   ]);
 
   if (!config || !segredos) return null;
-  return new ChatwootClient(config, segredos.token);
+
+  // A conta do bot sobrescreve a da configuração global: a instância é a mesma,
+  // mas cada agente pode viver numa conta diferente do Chatwoot.
+  return new ChatwootClient(
+    { ...config, accountId: bot?.accountId ?? config.accountId },
+    segredos.token,
+  );
 }

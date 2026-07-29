@@ -17,7 +17,51 @@ export type MembroDaEquipe = {
 export type AgenteRoteavel = MembroDaEquipe & {
   active: boolean;
   isEntry: boolean;
+  /** `all` = qualquer caixa; `specific` = só as de `inboxIds`. */
+  inboxMode?: string | null;
+  inboxIds?: number[];
 };
+
+export const MODOS_DE_CAIXA = ["all", "specific"] as const;
+export type ModoDeCaixa = (typeof MODOS_DE_CAIXA)[number];
+
+/**
+ * Este agente atua nesta caixa de entrada?
+ *
+ * Sem caixa conhecida a resposta é sim: a alternativa seria calar o agente por
+ * falta de um dado que nem sempre vem no webhook, e silêncio é pior do que
+ * atender numa caixa a mais.
+ *
+ * `specific` com lista vazia também é sim, pelo mesmo motivo — é configuração
+ * pela metade, não intenção de não atender ninguém.
+ */
+export function atendeInbox(
+  agente: Pick<AgenteRoteavel, "inboxMode" | "inboxIds">,
+  inboxId?: number | null,
+): boolean {
+  if (agente.inboxMode !== "specific") return true;
+
+  const permitidas = agente.inboxIds ?? [];
+  if (permitidas.length === 0) return true;
+  if (inboxId == null) return true;
+
+  return permitidas.includes(inboxId);
+}
+
+/**
+ * Lê o que o operador digitou no campo de caixas ("3, 5, 7").
+ *
+ * Aceita vírgula, espaço e ponto e vírgula porque é o que sai de um copiar e
+ * colar; descarta o que não for número em vez de rejeitar a linha inteira.
+ */
+export function lerIdsDeCaixa(texto: string): number[] {
+  const ids = texto
+    .split(/[\s,;]+/)
+    .map((p) => Number.parseInt(p, 10))
+    .filter((n) => Number.isInteger(n) && n > 0);
+
+  return [...new Set(ids)].sort((a, b) => a - b);
+}
 
 /**
  * Quem atende esta mensagem, em ordem de precedência:
@@ -31,16 +75,24 @@ export type AgenteRoteavel = MembroDaEquipe & {
  */
 export function resolverAgenteAtivo(
   equipe: AgenteRoteavel[],
-  { donoId, portaId }: { donoId?: string | null; portaId: string },
+  {
+    donoId,
+    portaId,
+    inboxId,
+  }: { donoId?: string | null; portaId: string; inboxId?: number | null },
 ): AgenteRoteavel | null {
   const ativos = equipe.filter((a) => a.active);
 
+  // O dono não é filtrado por caixa: ele já assumiu esta conversa, e tirá-la
+  // dele no meio do atendimento por causa do escopo seria pior que manter.
   const dono = donoId ? ativos.find((a) => a.id === donoId) : undefined;
   if (dono) return dono;
 
-  const entrada = ativos.find((a) => a.isEntry);
+  const entrada = ativos.find((a) => a.isEntry && atendeInbox(a, inboxId));
   if (entrada) return entrada;
 
+  // A porta por último, e sem checar escopo: ela é o bot que recebeu a
+  // mensagem, então é o último recurso contra o atendimento virar silêncio.
   return ativos.find((a) => a.id === portaId) ?? null;
 }
 
@@ -54,13 +106,17 @@ export function resolverAgenteAtivo(
 export function montarRoster(
   equipe: AgenteRoteavel[],
   agenteAtualId: string,
+  inboxId?: number | null,
 ): MembroDaEquipe[] {
   return equipe
     .filter(
       (a) =>
         a.id !== agenteAtualId &&
         a.active &&
-        (a.routingDescription ?? "").trim().length > 0,
+        (a.routingDescription ?? "").trim().length > 0 &&
+        // Não adianta oferecer um colega que não atua nesta caixa: a
+        // transferência aconteceria e ele responderia fora do escopo dele.
+        atendeInbox(a, inboxId),
     )
     .map(({ id, key, name, routingDescription }) => ({
       id,

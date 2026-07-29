@@ -29,6 +29,8 @@ export type EntradaExecucao = {
   mensagem: string;
   conversationId?: string;
   chatwootConversationId?: number;
+  /** Caixa de entrada da conversa — filtra quem aparece no roster. */
+  inboxId?: number | null;
   /**
    * Bastão recebido de outro agente. Entra como mensagem `system` junto do
    * contexto temporal, nunca no systemPrompt — ele muda por conversa e no
@@ -116,9 +118,11 @@ export async function executarAgente(
       routingDescription: true,
       active: true,
       isEntry: true,
+      inboxMode: true,
+      inboxIds: true,
     },
   });
-  const roster = montarRoster(equipe, agente.id);
+  const roster = montarRoster(equipe, agente.id, entrada.inboxId);
   const systemPrompt = agente.systemPrompt + blocoDeRoster(roster, agente.name);
 
   const sinais: SinaisDoTurno = {};

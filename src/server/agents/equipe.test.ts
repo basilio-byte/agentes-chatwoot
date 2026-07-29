@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  atendeInbox,
   blocoDeRoster,
+  lerIdsDeCaixa,
   mensagemDeBastao,
   montarRoster,
   resolverAgenteAtivo,
@@ -116,6 +118,115 @@ describe("resolverDestino", () => {
 
   it("string vazia não casa com ninguém", () => {
     expect(resolverDestino("  ", roster).tipo).toBe("nenhum");
+  });
+});
+
+describe("atendeInbox", () => {
+  it("modo all atende qualquer caixa", () => {
+    expect(atendeInbox({ inboxMode: "all", inboxIds: [] }, 7)).toBe(true);
+    expect(atendeInbox({ inboxMode: "all", inboxIds: [3] }, 7)).toBe(true);
+  });
+
+  it("modo specific respeita a lista", () => {
+    const escopo = { inboxMode: "specific", inboxIds: [3, 5] };
+
+    expect(atendeInbox(escopo, 3)).toBe(true);
+    expect(atendeInbox(escopo, 5)).toBe(true);
+    expect(atendeInbox(escopo, 7)).toBe(false);
+  });
+
+  it("specific com lista vazia atende — é configuração pela metade", () => {
+    // Calar o agente aqui seria transformar um campo esquecido em silêncio.
+    expect(atendeInbox({ inboxMode: "specific", inboxIds: [] }, 7)).toBe(true);
+  });
+
+  it("sem caixa conhecida, atende", () => {
+    const escopo = { inboxMode: "specific", inboxIds: [3] };
+
+    expect(atendeInbox(escopo, null)).toBe(true);
+    expect(atendeInbox(escopo, undefined)).toBe(true);
+  });
+});
+
+describe("lerIdsDeCaixa", () => {
+  it("aceita vírgula, espaço e ponto e vírgula", () => {
+    expect(lerIdsDeCaixa("3, 5;7 9")).toEqual([3, 5, 7, 9]);
+  });
+
+  it("ordena e tira repetido", () => {
+    expect(lerIdsDeCaixa("9,3,9,3")).toEqual([3, 9]);
+  });
+
+  it("descarta lixo em vez de recusar a linha inteira", () => {
+    expect(lerIdsDeCaixa("3, abc, 5, -1, 0")).toEqual([3, 5]);
+  });
+
+  it("texto vazio vira lista vazia", () => {
+    expect(lerIdsDeCaixa("   ")).toEqual([]);
+  });
+});
+
+describe("escopo de caixa no roteamento", () => {
+  const comEscopo: AgenteRoteavel[] = [
+    agente({
+      id: "recepcao",
+      isEntry: true,
+      inboxMode: "specific",
+      inboxIds: [1],
+      routingDescription: "primeiro contato",
+    }),
+    agente({
+      id: "suporte",
+      inboxMode: "specific",
+      inboxIds: [2],
+      routingDescription: "suporte técnico",
+    }),
+    agente({ id: "geral", inboxMode: "all", routingDescription: "qualquer assunto" }),
+  ];
+
+  it("a entrada de outra caixa não sequestra a conversa", () => {
+    // Recepção só atua na caixa 1; numa conversa da caixa 2 quem atende é a porta.
+    const r = resolverAgenteAtivo(comEscopo, {
+      donoId: null,
+      portaId: "suporte",
+      inboxId: 2,
+    });
+    expect(r?.id).toBe("suporte");
+  });
+
+  it("na caixa dela, a entrada atende normalmente", () => {
+    const r = resolverAgenteAtivo(comEscopo, {
+      donoId: null,
+      portaId: "geral",
+      inboxId: 1,
+    });
+    expect(r?.id).toBe("recepcao");
+  });
+
+  it("o dono continua atendendo mesmo fora do escopo dele", () => {
+    // Tirar a conversa de quem já assumiu, no meio do atendimento, é pior.
+    const r = resolverAgenteAtivo(comEscopo, {
+      donoId: "recepcao",
+      portaId: "suporte",
+      inboxId: 2,
+    });
+    expect(r?.id).toBe("recepcao");
+  });
+
+  it("o roster só oferece colegas que atuam na caixa", () => {
+    expect(montarRoster(comEscopo, "geral", 2).map((a) => a.id)).toEqual([
+      "suporte",
+    ]);
+    expect(montarRoster(comEscopo, "geral", 1).map((a) => a.id)).toEqual([
+      "recepcao",
+    ]);
+  });
+
+  it("sem caixa informada, o roster não filtra nada", () => {
+    expect(montarRoster(comEscopo, "geral").map((a) => a.id)).toEqual([
+      "recepcao",
+      "suporte",
+    ]);
   });
 });
 
