@@ -23,7 +23,8 @@ export function Button({
           "bg-accent text-white shadow-sm hover:brightness-110 active:brightness-95",
         variant === "secondary" &&
           "border border-line bg-surface hover:border-accent/40 hover:bg-accent-soft",
-        variant === "ghost" && "text-muted hover:bg-accent-soft hover:text-foreground",
+        variant === "ghost" &&
+          "text-muted hover:bg-accent-soft hover:text-foreground",
         variant === "danger" && "bg-danger text-white hover:brightness-110",
         className,
       )}
@@ -47,11 +48,17 @@ export function Textarea({
   ...props
 }: React.ComponentProps<"textarea">) {
   return (
-    <textarea className={cn(campo, "p-3 leading-relaxed", className)} {...props} />
+    <textarea
+      className={cn(campo, "p-3 leading-relaxed", className)}
+      {...props}
+    />
   );
 }
 
-export function Select({ className, ...props }: React.ComponentProps<"select">) {
+export function Select({
+  className,
+  ...props
+}: React.ComponentProps<"select">) {
   return <select className={cn(campo, "h-9 px-2.5", className)} {...props} />;
 }
 
@@ -134,7 +141,8 @@ export function Aviso({
       className={cn(
         "rounded-lg border px-3 py-2 text-[13px] leading-relaxed",
         tone === "danger" && "border-danger/25 bg-danger/[0.06] text-danger",
-        tone === "success" && "border-success/25 bg-success/[0.06] text-success",
+        tone === "success" &&
+          "border-success/25 bg-success/[0.06] text-success",
         tone === "neutral" && "border-line bg-foreground/[0.02] text-muted",
       )}
     >
@@ -147,13 +155,22 @@ export function PageHeader({
   titulo,
   descricao,
   acoes,
+  semBorda = false,
 }: {
   titulo: string;
   descricao?: React.ReactNode;
   acoes?: React.ReactNode;
+  /** Use quando vier uma tira de abas logo abaixo — ela já traz a linha, e as
+   *  duas juntas viram duas réguas coladas. */
+  semBorda?: boolean;
 }) {
   return (
-    <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-5">
+    <header
+      className={cn(
+        "flex flex-wrap items-start justify-between gap-4",
+        !semBorda && "border-b border-line pb-5",
+      )}
+    >
       <div className="space-y-1">
         <h1 className="text-[22px] font-semibold tracking-tight">{titulo}</h1>
         {descricao ? (

@@ -65,3 +65,14 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+/* Rola, mas sem desenhar a barra.
+   Para a tira de abas: no Windows o scrollbar clássico virava uma faixa cinza
+   sob as abas, e a régua de rolagem lia como layout quebrado. */
+.sem-barra {
+  scrollbar-width: none;
+}
+
+.sem-barra::-webkit-scrollbar {
+  display: none;
+}

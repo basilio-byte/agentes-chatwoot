@@ -189,6 +189,7 @@ export default async function ConversasPage({
       <PageHeader
         titulo="Conversas"
         descricao="Atendimentos vindos do Chatwoot, com o custo e a latência de cada resposta. Últimos 50."
+        semBorda
       />
 
       <Abas

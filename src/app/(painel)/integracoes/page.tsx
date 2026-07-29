@@ -59,6 +59,7 @@ export default async function IntegracoesPage({
             tela dele.
           </>
         }
+        semBorda
       />
       <Abas
         inicial={aba}

@@ -36,7 +36,7 @@ export function Playground({
   /** Enquanto verdadeiro, mensagem nova traz a conversa para o fim sozinha. */
   const grudado = useRef(true);
 
-  const irParaOFim = useCallback(() => {
+  const irParaOFim = useCallback((comportamento?: ScrollBehavior) => {
     const lista = listaRef.current;
     if (!lista) return;
 
@@ -44,7 +44,7 @@ export function Playground({
     const suave = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     lista.scrollTo({
       top: lista.scrollHeight,
-      behavior: suave ? "smooth" : "auto",
+      behavior: comportamento ?? (suave ? "smooth" : "auto"),
     });
   }, []);
 
@@ -52,6 +52,22 @@ export function Playground({
   useEffect(() => {
     if (grudado.current) irParaOFim();
   }, [turnos, enviando, irParaOFim]);
+
+  // O playground vive numa aba, e painel de aba escondido não tem altura: um
+  // `scrollTo` enquanto ele está oculto não faz nada, e ao voltar a conversa
+  // apareceria no topo. Reposiciona quando a aba volta a ficar visível — sem
+  // animação, porque não houve mensagem nova para acompanhar.
+  useEffect(() => {
+    const lista = listaRef.current;
+    if (!lista) return;
+
+    const observador = new IntersectionObserver(([entrada]) => {
+      if (entrada.isIntersecting && grudado.current) irParaOFim("auto");
+    });
+
+    observador.observe(lista);
+    return () => observador.disconnect();
+  }, [irParaOFim]);
 
   /** Só depois do primeiro envio — focar no carregamento da página incomoda. */
   const jaEnviou = useRef(false);

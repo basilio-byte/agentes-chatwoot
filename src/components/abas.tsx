@@ -84,8 +84,10 @@ export function Abas({
         role="tablist"
         aria-label="Seções da página"
         onKeyDown={navegarPeloTeclado}
-        // Rola na horizontal no celular em vez de quebrar em duas linhas.
-        className="-mx-1 flex gap-1 overflow-x-auto border-b border-line px-1"
+        // Rola na horizontal em tela estreita em vez de quebrar em duas linhas.
+        // `sem-barra` esconde o scrollbar: o clássico do Windows aparecia como
+        // uma faixa cinza sob as abas e fazia a tira parecer quebrada.
+        className="sem-barra flex gap-1 overflow-x-auto border-b border-line"
       >
         {itens.map((item) => {
           const selecionada = item.id === ativa;
@@ -103,20 +105,23 @@ export function Abas({
               tabIndex={selecionada ? 0 : -1}
               onClick={() => selecionar(item.id)}
               className={cn(
-                "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition",
-                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                "-mb-px flex shrink-0 items-center gap-2 rounded-t-lg border-b-2 px-3.5 py-3 text-sm whitespace-nowrap transition-colors",
+                "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent",
                 selecionada
-                  ? "border-accent text-foreground"
-                  : "border-transparent text-muted hover:border-line hover:text-foreground",
+                  ? "border-accent font-medium text-foreground"
+                  : "border-transparent text-muted hover:bg-foreground/[0.03] hover:text-foreground",
               )}
             >
-              {item.icone}
+              <span className={selecionada ? "text-accent" : "text-muted/70"}>
+                {item.icone}
+              </span>
               {item.rotulo}
 
-              {typeof item.contador === "number" ? (
+              {/* Zero não informa nada — só polui a tira. */}
+              {item.contador ? (
                 <span
                   className={cn(
-                    "rounded px-1.5 py-0.5 text-[11px] font-medium",
+                    "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
                     selecionada
                       ? "bg-accent/12 text-accent"
                       : "bg-foreground/[0.06] text-muted",
@@ -128,8 +133,9 @@ export function Abas({
 
               {item.alerta ? (
                 <span
-                  className="size-1.5 rounded-full bg-danger"
-                  aria-label="requer atenção"
+                  title="Precisa de configuração"
+                  className="size-1.5 shrink-0 rounded-full bg-danger"
+                  aria-label="precisa de configuração"
                 />
               ) : null}
             </button>

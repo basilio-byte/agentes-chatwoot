@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import {
   ArrowLeft,
   Bot,
+  FlaskConical,
   History,
   MessagesSquare,
   Plug,
@@ -121,23 +122,33 @@ export default async function AgentePage({
 
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
+      {/* Sem borda inferior: a tira de abas logo abaixo já traz a linha. */}
+      <div className="space-y-3">
         <Link
           href="/agentes"
-          className="inline-flex items-center gap-1 text-sm text-muted hover:underline"
+          className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-foreground"
         >
           <ArrowLeft size={14} aria-hidden />
           Agentes
         </Link>
 
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold">{agente.name}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-[22px] font-semibold tracking-tight">
+            {agente.name}
+          </h1>
           <Badge tone={agente.active ? "success" : "neutral"}>
             {agente.active ? "ativo" : "desligado"}
           </Badge>
+          {agente.isEntry ? <Badge tone="accent">entrada</Badge> : null}
+          <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-xs text-muted">
+            {agente.key}
+          </code>
 
           {editavel ? (
-            <form action={alternarAtivo.bind(null, agente.id)}>
+            <form
+              action={alternarAtivo.bind(null, agente.id)}
+              className="ml-auto"
+            >
               <Button variant="secondary" size="sm">
                 {agente.active ? "Desligar" : "Ligar"}
               </Button>
@@ -146,6 +157,7 @@ export default async function AgentePage({
         </div>
 
         <p className="text-xs text-muted">
+          {agente.description ? `${agente.description} · ` : ""}
           Dono:{" "}
           <strong className="font-medium">{agente.owner?.name ?? "—"}</strong>
           {" · "}
@@ -165,15 +177,15 @@ export default async function AgentePage({
         </Aviso>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_480px]">
-        <Abas
-          inicial={aba}
-          itens={[
-            {
-              id: "agente",
-              rotulo: "Agente",
-              icone: <Bot size={14} aria-hidden />,
-              conteudo: (
+      <Abas
+        inicial={aba}
+        itens={[
+          {
+            id: "agente",
+            rotulo: "Agente",
+            icone: <Bot size={15} aria-hidden />,
+            conteudo: (
+              <div className="max-w-3xl">
                 <AgenteForm
                   acao={atualizarAgente.bind(null, agente.id)}
                   modelos={modelos}
@@ -190,16 +202,30 @@ export default async function AgentePage({
                     routingDescription: agente.routingDescription ?? "",
                   }}
                 />
-              ),
-            },
-            {
-              id: "canal",
-              rotulo: "Canal",
-              icone: <MessagesSquare size={14} aria-hidden />,
-              // Sem bot configurado o agente não atende ninguém — a bolinha
-              // evita ter de abrir a aba para descobrir isso.
-              alerta: !resumoBot.configurado || !resumoBot.instanciaOk,
-              conteudo: (
+              </div>
+            ),
+          },
+          {
+            id: "testar",
+            rotulo: "Testar",
+            icone: <FlaskConical size={15} aria-hidden />,
+            // Painel de aba fica montado: a conversa sobrevive a ir em
+            // Integrações ligar uma ferramenta e voltar para cá.
+            conteudo: (
+              <div className="max-w-3xl">
+                <Playground agentId={agente.id} agenteAtivo={agente.active} />
+              </div>
+            ),
+          },
+          {
+            id: "canal",
+            rotulo: "Canal",
+            icone: <MessagesSquare size={15} aria-hidden />,
+            // Sem bot configurado o agente não atende ninguém — o ponto evita
+            // ter de abrir a aba para descobrir isso.
+            alerta: !resumoBot.configurado || !resumoBot.instanciaOk,
+            conteudo: (
+              <div className="max-w-3xl">
                 <ChatwootBotCard
                   agentId={agente.id}
                   agentName={agente.name}
@@ -207,14 +233,16 @@ export default async function AgentePage({
                   urlWebhook={urlWebhook}
                   podeEditarCredencial={sessao.user.role === UserRole.OWNER}
                 />
-              ),
-            },
-            {
-              id: "equipe",
-              rotulo: "Equipe",
-              icone: <Users size={14} aria-hidden />,
-              contador: colegasAlcancaveis,
-              conteudo: (
+              </div>
+            ),
+          },
+          {
+            id: "equipe",
+            rotulo: "Equipe",
+            icone: <Users size={15} aria-hidden />,
+            contador: colegasAlcancaveis,
+            conteudo: (
+              <div className="max-w-3xl">
                 <EquipeDoAgente
                   agenteId={agente.id}
                   agenteKey={agente.key}
@@ -223,80 +251,73 @@ export default async function AgentePage({
                   colegas={colegas}
                   editavel={editavel}
                 />
-              ),
-            },
-            {
-              id: "integracoes",
-              rotulo: "Integrações",
-              icone: <Plug size={14} aria-hidden />,
-              contador: integracoesLigadas,
-              conteudo: (
+              </div>
+            ),
+          },
+          {
+            id: "integracoes",
+            rotulo: "Integrações",
+            icone: <Plug size={15} aria-hidden />,
+            contador: integracoesLigadas,
+            conteudo: (
+              <div className="max-w-3xl">
                 <IntegracoesDoAgente
                   agentId={agente.id}
                   editavel={editavel}
                   integracoes={integracoesDisponiveis}
                 />
-              ),
-            },
-            {
-              id: "historico",
-              rotulo: "Histórico",
-              icone: <History size={14} aria-hidden />,
-              conteudo: (
-                <>
-                  <Card className="space-y-3">
-                    <h2 className="text-sm font-semibold">
-                      Histórico de versões
+              </div>
+            ),
+          },
+          {
+            id: "historico",
+            rotulo: "Histórico",
+            icone: <History size={15} aria-hidden />,
+            conteudo: (
+              <div className="max-w-3xl space-y-6">
+                <Card className="space-y-3">
+                  <h2 className="text-sm font-semibold">
+                    Histórico de versões
+                  </h2>
+                  <p className="text-xs text-muted">
+                    Uma versão nova é criada quando muda o prompt, o modelo ou o
+                    effort. Editar nome ou descrição não versiona.
+                  </p>
+                  <ul className="space-y-2 text-sm">
+                    {agente.versions.map((versao) => (
+                      <li key={versao.id} className="flex items-baseline gap-2">
+                        <Badge>v{versao.version}</Badge>
+                        <span className="text-muted">
+                          {versao.model} · effort {versao.effort} ·{" "}
+                          {versao.createdBy?.name ?? "—"} ·{" "}
+                          {formatarData(versao.createdAt)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+
+                {editavel ? (
+                  <Card className="space-y-3 border-danger/30">
+                    <h2 className="text-sm font-semibold text-danger">
+                      Excluir agente
                     </h2>
-                    <p className="text-xs text-muted">
-                      Uma versão nova é criada quando muda o prompt, o modelo ou
-                      o effort. Editar nome ou descrição não versiona.
+                    <p className="text-sm text-muted">
+                      Remove o agente e todo o histórico de execuções. Não tem
+                      volta.
                     </p>
-                    <ul className="space-y-2 text-sm">
-                      {agente.versions.map((versao) => (
-                        <li
-                          key={versao.id}
-                          className="flex items-baseline gap-2"
-                        >
-                          <Badge>v{versao.version}</Badge>
-                          <span className="text-muted">
-                            {versao.model} · effort {versao.effort} ·{" "}
-                            {versao.createdBy?.name ?? "—"} ·{" "}
-                            {formatarData(versao.createdAt)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                    <form action={excluirAgente.bind(null, agente.id)}>
+                      <Button variant="danger" size="sm">
+                        Excluir definitivamente
+                      </Button>
+                    </form>
                   </Card>
-
-                  {editavel ? (
-                    <Card className="space-y-3 border-danger/30">
-                      <h2 className="text-sm font-semibold text-danger">
-                        Excluir agente
-                      </h2>
-                      <p className="text-sm text-muted">
-                        Remove o agente e todo o histórico de execuções. Não tem
-                        volta.
-                      </p>
-                      <form action={excluirAgente.bind(null, agente.id)}>
-                        <Button variant="danger" size="sm">
-                          Excluir definitivamente
-                        </Button>
-                      </form>
-                    </Card>
-                  ) : null}
-                </>
-              ),
-            },
-          ]}
-        />
-
-        {/* Fora das abas de propósito: dá para testar enquanto se mexe em
-            qualquer configuração, que é como o playground é usado. */}
-        <div className="xl:sticky xl:top-8 xl:self-start">
-          <Playground agentId={agente.id} agenteAtivo={agente.active} />
-        </div>
-      </div>
+                ) : null}
+              </div>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }
