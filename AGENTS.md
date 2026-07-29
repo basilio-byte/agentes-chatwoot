@@ -165,6 +165,11 @@ escrever. As regras 1 e 2 não dependem dele — o worker checa ao vivo.
   `system` imediatamente antes da mensagem do cliente (`mensagemDeContextoTemporal`
   em `src/lib/tempo.ts`). É a posição que preserva o cache — no início do prompt,
   a data mudaria o prefixo a cada requisição.
+- **O container roda em UTC: toda data exibida precisa de `timeZone` explícito.**
+  As telas são componentes de servidor, então `Intl` sem fuso pega o do
+  container e mostra três horas adiantado. `formatarData` fixa `FUSO_SEAHUB`, e
+  fixar também evita divergência de hidratação entre servidor e navegador.
+  Vale para qualquer formatação nova de data — nada de `toLocaleString()` cru.
 - **Autoria é obrigatória**: `criarAgente` grava `ownerId`, e toda alteração grava
   `updatedById`. As regras que impedem o painel de ficar sem proprietário estão
   isoladas e testadas em `src/server/usuarios/regras.ts`.
