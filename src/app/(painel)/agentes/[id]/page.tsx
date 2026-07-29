@@ -4,7 +4,9 @@ import { headers } from "next/headers";
 import { ArrowLeft } from "lucide-react";
 import { UserRole } from "@/generated/prisma/enums";
 import { resumoDoBot } from "@/server/actions/chatwoot";
+import { listarIntegracoes } from "@/server/integrations/registry";
 import { ChatwootBotCard } from "@/components/chatwoot-bot";
+import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import {
@@ -53,9 +55,32 @@ export default async function AgentePage({
   const urlWebhook = `${protocolo}://${host}/api/webhooks/chatwoot/${agente.id}`;
   const resumoBot = await resumoDoBot(agente.id);
 
-  const integracoesAtivas = agente.integrations.filter(
-    (v) => v.enabled && v.integration.enabled,
-  );
+  // Todas as integrações que existem no registry, com o estado dos dois níveis
+  // do toggle e a allowlist de tools deste agente.
+  const configuradas = await db.integration.findMany();
+  const integracoesDisponiveis = listarIntegracoes().map((definicao) => {
+    const registro = configuradas.find(
+      (i) => i.provider === definicao.provider,
+    );
+    const vinculo = agente.integrations.find(
+      (v) => v.integration.provider === definicao.provider,
+    );
+
+    return {
+      provider: definicao.provider,
+      label: definicao.label,
+      descricao: definicao.descricao,
+      ligadaGlobalmente: registro?.enabled ?? false,
+      configurada: Boolean(registro),
+      ligadaNoAgente: vinculo?.enabled ?? false,
+      permitidas: vinculo?.allowedTools ?? [],
+      tools: definicao.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        escreve: Boolean(t.requiresConfirmation),
+      })),
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -126,31 +151,11 @@ export default async function AgentePage({
             podeEditarCredencial={sessao.user.role === UserRole.OWNER}
           />
 
-          <Card className="space-y-3">
-            <h2 className="text-sm font-semibold">Outras integrações</h2>
-            {integracoesAtivas.length === 0 ? (
-              <p className="text-sm text-muted">
-                Nenhuma integração ligada. O agente responde só com o que está no
-                prompt.{" "}
-                <Link href="/integracoes" className="underline">
-                  Ver integrações
-                </Link>
-              </p>
-            ) : (
-              <ul className="space-y-1 text-sm">
-                {integracoesAtivas.map((vinculo) => (
-                  <li key={vinculo.id} className="flex items-center gap-2">
-                    <Badge tone="accent">{vinculo.integration.provider}</Badge>
-                    <span className="text-muted">
-                      {vinculo.allowedTools.length === 0
-                        ? "todas as tools"
-                        : `${vinculo.allowedTools.length} tool(s)`}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+          <IntegracoesDoAgente
+            agentId={agente.id}
+            editavel={editavel}
+            integracoes={integracoesDisponiveis}
+          />
 
           <Card className="space-y-3">
             <h2 className="text-sm font-semibold">Histórico de versões</h2>
