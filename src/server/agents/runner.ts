@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { mensagemDeContextoTemporal } from "@/lib/tempo";
 import { getOpenRouter } from "./openrouter";
 import { estimarCusto, obterModelo, type UsoTokens } from "./catalogo";
 import {
@@ -97,6 +98,11 @@ export async function executarAgente(
       role: m.role,
       content: m.content,
     })),
+    // Contexto temporal vai aqui, e não no system prompt, de propósito: a data
+    // muda a cada requisição e, no início do prompt, invalidaria o cache do
+    // provedor em toda mensagem da conversa. No fim, tudo antes dela continua
+    // cacheável.
+    { role: "system" as const, content: mensagemDeContextoTemporal() },
     { role: "user" as const, content: entrada.mensagem },
   ];
 

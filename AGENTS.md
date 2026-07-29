@@ -83,6 +83,15 @@ se mexer no cliente, rode-o.
   de propósito: um redirect devolveria HTML onde o cliente espera JSON.
 - **Nada de timestamp, UUID ou data dentro do system prompt.** Invalida o prompt
   cache a cada request e multiplica o custo. Contexto dinâmico entra como mensagem.
+- **Todo agente recebe data/hora de São Paulo** em toda execução, como mensagem
+  `system` imediatamente antes da mensagem do cliente (`mensagemDeContextoTemporal`
+  em `src/lib/tempo.ts`). É a posição que preserva o cache — no início do prompt,
+  a data mudaria o prefixo a cada requisição.
+- **Autoria é obrigatória**: `criarAgente` grava `ownerId`, e toda alteração grava
+  `updatedById`. As regras que impedem o painel de ficar sem proprietário estão
+  isoladas e testadas em `src/server/usuarios/regras.ts`.
+- **O logo da Seahub só existe em branco.** No tema claro ele é invertido por CSS
+  (`.logo-seahub`) em vez de manter dois arquivos.
 - **Tools são ordenadas por nome** antes de ir para a API (`paraFerramentasAnthropic`).
   Reordenar invalida o cache do prefixo inteiro. Existe teste cobrindo isso.
 - **Toggle de integração é de dois níveis** (`Integration.enabled` ∧

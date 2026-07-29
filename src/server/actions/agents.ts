@@ -93,6 +93,8 @@ export async function criarAgente(
     data: {
       ...parsed.data,
       description: parsed.data.description || null,
+      ownerId: sessao.user.id,
+      updatedById: sessao.user.id,
       versions: {
         create: {
           version: 1,
@@ -136,7 +138,11 @@ export async function atualizarAgente(
   await db.$transaction(async (tx) => {
     await tx.agent.update({
       where: { id },
-      data: { ...parsed.data, description: parsed.data.description || null },
+      data: {
+        ...parsed.data,
+        description: parsed.data.description || null,
+        updatedById: sessao.user.id,
+      },
     });
 
     if (mudouComportamento) {

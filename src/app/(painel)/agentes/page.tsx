@@ -1,10 +1,20 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Bot, Plus } from "lucide-react";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import { alternarAtivo } from "@/server/actions/agents";
-import { Badge, Button, Card } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Meta,
+  PageHeader,
+  Ponto,
+} from "@/components/ui";
 import { formatarData } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
 
 export default async function AgentesPage() {
   const sessao = await exigirSessao();
@@ -13,65 +23,91 @@ export default async function AgentesPage() {
   const agentes = await db.agent.findMany({
     orderBy: [{ active: "desc" }, { name: "asc" }],
     include: {
-      _count: { select: { inboxes: true, runs: true } },
+      owner: { select: { name: true } },
+      updatedBy: { select: { name: true } },
+      chatwootBot: { select: { botName: true } },
+      _count: { select: { runs: true, conversations: true } },
     },
   });
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Agentes</h1>
-          <p className="text-sm text-muted">
-            Cada agente tem seu próprio prompt e suas próprias integrações.
-          </p>
-        </div>
-
-        {editavel ? (
-          <Link
-            href="/agentes/novo"
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-accent px-4 text-sm font-medium text-white hover:opacity-90"
-          >
-            <Plus size={16} aria-hidden />
-            Novo agente
-          </Link>
-        ) : null}
-      </header>
+    <>
+      <PageHeader
+        titulo="Agentes"
+        descricao="Cada agente tem o próprio prompt, modelo e integrações. Um agente desligado não responde no Chatwoot, mas continua disponível no playground."
+        acoes={
+          editavel ? (
+            <Link
+              href="/agentes/novo"
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white shadow-sm transition hover:brightness-110"
+            >
+              <Plus size={16} aria-hidden />
+              Novo agente
+            </Link>
+          ) : null
+        }
+      />
 
       {agentes.length === 0 ? (
-        <Card className="text-center">
-          <p className="text-sm text-muted">
-            Nenhum agente ainda. Crie o primeiro e teste no playground antes de
-            ligar no Chatwoot.
-          </p>
-        </Card>
+        <EmptyState
+          icone={<Bot size={18} aria-hidden />}
+          titulo="Nenhum agente ainda"
+          descricao="Crie o primeiro e ajuste o prompt no playground antes de ligá-lo no Chatwoot."
+          acao={
+            editavel ? (
+              <Link
+                href="/agentes/novo"
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white"
+              >
+                <Plus size={16} aria-hidden />
+                Criar agente
+              </Link>
+            ) : null
+          }
+        />
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {agentes.map((agente) => (
-            <Card key={agente.id} className="flex items-center gap-4">
+            <Card
+              key={agente.id}
+              className="flex flex-wrap items-center gap-x-4 gap-y-3 p-4"
+            >
+              <Ponto ligado={agente.active} />
+
               <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Link
                     href={`/agentes/${agente.id}`}
-                    className="font-medium hover:underline"
+                    className="text-sm font-medium hover:text-accent hover:underline"
                   >
                     {agente.name}
                   </Link>
-                  <Badge tone={agente.active ? "success" : "neutral"}>
-                    {agente.active ? "ativo" : "desligado"}
-                  </Badge>
+                  {agente.chatwootBot ? (
+                    <Badge tone="accent">{agente.chatwootBot.botName}</Badge>
+                  ) : (
+                    <Badge>sem bot</Badge>
+                  )}
                 </div>
 
-                <p className="truncate text-sm text-muted">
+                <p className="truncate text-[13px] text-muted">
                   {agente.description || "Sem descrição"}
                 </p>
 
-                <p className="text-xs text-muted">
-                  <span className="font-mono">{agente.model}</span> · effort{" "}
-                  {agente.effort} · {agente._count.inboxes} inbox(es) ·{" "}
-                  {agente._count.runs} execuções · atualizado em{" "}
+                <Meta className="block truncate font-mono">{agente.model}</Meta>
+              </div>
+
+              <div className="space-y-1 text-right">
+                <Meta className="block">
+                  {agente._count.conversations} conversa(s) ·{" "}
+                  {agente._count.runs} execução(ões)
+                </Meta>
+                <Meta className="block">
+                  dono: {agente.owner?.name ?? "—"}
+                </Meta>
+                <Meta className="block">
+                  alterado por {agente.updatedBy?.name ?? "—"} em{" "}
                   {formatarData(agente.updatedAt)}
-                </p>
+                </Meta>
               </div>
 
               {editavel ? (
@@ -85,6 +121,6 @@ export default async function AgentesPage() {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }

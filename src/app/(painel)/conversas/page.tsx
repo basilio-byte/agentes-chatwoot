@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MessagesSquare } from "lucide-react";
 import { db } from "@/lib/db";
 import { exigirSessao } from "@/server/auth-guard";
 import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
@@ -7,7 +8,7 @@ import {
   IntegrationProvider,
   RunStatus,
 } from "@/generated/prisma/enums";
-import { Badge, Card } from "@/components/ui";
+import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { formatarData, formatarUsd } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -55,20 +56,17 @@ export default async function ConversasPage() {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold">Conversas</h1>
-        <p className="text-sm text-muted">
-          Atendimentos vindos do Chatwoot. Últimos 50.
-        </p>
-      </header>
+      <PageHeader
+        titulo="Conversas"
+        descricao="Atendimentos vindos do Chatwoot, com o custo e a latência de cada resposta. Últimos 50."
+      />
 
       {conversas.length === 0 ? (
-        <Card>
-          <p className="text-sm text-muted">
-            Nenhuma conversa ainda. Configure o bot de um agente, vincule a uma
-            inbox e mande uma mensagem por lá.
-          </p>
-        </Card>
+        <EmptyState
+          icone={<MessagesSquare size={18} aria-hidden />}
+          titulo="Nenhuma conversa ainda"
+          descricao="Configure o bot de um agente, vincule a uma inbox e mande uma mensagem por lá. Lembre de ligar o worker, senão as mensagens ficam na fila."
+        />
       ) : (
         <div className="space-y-2">
           {conversas.map((conversa) => {

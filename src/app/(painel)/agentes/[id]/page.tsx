@@ -31,8 +31,14 @@ export default async function AgentePage({
   const agente = await db.agent.findUnique({
     where: { id },
     include: {
-      versions: { orderBy: { version: "desc" }, take: 5 },
+      versions: {
+        orderBy: { version: "desc" },
+        take: 5,
+        include: { createdBy: { select: { name: true } } },
+      },
       integrations: { include: { integration: true } },
+      owner: { select: { name: true } },
+      updatedBy: { select: { name: true } },
     },
   });
   if (!agente) notFound();
@@ -76,6 +82,14 @@ export default async function AgentePage({
             </form>
           ) : null}
         </div>
+
+        <p className="text-xs text-muted">
+          Dono: <strong className="font-medium">{agente.owner?.name ?? "—"}</strong>
+          {" · "}
+          última alteração por{" "}
+          <strong className="font-medium">{agente.updatedBy?.name ?? "—"}</strong>{" "}
+          em {formatarData(agente.updatedAt)}
+        </p>
       </div>
 
       {!openrouterConfigurada() ? (
@@ -146,6 +160,7 @@ export default async function AgentePage({
                   <Badge>v{versao.version}</Badge>
                   <span className="text-muted">
                     {versao.model} · effort {versao.effort} ·{" "}
+                    {versao.createdBy?.name ?? "—"} ·{" "}
                     {formatarData(versao.createdAt)}
                   </span>
                 </li>

@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { ScrollText } from "lucide-react";
 import { db } from "@/lib/db";
 import { exigirSessao } from "@/server/auth-guard";
 import { RunStatus } from "@/generated/prisma/enums";
-import { Badge, Card } from "@/components/ui";
+import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { formatarData, formatarUsd } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
 
 /**
  * Trace de execuções. É esta tela que responde "por que o bot respondeu isso?".
@@ -22,19 +25,17 @@ export default async function ExecucoesPage() {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold">Execuções</h1>
-        <p className="text-sm text-muted">
-          Últimas 50 execuções, com tokens, custo e tools chamadas.
-        </p>
-      </header>
+      <PageHeader
+        titulo="Execuções"
+        descricao="Cada resposta gerada, com tokens, custo e tools chamadas. É esta tela que responde por que o bot respondeu daquele jeito. Últimas 50."
+      />
 
       {execucoes.length === 0 ? (
-        <Card>
-          <p className="text-sm text-muted">
-            Nada ainda. Use o playground de um agente para gerar a primeira.
-          </p>
-        </Card>
+        <EmptyState
+          icone={<ScrollText size={18} aria-hidden />}
+          titulo="Nenhuma execução ainda"
+          descricao="Use o playground de um agente para gerar a primeira."
+        />
       ) : (
         <div className="space-y-2">
           {execucoes.map((execucao) => (

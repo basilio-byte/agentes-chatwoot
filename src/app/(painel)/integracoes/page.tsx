@@ -10,7 +10,7 @@ import {
 } from "@/generated/prisma/enums";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
-import { Aviso, Badge, Card } from "@/components/ui";
+import { Aviso, Badge, Card, PageHeader } from "@/components/ui";
 import { formatarData } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -37,13 +37,16 @@ export default async function IntegracoesPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold">Integrações</h1>
-        <p className="text-sm text-muted">
-          O liga/desliga aqui é <strong>global</strong>: desligou, nenhum agente
-          enxerga as tools. Cada agente ainda tem o próprio toggle na tela dele.
-        </p>
-      </header>
+      <PageHeader
+        titulo="Integrações"
+        descricao={
+          <>
+            O liga/desliga aqui é <strong>global</strong>: desligou, nenhum
+            agente enxerga as tools. Cada agente ainda tem o próprio toggle na
+            tela dele.
+          </>
+        }
+      />
 
       <Card className="space-y-4">
         <div className="flex items-center gap-2">

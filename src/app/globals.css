@@ -1,13 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fbfbfa;
+  --background: #f7f7f5;
   --surface: #ffffff;
-  --foreground: #1c1c1a;
-  --muted: #6b6b66;
-  --border: #e4e4e0;
+  --foreground: #1a1a18;
+  --muted: #6e6e68;
+  --border: #e6e6e1;
   --accent: #b4541f;
-  --accent-soft: #fdf1e9;
+  --accent-soft: #fbf1ea;
   --danger: #b3261e;
   --success: #1a7f4b;
 }
@@ -29,10 +29,10 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #131312;
-    --surface: #1b1b1a;
-    --foreground: #ececea;
-    --muted: #9a9a94;
-    --border: #2e2e2c;
+    --surface: #1a1a19;
+    --foreground: #ededea;
+    --muted: #9b9b94;
+    --border: #2c2c29;
     --accent: #e0834a;
     --accent-soft: #2a1d14;
     --danger: #f0857c;
@@ -43,4 +43,25 @@
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+/*
+ * O logo da Seahub existe só em branco. Como é monocromático, inverter no tema
+ * claro resolve sem manter dois arquivos: branco vira preto, e o alfa continua
+ * intacto.
+ */
+.logo-seahub {
+  filter: invert(1);
+}
+
+@media (prefers-color-scheme: dark) {
+  .logo-seahub {
+    filter: none;
+  }
+}
+
+/* Barras de rolagem discretas nas listas longas do painel. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
