@@ -216,6 +216,12 @@ generosos por isso, e só são seguros porque encostar neles escala para humano.
 - **Autoria é obrigatória**: `criarAgente` grava `ownerId`, e toda alteração grava
   `updatedById`. As regras que impedem o painel de ficar sem proprietário estão
   isoladas e testadas em `src/server/usuarios/regras.ts`.
+- **Página longa usa `<Abas>`** (`src/components/abas.tsx`). O conteúdo chega já
+  renderizado do servidor e só é escondido/mostrado: trocar de aba não refaz
+  requisição nem perde rascunho de formulário em outra aba. A aba vai para a URL
+  por `history.replaceState` — **não** use `router.replace`, que reexecuta o
+  componente de servidor e mata a troca instantânea. O playground fica **fora**
+  das abas, para dar para testar enquanto se mexe em qualquer configuração.
 - **O logo da Seahub só existe em branco.** No tema claro ele é invertido por CSS
   (`.logo-seahub`) em vez de manter dois arquivos.
 - **Tools são ordenadas por nome** antes de ir para a API (`paraFerramentasAnthropic`).

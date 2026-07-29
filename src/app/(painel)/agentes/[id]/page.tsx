@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
-import { ArrowLeft } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  History,
+  MessagesSquare,
+  Plug,
+  Users,
+} from "lucide-react";
+import { Abas } from "@/components/abas";
 import { UserRole } from "@/generated/prisma/enums";
 import { resumoDoBot } from "@/server/actions/chatwoot";
 import { listarIntegracoes } from "@/server/integrations/registry";
@@ -25,10 +33,13 @@ import { listarModelos } from "@/server/agents/catalogo";
 
 export default async function AgentePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ aba?: string }>;
 }) {
   const { id } = await params;
+  const { aba } = await searchParams;
   const sessao = await exigirSessao();
   const editavel = podeEditar(sessao.user.role);
 
@@ -99,6 +110,15 @@ export default async function AgentePage({
     };
   });
 
+  // Contadores das abas: mostram o essencial sem obrigar a entrar em cada uma.
+  const temRoteamento = (agente.routingDescription ?? "").trim().length > 0;
+  const colegasAlcancaveis = colegas.filter(
+    (c) => c.active && (c.routingDescription ?? "").trim().length > 0,
+  ).length;
+  const integracoesLigadas = integracoesDisponiveis.filter(
+    (i) => i.ligadaNoAgente && i.ligadaGlobalmente,
+  ).length;
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -126,10 +146,13 @@ export default async function AgentePage({
         </div>
 
         <p className="text-xs text-muted">
-          Dono: <strong className="font-medium">{agente.owner?.name ?? "—"}</strong>
+          Dono:{" "}
+          <strong className="font-medium">{agente.owner?.name ?? "—"}</strong>
           {" · "}
           última alteração por{" "}
-          <strong className="font-medium">{agente.updatedBy?.name ?? "—"}</strong>{" "}
+          <strong className="font-medium">
+            {agente.updatedBy?.name ?? "—"}
+          </strong>{" "}
           em {formatarData(agente.updatedAt)}
         </p>
       </div>
@@ -143,82 +166,133 @@ export default async function AgentePage({
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_480px]">
-        <div className="space-y-6">
-          <AgenteForm
-            acao={atualizarAgente.bind(null, agente.id)}
-            modelos={modelos}
-            rotuloEnvio="Salvar alterações"
-            somenteLeitura={!editavel}
-            valores={{
-              name: agente.name,
-              description: agente.description ?? "",
-              systemPrompt: agente.systemPrompt,
-              model: agente.model,
-              effort: agente.effort,
-              maxTokens: agente.maxTokens,
-              maxToolIterations: agente.maxToolIterations,
-              routingDescription: agente.routingDescription ?? "",
-            }}
-          />
+        <Abas
+          inicial={aba}
+          itens={[
+            {
+              id: "agente",
+              rotulo: "Agente",
+              icone: <Bot size={14} aria-hidden />,
+              conteudo: (
+                <AgenteForm
+                  acao={atualizarAgente.bind(null, agente.id)}
+                  modelos={modelos}
+                  rotuloEnvio="Salvar alterações"
+                  somenteLeitura={!editavel}
+                  valores={{
+                    name: agente.name,
+                    description: agente.description ?? "",
+                    systemPrompt: agente.systemPrompt,
+                    model: agente.model,
+                    effort: agente.effort,
+                    maxTokens: agente.maxTokens,
+                    maxToolIterations: agente.maxToolIterations,
+                    routingDescription: agente.routingDescription ?? "",
+                  }}
+                />
+              ),
+            },
+            {
+              id: "canal",
+              rotulo: "Canal",
+              icone: <MessagesSquare size={14} aria-hidden />,
+              // Sem bot configurado o agente não atende ninguém — a bolinha
+              // evita ter de abrir a aba para descobrir isso.
+              alerta: !resumoBot.configurado || !resumoBot.instanciaOk,
+              conteudo: (
+                <ChatwootBotCard
+                  agentId={agente.id}
+                  agentName={agente.name}
+                  resumo={resumoBot}
+                  urlWebhook={urlWebhook}
+                  podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                />
+              ),
+            },
+            {
+              id: "equipe",
+              rotulo: "Equipe",
+              icone: <Users size={14} aria-hidden />,
+              contador: colegasAlcancaveis,
+              conteudo: (
+                <EquipeDoAgente
+                  agenteId={agente.id}
+                  agenteKey={agente.key}
+                  ehEntrada={agente.isEntry}
+                  temDescricaoDeRoteamento={temRoteamento}
+                  colegas={colegas}
+                  editavel={editavel}
+                />
+              ),
+            },
+            {
+              id: "integracoes",
+              rotulo: "Integrações",
+              icone: <Plug size={14} aria-hidden />,
+              contador: integracoesLigadas,
+              conteudo: (
+                <IntegracoesDoAgente
+                  agentId={agente.id}
+                  editavel={editavel}
+                  integracoes={integracoesDisponiveis}
+                />
+              ),
+            },
+            {
+              id: "historico",
+              rotulo: "Histórico",
+              icone: <History size={14} aria-hidden />,
+              conteudo: (
+                <>
+                  <Card className="space-y-3">
+                    <h2 className="text-sm font-semibold">
+                      Histórico de versões
+                    </h2>
+                    <p className="text-xs text-muted">
+                      Uma versão nova é criada quando muda o prompt, o modelo ou
+                      o effort. Editar nome ou descrição não versiona.
+                    </p>
+                    <ul className="space-y-2 text-sm">
+                      {agente.versions.map((versao) => (
+                        <li
+                          key={versao.id}
+                          className="flex items-baseline gap-2"
+                        >
+                          <Badge>v{versao.version}</Badge>
+                          <span className="text-muted">
+                            {versao.model} · effort {versao.effort} ·{" "}
+                            {versao.createdBy?.name ?? "—"} ·{" "}
+                            {formatarData(versao.createdAt)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </Card>
 
-          <ChatwootBotCard
-            agentId={agente.id}
-            agentName={agente.name}
-            resumo={resumoBot}
-            urlWebhook={urlWebhook}
-            podeEditarCredencial={sessao.user.role === UserRole.OWNER}
-          />
+                  {editavel ? (
+                    <Card className="space-y-3 border-danger/30">
+                      <h2 className="text-sm font-semibold text-danger">
+                        Excluir agente
+                      </h2>
+                      <p className="text-sm text-muted">
+                        Remove o agente e todo o histórico de execuções. Não tem
+                        volta.
+                      </p>
+                      <form action={excluirAgente.bind(null, agente.id)}>
+                        <Button variant="danger" size="sm">
+                          Excluir definitivamente
+                        </Button>
+                      </form>
+                    </Card>
+                  ) : null}
+                </>
+              ),
+            },
+          ]}
+        />
 
-          <EquipeDoAgente
-            agenteId={agente.id}
-            agenteKey={agente.key}
-            ehEntrada={agente.isEntry}
-            temDescricaoDeRoteamento={
-              (agente.routingDescription ?? "").trim().length > 0
-            }
-            colegas={colegas}
-            editavel={editavel}
-          />
-
-          <IntegracoesDoAgente
-            agentId={agente.id}
-            editavel={editavel}
-            integracoes={integracoesDisponiveis}
-          />
-
-          <Card className="space-y-3">
-            <h2 className="text-sm font-semibold">Histórico de versões</h2>
-            <ul className="space-y-2 text-sm">
-              {agente.versions.map((versao) => (
-                <li key={versao.id} className="flex items-baseline gap-2">
-                  <Badge>v{versao.version}</Badge>
-                  <span className="text-muted">
-                    {versao.model} · effort {versao.effort} ·{" "}
-                    {versao.createdBy?.name ?? "—"} ·{" "}
-                    {formatarData(versao.createdAt)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-
-          {editavel ? (
-            <Card className="space-y-3 border-danger/30">
-              <h2 className="text-sm font-semibold text-danger">
-                Excluir agente
-              </h2>
-              <p className="text-sm text-muted">
-                Remove o agente e todo o histórico de execuções. Não tem volta.
-              </p>
-              <form action={excluirAgente.bind(null, agente.id)}>
-                <Button variant="danger" size="sm">
-                  Excluir definitivamente
-                </Button>
-              </form>
-            </Card>
-          ) : null}
-        </div>
-
+        {/* Fora das abas de propósito: dá para testar enquanto se mexe em
+            qualquer configuração, que é como o playground é usado. */}
         <div className="xl:sticky xl:top-8 xl:self-start">
           <Playground agentId={agente.id} agenteAtivo={agente.active} />
         </div>
