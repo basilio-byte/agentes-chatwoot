@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, Trash2 } from "lucide-react";
 import { Aviso, Badge, Button, Card, Input } from "@/components/ui";
 import { formatarUsd } from "@/lib/utils";
+import { estaNoFim } from "@/lib/rolagem";
 
 type Turno = {
   role: "user" | "assistant";
@@ -31,11 +32,45 @@ export function Playground({
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listaRef = useRef<HTMLDivElement>(null);
+  /** Enquanto verdadeiro, mensagem nova traz a conversa para o fim sozinha. */
+  const grudado = useRef(true);
+
+  const irParaOFim = useCallback(() => {
+    const lista = listaRef.current;
+    if (!lista) return;
+
+    // Quem pediu menos animação no sistema não deve levar um salto animado.
+    const suave = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    lista.scrollTo({
+      top: lista.scrollHeight,
+      behavior: suave ? "smooth" : "auto",
+    });
+  }, []);
+
+  // Roda tanto na resposta quanto no "Pensando…", que também empurra o conteúdo.
+  useEffect(() => {
+    if (grudado.current) irParaOFim();
+  }, [turnos, enviando, irParaOFim]);
+
+  /** Só depois do primeiro envio — focar no carregamento da página incomoda. */
+  const jaEnviou = useRef(false);
+
+  // O campo fica desabilitado enquanto o agente pensa, e o navegador tira o
+  // foco de campo desabilitado. Sem isto, cada teste exige clicar no campo.
+  useEffect(() => {
+    if (!enviando && jaEnviou.current) inputRef.current?.focus();
+  }, [enviando]);
 
   async function enviar(evento: React.FormEvent<HTMLFormElement>) {
     evento.preventDefault();
     const mensagem = inputRef.current?.value.trim();
     if (!mensagem || enviando) return;
+
+    // Mandar mensagem é intenção explícita de continuar a conversa: volta para
+    // o fim mesmo que se estivesse lendo algo mais acima.
+    grudado.current = true;
+    jaEnviou.current = true;
 
     const historico = turnos.map(({ role, content }) => ({ role, content }));
     setTurnos((atual) => [...atual, { role: "user", content: mensagem }]);
@@ -97,6 +132,7 @@ export function Playground({
           onClick={() => {
             setTurnos([]);
             setErro(null);
+            grudado.current = true;
           }}
           disabled={turnos.length === 0}
         >
@@ -112,7 +148,13 @@ export function Playground({
         </Aviso>
       ) : null}
 
-      <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+      <div
+        ref={listaRef}
+        onScroll={(e) => {
+          grudado.current = estaNoFim(e.currentTarget);
+        }}
+        className="flex-1 space-y-3 overflow-y-auto pr-1"
+      >
         {turnos.length === 0 ? (
           <p className="pt-16 text-center text-sm text-muted">
             Mande uma mensagem como se fosse um cliente.
