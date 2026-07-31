@@ -77,6 +77,14 @@ export type ToolDefinition<TInput = unknown> = {
 export type ResultadoTeste = {
   ok: boolean;
   mensagem: string;
+  /**
+   * O teste não conseguiu decidir — nem sucesso nem falha.
+   *
+   * Existe porque credencial restrita (o token de Agent Bot do Chatwoot) é
+   * recusada pelos endpoints amplos que serviriam de "ping". Chamar isso de
+   * erro manda o operador procurar problema onde não há.
+   */
+  indeterminado?: boolean;
 };
 
 export type IntegrationDefinition = {

@@ -181,7 +181,9 @@ export function ChatwootBotCard({
       </form>
 
       {teste?.erro ? <Aviso tone="danger">{teste.erro}</Aviso> : null}
-      {teste?.ok ? <Aviso>{teste.ok}</Aviso> : null}
+      {/* Neutro, não vermelho: o teste não conseguiu decidir. */}
+      {teste?.aviso ? <Aviso>{teste.aviso}</Aviso> : null}
+      {teste?.ok ? <Aviso tone="success">{teste.ok}</Aviso> : null}
 
       {resumo.rotatedAt ? (
         <p className="text-xs text-muted">

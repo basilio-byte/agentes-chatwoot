@@ -25,6 +25,8 @@ export type EstadoEscopo = { ok?: string; erro?: string };
 export type EstadoChatwoot = {
   ok?: string;
   erro?: string;
+  /** Nem sucesso nem falha — ver ResultadoTeste.indeterminado. */
+  aviso?: string;
   camposComErro?: Record<string, string>;
 };
 
@@ -155,20 +157,29 @@ export async function testarConexaoDoAgente(
 
   const resultado = await cliente.testar();
 
+  // Indeterminado não marca a integração como quebrada: token de Agent Bot
+  // recusado num endpoint de usuário não é defeito de configuração.
+  const status = resultado.ok
+    ? IntegrationStatus.OK
+    : resultado.indeterminado
+      ? IntegrationStatus.NOT_CONFIGURED
+      : IntegrationStatus.ERROR;
+
   await db.integration.update({
     where: { provider: IntegrationProvider.CHATWOOT },
     data: {
-      status: resultado.ok ? IntegrationStatus.OK : IntegrationStatus.ERROR,
+      status,
       lastCheckedAt: new Date(),
-      lastError: resultado.ok ? null : resultado.mensagem,
+      lastError: resultado.ok || resultado.indeterminado ? null : resultado.mensagem,
     },
   });
 
   revalidatePath("/integracoes");
   revalidatePath(`/agentes/${agentId}`);
 
-  return resultado.ok
-    ? { ok: resultado.mensagem }
+  if (resultado.ok) return { ok: resultado.mensagem };
+  return resultado.indeterminado
+    ? { aviso: resultado.mensagem }
     : { erro: resultado.mensagem };
 }
 

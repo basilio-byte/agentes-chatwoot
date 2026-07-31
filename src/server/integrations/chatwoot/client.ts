@@ -38,39 +38,82 @@ export class ChatwootClient {
   }
 
   /**
-   * Testa credencial + configuração de uma vez.
+   * Testa o que dá para testar de fora de um atendimento.
    *
-   * Traduz o status HTTP para uma causa provável — 401 e 404 significam coisas
-   * bem diferentes aqui e o operador precisa saber qual dos dois é.
+   * ⚠ O token de **Agent Bot** do Chatwoot é restrito: ele age dentro das
+   * conversas das caixas em que o bot está vinculado, e **não** lista conversas
+   * da conta. Então 401 no endpoint amplo abaixo é o comportamento esperado de
+   * um token de bot correto — chamar isso de "token recusado" mandava o
+   * operador trocar uma credencial que estava certa (relatado em 2026-07-31).
+   *
+   * O que este teste consegue afirmar: a instância responde e a conta existe.
+   * Quem valida o token de verdade é a primeira mensagem real.
    */
-  async testar(): Promise<{ ok: boolean; mensagem: string }> {
+  async testar(): Promise<{
+    ok: boolean;
+    mensagem: string;
+    indeterminado?: boolean;
+  }> {
     try {
       await this.requisitar("/conversations?status=all&page=1");
-      return { ok: true, mensagem: "Conexão bem-sucedida." };
+      return {
+        ok: true,
+        mensagem:
+          "Conexão bem-sucedida. Este token tem acesso amplo à conta — se era para ser um Agent Bot, confira se não colou um token pessoal.",
+      };
     } catch (erro) {
-      if (erro instanceof ChatwootApiError) {
-        if (erro.status === 401 || erro.status === 403) {
-          return {
-            ok: false,
-            mensagem:
-              "Token recusado. Confira se é o access token do Agent Bot (não o token pessoal de agente).",
-          };
-        }
-        if (erro.status === 404) {
-          return {
-            ok: false,
-            mensagem:
-              "Não encontrado. Confira a URL da instância e o id da conta.",
-          };
-        }
-        return { ok: false, mensagem: `Chatwoot respondeu ${erro.status}.` };
+      if (!(erro instanceof ChatwootApiError)) {
+        return {
+          ok: false,
+          mensagem:
+            erro instanceof Error
+              ? `Falha de rede: ${erro.message}`
+              : "Falha desconhecida.",
+        };
       }
+
+      if (erro.status === 401 || erro.status === 403) {
+        // Separa "instância/conta erradas" de "token só não pode listar".
+        const instancia = await this.instanciaResponde();
+        if (!instancia.ok) return instancia;
+
+        return {
+          ok: false,
+          indeterminado: true,
+          mensagem:
+            "A instância respondeu, mas este token não lista conversas da conta — o que é o esperado de um Agent Bot. Não dá para confirmar a credencial por aqui: vincule o bot a uma caixa de entrada no Chatwoot e mande uma mensagem de teste. O resultado aparece em Conversas e Execuções.",
+        };
+      }
+
+      if (erro.status === 404) {
+        return {
+          ok: false,
+          mensagem: "Não encontrado. Confira a URL da instância e o id da conta.",
+        };
+      }
+
+      return { ok: false, mensagem: `Chatwoot respondeu ${erro.status}.` };
+    }
+  }
+
+  /**
+   * A instância está no ar e é um Chatwoot?
+   *
+   * Sem token: separa erro de URL/rede de erro de permissão. Qualquer resposta
+   * HTTP serve — o que importa é o host existir e falar.
+   */
+  private async instanciaResponde(): Promise<{ ok: boolean; mensagem: string }> {
+    try {
+      await fetch(`${this.config.baseUrl}/api`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      return { ok: true, mensagem: "" };
+    } catch (erro) {
       return {
         ok: false,
-        mensagem:
-          erro instanceof Error
-            ? `Falha de rede: ${erro.message}`
-            : "Falha desconhecida.",
+        mensagem: `A instância não respondeu em ${this.config.baseUrl} — confira a URL. (${
+          erro instanceof Error ? erro.message : "erro de rede"
+        })`,
       };
     }
   }
