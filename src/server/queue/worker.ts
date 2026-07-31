@@ -163,7 +163,9 @@ async function atender(job: Job<JobAtendimento>) {
     } else {
       await db.conversation.updateMany({
         where: { chatwootConversationId },
-        data: { status: ConversationStatus.HUMAN },
+        // Zera o relógio junto: a partir daqui quem deve resposta é uma
+        // pessoa, e o vigia não cobra pessoa.
+        data: { status: ConversationStatus.HUMAN, aguardandoDesde: null },
       });
     }
     return;

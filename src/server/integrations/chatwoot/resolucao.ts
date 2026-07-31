@@ -27,6 +27,9 @@ export async function marcarResolvida(chatwootConversationId: number) {
       resolvidaEm: agora,
       historicoDesde: agora,
       agentId: null,
+      // Ninguém mais está esperando. Sem zerar, o relógio antigo sobreviveria
+      // à reabertura e o vigia escalaria a conversa nova no primeiro minuto.
+      aguardandoDesde: null,
       handoffParaAgentId: null,
       handoffResumo: null,
       handoffMotivo: null,
