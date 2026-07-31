@@ -11,7 +11,7 @@ import {
   IntegrationProvider,
   RunStatus,
 } from "@/generated/prisma/enums";
-import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
+import { Aviso, Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { formatarData, formatarUsd } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +70,9 @@ export default async function ConversasPage({
   ]);
 
   const worker = await estadoDoWorker();
+  // Sem nenhuma porta, o Chatwoot não tem para onde entregar — e o sintoma é
+  // silêncio total, sem nada em lugar nenhum para investigar.
+  const portas = await db.agentChatwootBot.count();
   const config = chatwootConfigSchema.safeParse(integracao?.config ?? {});
   const linkChatwoot = (id: number) =>
     config.success
@@ -202,6 +205,15 @@ export default async function ConversasPage({
       />
 
       <EstadoDoWorker estado={worker} />
+
+      {portas === 0 ? (
+        <Aviso tone="danger">
+          <strong>Nenhum agente é porta de uma caixa de entrada.</strong> Sem
+          isso o Chatwoot não tem para onde entregar as mensagens e nada chega
+          aqui. Abra o agente que vai atender a caixa, vá na aba Canal e use{" "}
+          <strong>Tornar porta de uma caixa</strong>.
+        </Aviso>
+      ) : null}
 
       <Abas
         inicial={aba}

@@ -16,11 +16,10 @@ import { resumoDoBot } from "@/server/actions/chatwoot";
 import { obterConfigChatwoot } from "@/server/integrations/chatwoot/credenciais";
 import { listarIntegracoes } from "@/server/integrations/registry";
 import { tokensAproximadosDaTool } from "@/server/integrations/resolve";
-import { ChatwootBotCard } from "@/components/chatwoot-bot";
+import { CanalDoAgente } from "@/components/canal-do-agente";
 import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
 import { EquipeDoAgente } from "@/components/equipe-do-agente";
 import { EscopoDoAgente } from "@/components/escopo-do-agente";
-import { EntregasDoWebhook } from "@/components/entregas-do-webhook";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import {
@@ -235,22 +234,19 @@ export default async function AgentePage({
             id: "canal",
             rotulo: "Canal",
             icone: <MessagesSquare size={15} aria-hidden />,
-            // Sem bot configurado o agente não atende ninguém — o ponto evita
-            // ter de abrir a aba para descobrir isso.
             // Sem bot não é problema para quem atende por transferência. O que
-            // é problema: ser a porta (tem bot) com a instância mal configurada.
+            // é problema: ser a porta e a instância estar mal configurada.
             alerta: resumoBot.configurado && !resumoBot.instanciaOk,
             conteudo: (
               <div className="max-w-3xl space-y-6">
-                <ChatwootBotCard
+                <CanalDoAgente
                   agentId={agente.id}
                   agentName={agente.name}
                   resumo={resumoBot}
                   urlWebhook={urlWebhook}
                   podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                  entregas={entregas}
                 />
-
-                <EntregasDoWebhook entregas={entregas} />
 
                 <EscopoDoAgente
                   agentId={agente.id}
