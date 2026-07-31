@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getRedis } from "./conexao";
 import { FILA_ATENDIMENTO, type JobAtendimento } from "./atendimento";
 import { iniciarBatimento } from "./batimento";
+import { iniciarLimpeza } from "./limpeza";
 import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
@@ -476,6 +477,8 @@ export function iniciarWorker() {
 
   // Sinal de vida para o painel poder responder "o worker está rodando?".
   iniciarBatimento();
+  // Poda o histórico de entregas — sem isto a tabela cresce para sempre.
+  iniciarLimpeza();
 
   logger.info("worker de atendimento no ar");
   return worker;

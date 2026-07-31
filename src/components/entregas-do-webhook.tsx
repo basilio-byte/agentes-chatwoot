@@ -24,7 +24,16 @@ const TOM: Record<string, "success" | "danger" | "neutral" | "accent"> = {
  * vínculo com a caixa); com entregas recusadas, é o secret.
  */
 export function EntregasDoWebhook({ entregas }: { entregas: Entrega[] }) {
-  const recusadas = entregas.filter((e) => e.resultado === "rejeitado").length;
+  // Só avisa se a recusa ainda vale: uma entrega aceita depois dela significa
+  // que o secret já foi corrigido. Sem isto, o alarme ficava vermelho para
+  // sempre por causa de um erro resolvido meia hora antes.
+  const ultimaRecusa = entregas.findIndex((e) => e.resultado === "rejeitado");
+  const aceitaDepois =
+    ultimaRecusa >= 0 &&
+    entregas
+      .slice(0, ultimaRecusa)
+      .some((e) => e.resultado === "agendado" || e.resultado === "ignorado");
+  const secretQuebrado = ultimaRecusa >= 0 && !aceitaDepois;
 
   return (
     <Card className="space-y-3">
@@ -46,15 +55,17 @@ export function EntregasDoWebhook({ entregas }: { entregas: Entrega[] }) {
         </Aviso>
       ) : (
         <>
-          {recusadas > 0 ? (
+          {secretQuebrado ? (
             <Aviso tone="danger">
-              {recusadas} entrega(s) recusada(s) por assinatura. O{" "}
+              A última entrega foi recusada por assinatura. O{" "}
               <strong>secret do webhook</strong> daqui não confere com o do bot no
               Chatwoot — salve o secret de novo.
             </Aviso>
           ) : null}
 
-          <ul className="divide-y divide-line rounded-lg border border-line">
+          {/* Rola em vez de crescer: dez linhas cabem, o resto fica a um
+              arrastar de distância sem empurrar o resto da página. */}
+          <ul className="max-h-80 divide-y divide-line overflow-y-auto rounded-lg border border-line">
             {entregas.map((e) => (
               <li key={e.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
                 <Badge tone={TOM[e.resultado ?? ""] ?? "accent"}>
@@ -72,6 +83,11 @@ export function EntregasDoWebhook({ entregas }: { entregas: Entrega[] }) {
               </li>
             ))}
           </ul>
+
+          <Meta>
+            Últimas {entregas.length} entregas. O histórico é podado
+            automaticamente — o que interessa aqui é o passado recente.
+          </Meta>
         </>
       )}
     </Card>

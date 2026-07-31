@@ -74,8 +74,9 @@ export default async function AgentePage({
   const resumoBot = await resumoDoBot(agente.id);
   const entregas = await db.webhookEvent.findMany({
     where: { agentId: agente.id },
+    // Cinquenta na lista rolável; a poda no worker cuida do resto.
     orderBy: { createdAt: "desc" },
-    take: 10,
+    take: 50,
     select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
   });
 
