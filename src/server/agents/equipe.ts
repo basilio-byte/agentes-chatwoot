@@ -204,7 +204,16 @@ export function mensagemDeBastao(bastao: {
 
   return [
     ...partes,
-    "O cliente já foi avisado da transferência. Continue de onde parou: não se",
-    "reapresente, não repita o que já foi perguntado e não peça de novo o que já foi informado.",
+    "",
+    // A versão anterior dizia "não se reapresente" e produzia abertura seca
+    // ("Entendi! Primeira pergunta: ..."). O cliente acabou de ser avisado de
+    // que ia falar com outra pessoa — quem chega se apresenta. O que não pode
+    // é RECOMEÇAR, que era o que aquela instrução tentava evitar.
+    "O cliente acabou de ser avisado de que mudaria de atendente. Abra se",
+    "apresentando em uma linha, no seu tom, e emende direto no assunto — como",
+    "alguém que assume um atendimento em andamento, não como quem atende do zero.",
+    "",
+    "Não recomece: nada de menu inicial, de repetir pergunta já respondida, nem",
+    "de pedir de novo o que o cliente já informou. Use o resumo acima.",
   ].join("\n");
 }

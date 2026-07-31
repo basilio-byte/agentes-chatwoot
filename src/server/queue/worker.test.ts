@@ -185,7 +185,9 @@ describe("transferência", () => {
     const bastao = bastoesRecebidos[1]!;
     expect(bastao).toContain("Recepção");
     expect(bastao).toContain("já informou o nome");
-    expect(bastao).toContain("não se");
+    // Se apresenta, mas não recomeça — as duas coisas juntas.
+    expect(bastao).toContain("apresentando");
+    expect(bastao).toContain("Não recomece");
     // Quem começou o atendimento não recebe bastão nenhum.
     expect(bastoesRecebidos[0]).toBeNull();
   });

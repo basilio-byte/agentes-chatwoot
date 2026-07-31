@@ -244,7 +244,23 @@ describe("mensagemDeBastao", () => {
 
     expect(m).toContain("veio de Recepção");
     expect(m).toContain("já informou CPF");
-    expect(m).toContain("não se");
-    expect(m).toContain("O cliente já foi avisado");
+    expect(m).toContain("Não recomece");
+  });
+
+  it("pede apresentação, e não abertura seca", () => {
+    // A versão anterior dizia "não se reapresente" e o colega abria com
+    // "Entendi! Primeira pergunta: ..." — quem chega numa conversa se
+    // apresenta, senão o cliente não sabe com quem está falando.
+    const m = mensagemDeBastao({ deNome: "Recepção", resumo: "quer sala mensal" })!;
+
+    expect(m).toContain("apresentando");
+    expect(m).not.toContain("não se reapresente");
+  });
+
+  it("proíbe recomeçar, que é o que a instrução antiga tentava evitar", () => {
+    const m = mensagemDeBastao({ deNome: "Recepção", resumo: "quer sala mensal" })!;
+
+    expect(m).toContain("menu inicial");
+    expect(m).toContain("repetir pergunta já respondida");
   });
 });
