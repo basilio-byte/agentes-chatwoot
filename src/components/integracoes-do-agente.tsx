@@ -159,6 +159,17 @@ export function IntegracoesDoAgente({
 
                 <Meta className="mt-1 block">{i.descricao}</Meta>
 
+                {/* Desligar o Chatwoot não cala o agente — ele continua
+                    respondendo. Só tira dele as ferramentas de transferência,
+                    e essa consequência não é adivinhável pelo nome. */}
+                {i.provider === "CHATWOOT" && !i.ligadaNoAgente ? (
+                  <Aviso tone="danger">
+                    Sem o Chatwoot ligado, este agente <strong>responde mas
+                    não transfere</strong>: fica sem como passar a conversa a um
+                    colega nem escalar para um atendente humano.
+                  </Aviso>
+                ) : null}
+
                 {aberta === i.provider ? (
                   <SelecaoDeTools
                     agentId={agentId}

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { exigirPapel } from "@/server/auth-guard";
-import { UserRole } from "@/generated/prisma/enums";
+import { IntegrationProvider, UserRole } from "@/generated/prisma/enums";
 import { EFFORTS, listarModelos } from "@/server/agents/catalogo";
 import { slugUnico } from "@/lib/slug";
 
@@ -119,6 +119,19 @@ export async function criarAgente(
       },
     },
   });
+
+  // O Chatwoot já nasce ligado: ele é o canal, não uma integração opcional.
+  // Sem o vínculo, o agente responde mas não consegue transferir para colega
+  // nem escalar para humano — e descobrir isso exige ler o código.
+  const chatwoot = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    select: { id: true },
+  });
+  if (chatwoot) {
+    await db.agentIntegration.create({
+      data: { agentId: agente.id, integrationId: chatwoot.id, enabled: true },
+    });
+  }
 
   await registrarAuditoria(sessao.user.id, "agent.created", agente.id);
 
