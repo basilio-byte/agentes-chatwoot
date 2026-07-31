@@ -20,6 +20,7 @@ import { ChatwootBotCard } from "@/components/chatwoot-bot";
 import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
 import { EquipeDoAgente } from "@/components/equipe-do-agente";
 import { EscopoDoAgente } from "@/components/escopo-do-agente";
+import { EntregasDoWebhook } from "@/components/entregas-do-webhook";
 import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import {
@@ -71,6 +72,13 @@ export default async function AgentePage({
   const host = cabecalhos.get("host") ?? "localhost:3000";
   const urlWebhook = `${protocolo}://${host}/api/webhooks/chatwoot/${agente.id}`;
   const resumoBot = await resumoDoBot(agente.id);
+  const entregas = await db.webhookEvent.findMany({
+    where: { agentId: agente.id },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
+  });
+
   const { config: configChatwoot } = await obterConfigChatwoot();
   const contaPadrao = configChatwoot?.accountId ?? null;
 
@@ -238,6 +246,8 @@ export default async function AgentePage({
                   urlWebhook={urlWebhook}
                   podeEditarCredencial={sessao.user.role === UserRole.OWNER}
                 />
+
+                <EntregasDoWebhook entregas={entregas} />
 
                 <EscopoDoAgente
                   agentId={agente.id}

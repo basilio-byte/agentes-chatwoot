@@ -28,6 +28,8 @@ export const eventoChatwootSchema = z
         id: z.number(),
         status: z.string().optional(),
         assignee_id: z.number().nullable().optional(),
+        /** O Chatwoot manda a caixa aqui também — ver a resolução mais abaixo. */
+        inbox_id: z.number().optional(),
         meta: z
           .object({
             sender: z
@@ -122,9 +124,17 @@ export function decidirSeResponde(bruto: unknown): Decisao {
     return { responder: false, motivo: "mensagem sem texto (anexo?)" };
   }
 
-  const inboxId = evento.inbox?.id;
+  // A caixa vem no topo em `message_created`, mas o Chatwoot também a repete
+  // dentro de `conversation`. Aceitar as duas evita que uma variação de payload
+  // — versão diferente, outro tipo de evento — vire silêncio no atendimento,
+  // que é o pior desfecho e o mais difícil de diagnosticar.
+  const inboxId = evento.inbox?.id ?? evento.conversation?.inbox_id;
   if (!inboxId) {
-    return { responder: false, motivo: "sem inbox no payload" };
+    return {
+      responder: false,
+      motivo:
+        "payload sem id da caixa de entrada (nem em inbox.id nem em conversation.inbox_id)",
+    };
   }
 
   return {

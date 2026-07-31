@@ -207,6 +207,7 @@ model AgentVersion {
 
   @@unique([agentId, version])
   @@index([agentId])
+  @@index([agentId, createdAt(sort: Desc)])
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +285,7 @@ model AgentIntegration {
 
   @@unique([agentId, integrationId])
   @@index([agentId])
+  @@index([agentId, createdAt(sort: Desc)])
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +342,7 @@ model Conversation {
   handoffs       AgentHandoff[]
 
   @@index([agentId])
+  @@index([agentId, createdAt(sort: Desc)])
   @@index([status])
 }
 
@@ -425,12 +428,23 @@ model WebhookEvent {
   agentId    String?
   payload    Json
 
+  /// O que o sistema fez com a entrega: `agendado`, `ignorado` ou `rejeitado`.
+  ///
+  /// Existe para a tela do agente responder "chegou alguma coisa?" sem obrigar
+  /// ninguém a ler log de container. Sem isto, entrega recusada por assinatura
+  /// não deixava rastro nenhum — voltava 401 antes de qualquer escrita — e o
+  /// operador só via silêncio.
+  resultado String?
+  /// Por que foi ignorada ou recusada, em texto para humano.
+  detalhe   String?
+
   processedAt DateTime?
   createdAt   DateTime  @default(now())
 
   @@unique([provider, externalId])
   @@index([processedAt])
   @@index([agentId])
+  @@index([agentId, createdAt(sort: Desc)])
 }
 
 model AuditLog {

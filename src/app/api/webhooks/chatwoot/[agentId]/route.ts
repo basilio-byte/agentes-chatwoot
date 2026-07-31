@@ -54,6 +54,12 @@ export async function POST(
       { agentId, motivo: verificacao.motivo },
       "webhook do Chatwoot rejeitado",
     );
+
+    // Deixa rastro no painel. Sem isto, secret errado era invisível: a entrega
+    // voltava 401 antes de qualquer escrita e o operador só via silêncio, sem
+    // saber se o Chatwoot sequer estava chamando.
+    await registrarEntregaRecusada(agentId, req, verificacao.motivo);
+
     return NextResponse.json({ erro: "Assinatura inválida." }, { status: 401 });
   }
 
@@ -101,7 +107,11 @@ export async function POST(
     );
     await db.webhookEvent.update({
       where: { provider_externalId: { provider: "CHATWOOT", externalId: entrega } },
-      data: { processedAt: new Date() },
+      data: {
+        processedAt: new Date(),
+        resultado: "ignorado",
+        detalhe: decisao.motivo ?? "evento sem resposta",
+      },
     });
     return NextResponse.json({ ok: true, respondera: false });
   }
@@ -113,6 +123,7 @@ export async function POST(
 
   if (!agente?.active) {
     logger.info({ agentId }, "agente desligado — mensagem não será respondida");
+    await marcarEntrega(entrega, "ignorado", "o agente está desligado no painel");
     return NextResponse.json({ ok: true, respondera: false });
   }
 
@@ -140,6 +151,12 @@ export async function POST(
       inboxId: decisao.inboxId,
     },
     agente.debounceSeconds,
+  );
+
+  await marcarEntrega(
+    entrega,
+    "agendado",
+    `conversa ${decisao.conversationId} na fila`,
   );
 
   logger.info(
@@ -172,6 +189,53 @@ export async function GET(
       ? "Endpoint pronto. O Chatwoot deve enviar POST assinado para esta URL."
       : "Cadastre o token e o secret do bot no painel, na tela do agente.",
   });
+}
+
+/** Marca o desfecho de uma entrega já registrada. Melhor esforço. */
+async function marcarEntrega(
+  externalId: string,
+  resultado: string,
+  detalhe: string,
+) {
+  try {
+    await db.webhookEvent.update({
+      where: { provider_externalId: { provider: "CHATWOOT", externalId } },
+      data: { processedAt: new Date(), resultado, detalhe },
+    });
+  } catch (erro) {
+    logger.warn({ externalId, erro }, "não consegui marcar o desfecho da entrega");
+  }
+}
+
+/**
+ * Registra uma entrega recusada na verificação de assinatura.
+ *
+ * O corpo NÃO é guardado: ele não foi verificado, então não é confiável. O que
+ * importa aqui é que alguém bateu na porta e foi recusado — e por quê.
+ */
+async function registrarEntregaRecusada(
+  agentId: string,
+  req: Request,
+  motivo: string,
+) {
+  try {
+    await db.webhookEvent.create({
+      data: {
+        provider: "CHATWOOT",
+        externalId:
+          req.headers.get("x-chatwoot-delivery") ??
+          `recusada-${crypto.randomUUID()}`,
+        eventType: "assinatura-invalida",
+        agentId,
+        payload: {},
+        processedAt: new Date(),
+        resultado: "rejeitado",
+        detalhe: motivo,
+      },
+    });
+  } catch (erro) {
+    logger.warn({ agentId, erro }, "não consegui registrar a entrega recusada");
+  }
 }
 
 function ehConflitoDeUnique(erro: unknown) {

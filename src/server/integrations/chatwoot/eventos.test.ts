@@ -113,3 +113,41 @@ describe("decisão de responder", () => {
     expect(d.responder).toBe(true);
   });
 });
+
+describe("de onde vem o id da caixa", () => {
+  const base = {
+    event: "message_created",
+    id: 1,
+    message_type: "incoming",
+    content: "quero uma sala",
+    conversation: { id: 55, status: "pending", assignee_id: null },
+  };
+
+  it("aceita no topo, que é onde message_created costuma trazer", () => {
+    const d = decidirSeResponde({ ...base, inbox: { id: 7 } });
+    expect(d).toMatchObject({ responder: true, inboxId: 7 });
+  });
+
+  it("aceita dentro da conversa — variação de payload não pode virar silêncio", () => {
+    const d = decidirSeResponde({
+      ...base,
+      conversation: { ...base.conversation, inbox_id: 9 },
+    });
+    expect(d).toMatchObject({ responder: true, inboxId: 9 });
+  });
+
+  it("o topo ganha quando os dois vêm", () => {
+    const d = decidirSeResponde({
+      ...base,
+      inbox: { id: 7 },
+      conversation: { ...base.conversation, inbox_id: 9 },
+    });
+    expect(d).toMatchObject({ responder: true, inboxId: 7 });
+  });
+
+  it("sem nenhum dos dois, o motivo diz onde procurar", () => {
+    const d = decidirSeResponde(base);
+    expect(d.responder).toBe(false);
+    expect(d.responder === false && d.motivo).toContain("conversation.inbox_id");
+  });
+});
