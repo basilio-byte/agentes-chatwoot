@@ -6,6 +6,7 @@ import type { IntegrationDefinition } from "../types";
 import { chatwootConfigSchema } from "./config";
 import { clienteDoAgente } from "./credenciais";
 import { montarRoster, resolverDestino } from "@/server/agents/equipe";
+import { resolverAtendente } from "./atendentes";
 
 const transferirSchema = z.object({
   motivo: z
@@ -125,6 +126,134 @@ export const chatwootIntegration: IntegrationDefinition = {
           para: achado.destino.name,
           observacao:
             "O cliente será avisado e o colega assume agora. Encerre seu turno.",
+        };
+      },
+    },
+
+    {
+      name: "listar_atendentes",
+      categoria: "Atendimento",
+      description:
+        "Lista as pessoas da equipe no Chatwoot, com nome e disponibilidade. Use antes de atribuir a alguém específico, quando não souber quem existe ou quiser saber quem está online.",
+      inputSchema: z.object({}),
+      async execute(_entrada, ctx) {
+        const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
+        if (!cliente) {
+          throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
+        }
+
+        const atendentes = await cliente.listarAtendentes();
+        return atendentes.map((a) => ({
+          nome: a.name ?? a.email ?? String(a.id),
+          email: a.email ?? null,
+          disponivel: a.availability_status === "online",
+        }));
+      },
+    },
+
+    {
+      name: "atribuir_para_atendente",
+      categoria: "Atendimento",
+      description:
+        "Entrega o atendimento a uma PESSOA específica da equipe, pelo nome. A partir daí quem responde é ela — a IA para nesta conversa. Use quando o fluxo define um responsável fixo. Se qualquer pessoa da equipe serve, use transferir_para_humano. Depois de chamar, encerre o turno.",
+      requiresConfirmation: true,
+      inputSchema: z.object({
+        atendente: z
+          .string()
+          .describe(
+            "Nome da pessoa, como está no Chatwoot. Primeiro nome basta se não houver xará.",
+          ),
+        motivo: z
+          .string()
+          .min(3)
+          .describe("Por que está entregando para ela. Fica em nota interna."),
+        resumo: z
+          .string()
+          .min(10)
+          .describe(
+            "O que o cliente quer e o que já foi coletado. É o que a pessoa lê antes de assumir.",
+          ),
+        aviso: z
+          .string()
+          .min(5)
+          .describe(
+            "A mensagem que o CLIENTE vai ler. Escreva natural, na primeira pessoa.",
+          ),
+      }),
+      async execute(entrada, ctx) {
+        const args = entrada as {
+          atendente: string;
+          motivo: string;
+          resumo: string;
+          aviso: string;
+        };
+
+        if (!ctx.chatwootConversationId) {
+          return "Sem conversa do Chatwoot neste contexto — não há atendimento para atribuir.";
+        }
+
+        const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
+        if (!cliente) {
+          throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
+        }
+
+        const achado = resolverAtendente(
+          args.atendente,
+          await cliente.listarAtendentes(),
+        );
+
+        if (achado.tipo === "nenhum") {
+          return {
+            erro: `Não achei "${args.atendente}" na equipe.`,
+            atendentes: achado.disponiveis,
+          };
+        }
+        if (achado.tipo === "ambiguo") {
+          return {
+            erro: `"${args.atendente}" corresponde a mais de uma pessoa. Use o nome completo.`,
+            candidatos: achado.candidatos,
+          };
+        }
+
+        const conversa = ctx.chatwootConversationId;
+        const nome = achado.atendente.name ?? args.atendente;
+
+        // Nota interna primeiro: se algo falhar depois, quem assumir já tem o
+        // contexto na conversa.
+        await cliente.enviarMensagem(
+          conversa,
+          [
+            `🤖 Atribuído a ${nome} pelo agente. Motivo: ${args.motivo}`,
+            `Resumo: ${args.resumo}`,
+          ].join("\n"),
+          { privado: true },
+        );
+
+        // O aviso sai ANTES da atribuição, e daqui e não do worker: atribuir a
+        // uma pessoa preenche `assignee_id`, e a partir daí a regra global
+        // manda o agente calar — o texto final do turno seria descartado e o
+        // cliente veria a conversa mudar de mãos sem uma palavra.
+        await cliente.enviarMensagem(conversa, args.aviso.trim());
+
+        await cliente.alternarStatus(conversa, "open");
+        await cliente.atribuir(conversa, { assigneeId: achado.atendente.id });
+
+        await db.conversation.updateMany({
+          where: { chatwootConversationId: conversa },
+          data: {
+            status: ConversationStatus.HUMAN,
+            handoffReason: `atribuído a ${nome}: ${args.motivo}`,
+            handoffAt: new Date(),
+          },
+        });
+
+        logger.info({ conversa, atendente: nome }, "conversa atribuída a pessoa");
+
+        return {
+          atribuido: true,
+          para: nome,
+          observacao:
+            "O cliente já foi avisado e a pessoa assumiu. Encerre o turno sem escrever mais nada.",
         };
       },
     },

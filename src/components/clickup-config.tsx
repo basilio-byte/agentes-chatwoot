@@ -9,12 +9,13 @@ import {
   testarConexaoClickUp,
   type EstadoClickUp,
 } from "@/server/actions/clickup";
-import { Aviso, Button, Field, Input } from "@/components/ui";
+import { Aviso, Button, Field, Input, Textarea } from "@/components/ui";
 
 export function ClickUpConfigForm({
   teamId,
   defaultListId,
   spaceIds,
+  listasNomeadas,
   habilitada,
   temToken,
   hintToken,
@@ -24,6 +25,7 @@ export function ClickUpConfigForm({
   teamId: string;
   defaultListId: string;
   spaceIds: string;
+  listasNomeadas: string;
   habilitada: boolean;
   temToken: boolean;
   hintToken: string | null;
@@ -148,6 +150,20 @@ export function ClickUpConfigForm({
             defaultValue={spaceIds}
             placeholder="90210, 90211"
             disabled={somenteLeitura}
+          />
+        </Field>
+
+        <Field
+          label="Listas com apelido (opcional)"
+          hint="Uma por linha, no formato nome = id. Serve para o prompt dizer 'crie a tarefa em CRM Comercial' em vez de colar o id cru — que muda se a lista for recriada e ninguém consegue revisar."
+        >
+          <Textarea
+            name="listasNomeadas"
+            defaultValue={listasNomeadas}
+            rows={3}
+            placeholder={"CRM Comercial = 901302419821\nSuporte = 901302419900"}
+            disabled={somenteLeitura}
+            className="font-mono text-[13px]"
           />
         </Field>
 

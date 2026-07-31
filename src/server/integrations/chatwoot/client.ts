@@ -221,6 +221,24 @@ export class ChatwootClient {
     });
   }
 
+  /**
+   * Atendentes humanos da conta.
+   *
+   * Leitura, então usa o token de usuário — o do bot é recusado aqui como em
+   * todo endpoint de leitura.
+   */
+  async listarAtendentes() {
+    return this.requisitar<
+      Array<{
+        id: number;
+        name?: string;
+        email?: string;
+        availability_status?: string;
+        role?: string;
+      }>
+    >("/agents", {}, true);
+  }
+
   async atribuir(
     conversationId: number,
     destino: { assigneeId?: number; teamId?: number },

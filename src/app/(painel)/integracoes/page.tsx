@@ -165,6 +165,13 @@ export default async function IntegracoesPage({
                       ? configClickUp.data.spaceIdsPermitidos.join(", ")
                       : ""
                   }
+                  listasNomeadas={
+                    configClickUp.success
+                      ? configClickUp.data.listasNomeadas
+                          .map((l) => `${l.nome} = ${l.listId}`)
+                          .join("\n")
+                      : ""
+                  }
                   habilitada={clickup?.enabled ?? false}
                   temToken={Boolean(clickup?.credential)}
                   hintToken={clickup?.credential?.hint ?? null}

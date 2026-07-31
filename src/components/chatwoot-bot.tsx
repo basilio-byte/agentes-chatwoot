@@ -48,7 +48,7 @@ export function ChatwootBotCard({
         {resumo.configurado ? (
           <Badge tone="success">configurado</Badge>
         ) : (
-          <Badge>não configurado</Badge>
+          <Badge>sem bot</Badge>
         )}
         {resumo.configurado && !resumo.habilitadaGlobalmente ? (
           <Badge tone="danger">integração desligada</Badge>
@@ -56,10 +56,21 @@ export function ChatwootBotCard({
       </div>
 
       <p className="text-sm text-muted">
-        Cada agente tem o próprio bot, com nome e avatar dele no Chatwoot. Crie em{" "}
-        <strong>Configurações → Bots → Adicionar bot</strong> e aponte a URL do
-        webhook abaixo.
+        O bot é a <strong>porta</strong> de uma caixa de entrada, não a
+        identidade do agente. Só precisa de bot o agente que recebe mensagem
+        direto de uma caixa — normalmente o de entrada. Quem atende por
+        transferência <strong>responde pela porta</strong> e não precisa de bot
+        próprio.
       </p>
+
+      {!resumo.configurado ? (
+        <Aviso>
+          Sem bot, este agente não recebe mensagem direto — e está tudo bem se
+          ele atende por transferência. Só configure se ele for a porta de uma
+          caixa de entrada: <strong>Configurações → Bots → Adicionar bot</strong>{" "}
+          no Chatwoot, apontando para a URL abaixo.
+        </Aviso>
+      ) : null}
 
       <div className="space-y-1">
         <span className="text-sm font-medium">URL do webhook deste agente</span>

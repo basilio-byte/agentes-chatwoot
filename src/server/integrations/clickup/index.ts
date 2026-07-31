@@ -8,6 +8,7 @@ import {
   filtrarPorTexto,
   formatarTarefa,
   formatarTarefaDetalhada,
+  normalizar,
   paraTimestamp,
   resolverMembro,
 } from "./formatacao";
@@ -59,6 +60,37 @@ function espacoBloqueado(config: ClickUpConfig, spaceId: string): string | null 
   const permitidos = config.spaceIdsPermitidos ?? [];
   if (permitidos.length === 0 || permitidos.includes(spaceId)) return null;
   return `O espaço ${spaceId} está fora dos espaços liberados para este sistema.`;
+}
+
+/**
+ * Resolve o que o agente escreveu em `lista`: apelido cadastrado ou id cru.
+ *
+ * Apelido primeiro, sem acento nem caixa — o prompt diz "CRM Comercial", o
+ * cadastro pode dizer "CRM comercial". Não casou, trata como id, porque o
+ * agente pode ter descoberto um por `clickup_listar_listas`.
+ *
+ * Existe para o prompt falar por nome. Colar id cru no prompt é frágil (muda se
+ * a lista for recriada), ilegível na revisão, e força uma chamada de descoberta
+ * quando quem escreve o prompt não sabe o id.
+ */
+function resolverLista(
+  termo: string | undefined,
+  config: ClickUpConfig,
+): { listaId: string | null; apelidos: string[] } {
+  const cadastradas = config.listasNomeadas ?? [];
+  const apelidos = cadastradas.map((l) => l.nome);
+
+  if (!termo?.trim()) {
+    return { listaId: config.defaultListId || null, apelidos };
+  }
+
+  const alvo = normalizar(termo);
+  const porApelido = cadastradas.find((l) => normalizar(l.nome) === alvo);
+
+  return {
+    listaId: porApelido ? porApelido.listId : termo.trim(),
+    apelidos,
+  };
 }
 
 const prioridadeSchema = z
@@ -145,10 +177,12 @@ export const clickupIntegration: IntegrationDefinition = {
           .string()
           .optional()
           .describe("Contexto: quem pediu, o que precisa, prazo combinado."),
-        listaId: z
+        lista: z
           .string()
           .optional()
-          .describe("Id da lista. Omita para usar a padrão."),
+          .describe(
+            "Nome da lista cadastrada (ex.: \"CRM Comercial\") ou o id dela. Omita para usar a lista padrão da configuração.",
+          ),
         status: z.string().optional().describe("Status inicial, se não for o padrão."),
         prioridade: prioridadeSchema.optional(),
         vencimento: z.string().optional().describe("Data ISO (2026-08-31)."),
@@ -176,7 +210,7 @@ export const clickupIntegration: IntegrationDefinition = {
         const args = entrada as {
           nome: string;
           descricao?: string;
-          listaId?: string;
+          lista?: string;
           status?: string;
           prioridade?: keyof typeof PRIORIDADES;
           vencimento?: string;
@@ -186,9 +220,12 @@ export const clickupIntegration: IntegrationDefinition = {
         };
         const { cliente, config } = contexto(ctx);
 
-        const listaId = args.listaId || config.defaultListId;
+        const { listaId, apelidos } = resolverLista(args.lista, config);
         if (!listaId) {
-          return "Não há lista padrão configurada. Use clickup_listar_estrutura e informe a lista.";
+          return {
+            erro: "Não sei em qual lista criar. Informe a lista.",
+            listasCadastradas: apelidos,
+          };
         }
 
         let assignees: number[] | undefined;

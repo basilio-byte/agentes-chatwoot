@@ -14,6 +14,18 @@ export const clickupConfigSchema = z.object({
    * Útil para não expor espaços internos ao atendimento.
    */
   spaceIdsPermitidos: z.array(z.string()).default([]),
+  /**
+   * Apelidos de lista para usar no prompt: "CRM Comercial" em vez de
+   * `901302419821`.
+   *
+   * Sem isto, mandar o agente criar tarefa numa lista específica exigia colar
+   * o id cru no prompt — frágil (o id muda se a lista for recriada), ilegível
+   * na revisão, e obriga o agente a gastar uma chamada de descoberta quando o
+   * operador não sabe o id.
+   */
+  listasNomeadas: z
+    .array(z.object({ nome: z.string().min(1), listId: z.string().min(1) }))
+    .default([]),
 });
 
 export type ClickUpConfig = z.infer<typeof clickupConfigSchema>;

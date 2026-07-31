@@ -237,7 +237,9 @@ export default async function AgentePage({
             icone: <MessagesSquare size={15} aria-hidden />,
             // Sem bot configurado o agente não atende ninguém — o ponto evita
             // ter de abrir a aba para descobrir isso.
-            alerta: !resumoBot.configurado || !resumoBot.instanciaOk,
+            // Sem bot não é problema para quem atende por transferência. O que
+            // é problema: ser a porta (tem bot) com a instância mal configurada.
+            alerta: resumoBot.configurado && !resumoBot.instanciaOk,
             conteudo: (
               <div className="max-w-3xl space-y-6">
                 <ChatwootBotCard

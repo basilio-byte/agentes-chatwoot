@@ -25,6 +25,24 @@ async function registro() {
   });
 }
 
+/**
+ * Lê o campo de listas nomeadas: uma por linha, no formato `nome = id`.
+ *
+ * Linha malformada é descartada em silêncio em vez de travar o salvamento —
+ * perder a configuração inteira por causa de uma linha meio digitada seria
+ * pior do que ignorar essa linha.
+ */
+function lerListasNomeadas(texto: string) {
+  return texto
+    .split(/[\r\n]+/)
+    .map((linha) => {
+      const [nome, ...resto] = linha.split("=");
+      const listId = resto.join("=").trim();
+      return { nome: nome.trim(), listId };
+    })
+    .filter((l) => l.nome && l.listId);
+}
+
 export async function salvarConfigClickUp(
   _estado: EstadoClickUp,
   formData: FormData,
@@ -38,6 +56,7 @@ export async function salvarConfigClickUp(
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
+    listasNomeadas: lerListasNomeadas(String(formData.get("listasNomeadas") ?? "")),
   });
 
   if (!parsed.success) {
