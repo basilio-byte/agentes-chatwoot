@@ -7,6 +7,7 @@ import { chatwootConfigSchema } from "./config";
 import { clienteDoAgente } from "./credenciais";
 import { montarRoster, resolverDestino } from "@/server/agents/equipe";
 import { resolverAtendente } from "./atendentes";
+import { proximoDoRodizio } from "./rodizio";
 
 const transferirSchema = z.object({
   motivo: z
@@ -248,6 +249,136 @@ export const chatwootIntegration: IntegrationDefinition = {
         });
 
         logger.info({ conversa, atendente: nome }, "conversa atribuída a pessoa");
+
+        return {
+          atribuido: true,
+          para: nome,
+          observacao:
+            "O cliente já foi avisado e a pessoa assumiu. Encerre o turno sem escrever mais nada.",
+        };
+      },
+    },
+
+    {
+      name: "atribuir_por_rodizio",
+      categoria: "Atendimento",
+      description:
+        "Entrega o atendimento à próxima pessoa de um rodízio, alternando entre os nomes informados. Use quando o fluxo diz que a dupla ou o trio reveza os clientes. O sistema lembra quem recebeu por último. Depois de chamar, encerre o turno.",
+      requiresConfirmation: true,
+      inputSchema: z.object({
+        rodizio: z
+          .string()
+          .min(2)
+          .describe(
+            'Nome do rodízio, sempre o mesmo para o mesmo grupo (ex.: "reservas"). É por ele que o sistema lembra a vez de quem é.',
+          ),
+        entre: z
+          .array(z.string())
+          .min(2)
+          .describe("Nomes das pessoas que revezam, na ordem do revezamento."),
+        motivo: z.string().min(3).describe("Fica em nota interna."),
+        resumo: z
+          .string()
+          .min(10)
+          .describe("O que o cliente quer e o que já foi coletado."),
+        aviso: z
+          .string()
+          .min(5)
+          .describe("A mensagem que o CLIENTE vai ler. Natural, primeira pessoa."),
+      }),
+      async execute(entrada, ctx) {
+        const args = entrada as {
+          rodizio: string;
+          entre: string[];
+          motivo: string;
+          resumo: string;
+          aviso: string;
+        };
+
+        if (!ctx.chatwootConversationId) {
+          return "Sem conversa do Chatwoot neste contexto — não há atendimento para atribuir.";
+        }
+
+        const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
+        if (!cliente) {
+          throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
+        }
+
+        const equipe = await cliente.listarAtendentes();
+
+        // Todos os participantes têm de existir antes de girar o rodízio: girar
+        // e só então descobrir que o sorteado não existe deixaria a vez perdida.
+        const resolvidos = args.entre.map((nome) => ({
+          nome,
+          achado: resolverAtendente(nome, equipe),
+        }));
+        const problema = resolvidos.find((r) => r.achado.tipo !== "achado");
+        if (problema) {
+          return {
+            erro: `"${problema.nome}" não está na equipe do Chatwoot — o rodízio não girou.`,
+            atendentes: equipe.map((a) => a.name ?? a.email ?? String(a.id)),
+          };
+        }
+
+        const chave = args.rodizio.trim().toLowerCase();
+
+        // Trava a linha do rodízio: dois clientes escrevendo no mesmo instante
+        // leriam o mesmo "último" e cairiam na mesma pessoa, que é justamente o
+        // que o rodízio existe para evitar.
+        const proximo = await db.$transaction(async (tx) => {
+          await tx.rodizio.upsert({
+            where: { nome: chave },
+            create: { nome: chave },
+            update: {},
+          });
+
+          const linhas = await tx.$queryRaw<{ ultimo: string | null }[]>`
+            SELECT "ultimo" FROM "Rodizio" WHERE "nome" = ${chave} FOR UPDATE
+          `;
+
+          const escolhido = proximoDoRodizio(args.entre, linhas[0]?.ultimo);
+          if (!escolhido) return null;
+
+          await tx.rodizio.update({
+            where: { nome: chave },
+            data: { ultimo: escolhido },
+          });
+          return escolhido;
+        });
+
+        if (!proximo) return "Nenhum participante válido no rodízio.";
+
+        const alvo = resolvidos.find((r) => r.nome === proximo)!.achado;
+        if (alvo.tipo !== "achado") return "Não consegui resolver o sorteado.";
+
+        const conversa = ctx.chatwootConversationId;
+        const nome = alvo.atendente.name ?? proximo;
+
+        await cliente.enviarMensagem(
+          conversa,
+          [
+            `🤖 Rodízio "${chave}": a vez era de ${nome}. Motivo: ${args.motivo}`,
+            `Resumo: ${args.resumo}`,
+          ].join("\n"),
+          { privado: true },
+        );
+
+        // Antes de atribuir, pelo mesmo motivo de atribuir_para_atendente.
+        await cliente.enviarMensagem(conversa, args.aviso.trim());
+
+        await cliente.alternarStatus(conversa, "open");
+        await cliente.atribuir(conversa, { assigneeId: alvo.atendente.id });
+
+        await db.conversation.updateMany({
+          where: { chatwootConversationId: conversa },
+          data: {
+            status: ConversationStatus.HUMAN,
+            handoffReason: `rodízio ${chave} → ${nome}: ${args.motivo}`,
+            handoffAt: new Date(),
+          },
+        });
+
+        logger.info({ conversa, rodizio: chave, atendente: nome }, "rodízio girou");
 
         return {
           atribuido: true,

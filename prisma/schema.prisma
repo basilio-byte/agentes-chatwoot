@@ -455,6 +455,22 @@ model WebhookEvent {
   @@index([agentId, createdAt(sort: Desc)])
 }
 
+/// Estado de um rodízio de atendentes — quem recebeu por último.
+///
+/// Mora aqui, e não no Chatwoot, porque é regra nossa: o Chatwoot só sabe
+/// distribuir por time, e nem todo rodízio é um time (a dupla que reveza
+/// reservas pode ser duas pessoas de times diferentes).
+///
+/// A chave é o nome que o prompt usa. Trocar os participantes não zera o
+/// estado: quem sai da lista simplesmente deixa de ser considerado.
+model Rodizio {
+  nome      String   @id
+  /// Nome do último atendente sorteado. Nulo = ainda não rodou.
+  ultimo    String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
 model AuditLog {
   id     String  @id @default(cuid())
   userId String?
