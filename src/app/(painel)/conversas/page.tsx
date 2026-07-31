@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Bot, CheckCheck, MessagesSquare, UserRound } from "lucide-react";
 import { Abas } from "@/components/abas";
+import { EstadoDoWorker } from "@/components/estado-do-worker";
+import { estadoDoWorker } from "@/server/queue/batimento";
 import { db } from "@/lib/db";
 import { exigirSessao } from "@/server/auth-guard";
 import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
@@ -67,6 +69,7 @@ export default async function ConversasPage({
     }),
   ]);
 
+  const worker = await estadoDoWorker();
   const config = chatwootConfigSchema.safeParse(integracao?.config ?? {});
   const linkChatwoot = (id: number) =>
     config.success
@@ -119,6 +122,12 @@ export default async function ConversasPage({
             </a>
           ) : null}
         </div>
+
+        {conversa.ultimaFalha ? (
+          <p className="rounded-lg border border-danger/25 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+            Última tentativa falhou: {conversa.ultimaFalha}
+          </p>
+        ) : null}
 
         {conversa.handoffReason ? (
           <p className="text-sm text-accent">
@@ -191,6 +200,8 @@ export default async function ConversasPage({
         descricao="Atendimentos vindos do Chatwoot, com o custo e a latência de cada resposta. Últimos 50."
         semBorda
       />
+
+      <EstadoDoWorker estado={worker} />
 
       <Abas
         inicial={aba}

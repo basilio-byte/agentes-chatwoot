@@ -332,6 +332,14 @@ model Conversation {
   historicoDesde DateTime?
   resolvidaEm    DateTime?
 
+  /// Por que o último processamento não chegou a responder.
+  ///
+  /// Falha antes da chamada ao modelo não cria `AgentRun` — sem isto, o painel
+  /// mostrava "ainda sem resposta" para sempre e a causa só existia no log do
+  /// container.
+  ultimaFalha   String?
+  ultimaFalhaEm DateTime?
+
   lastMessageAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

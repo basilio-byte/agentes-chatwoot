@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { getRedis } from "./conexao";
 import { FILA_ATENDIMENTO, type JobAtendimento } from "./atendimento";
+import { iniciarBatimento } from "./batimento";
 import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
@@ -70,6 +71,36 @@ export async function marcarResolvida(chatwootConversationId: number) {
  * debounce chegam juntas sem lógica extra.
  */
 export async function processarAtendimento(job: Job<JobAtendimento>) {
+  const { chatwootConversationId } = job.data;
+  try {
+    await atender(job);
+    // Deu certo: limpa a falha anterior para o painel não mostrar erro velho.
+    await registrarFalha(chatwootConversationId, null);
+  } catch (erro) {
+    // Falha ANTES da chamada ao modelo não cria AgentRun — sem este registro, a
+    // causa existiria só no log do container e o painel diria "ainda sem
+    // resposta" para sempre.
+    const motivo = erro instanceof Error ? erro.message : String(erro);
+    await registrarFalha(chatwootConversationId, motivo);
+    throw erro; // deixa o BullMQ tentar de novo
+  }
+}
+
+async function registrarFalha(
+  chatwootConversationId: number,
+  motivo: string | null,
+) {
+  try {
+    await db.conversation.updateMany({
+      where: { chatwootConversationId },
+      data: { ultimaFalha: motivo, ultimaFalhaEm: motivo ? new Date() : null },
+    });
+  } catch (erro) {
+    logger.warn({ chatwootConversationId, erro }, "não consegui registrar a falha");
+  }
+}
+
+async function atender(job: Job<JobAtendimento>) {
   const { chatwootConversationId, agentId: portaId, inboxId } = job.data;
   const log = logger.child({ conversa: chatwootConversationId, porta: portaId });
 
@@ -442,6 +473,9 @@ export function iniciarWorker() {
   worker.on("completed", (job) => {
     logger.debug({ jobId: job.id }, "atendimento concluído");
   });
+
+  // Sinal de vida para o painel poder responder "o worker está rodando?".
+  iniciarBatimento();
 
   logger.info("worker de atendimento no ar");
   return worker;
