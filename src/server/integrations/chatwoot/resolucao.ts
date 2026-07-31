@@ -36,6 +36,43 @@ export async function marcarResolvida(chatwootConversationId: number) {
 }
 
 /**
+ * De onde sai o id e o status da conversa — que **muda conforme o evento**.
+ *
+ * Em `message_created` o payload é a mensagem, e a conversa vem aninhada em
+ * `conversation`. Em `conversation_status_changed` e `conversation_updated` o
+ * payload **é a própria conversa**: o id está no topo, em `id`, e não existe
+ * `conversation` nenhum.
+ *
+ * Olhar só o lugar aninhado fazia a resolução passar batido — o evento chegava,
+ * era registrado, e saía sem fazer nada (constatado em produção, 2026-07-31).
+ * Aceitar as duas formas é o que torna isto confiável.
+ */
+export function lerConversa(evento: {
+  event: string;
+  id?: number | string;
+  status?: string;
+  conversation?: { id?: number; status?: string };
+}): { conversationId?: number; status?: string } {
+  if (evento.conversation?.id) {
+    return {
+      conversationId: evento.conversation.id,
+      status: evento.conversation.status ?? evento.status,
+    };
+  }
+
+  // Sem conversa aninhada: só faz sentido tratar o topo como conversa quando o
+  // evento é de conversa. Em `message_created`, o `id` do topo é da MENSAGEM —
+  // usá-lo apontaria para a conversa errada.
+  if (!evento.event.startsWith("conversation_")) return {};
+
+  const id = Number(evento.id);
+  return {
+    conversationId: Number.isInteger(id) && id > 0 ? id : undefined,
+    status: evento.status ?? evento.conversation?.status,
+  };
+}
+
+/**
  * Detecta, em qualquer entrega de webhook, que a conversa foi resolvida.
  *
  * Vale para o webhook **de bot** também, e não só para o de conta: na prática o
@@ -53,12 +90,9 @@ export async function sincronizarResolucao(
   if (!parsed.success) return { resolvida: false };
 
   const evento = parsed.data;
-  const conversationId = evento.conversation?.id;
-  if (!conversationId) return { resolvida: false };
+  const { conversationId, status } = lerConversa(evento);
 
-  // O status pode vir na conversa aninhada ou no topo, conforme o evento.
-  const status = evento.conversation?.status ?? evento.status;
-  if (!ehResolvida(status)) return { resolvida: false };
+  if (!conversationId || !ehResolvida(status)) return { resolvida: false };
 
   // Conversa que nunca passou por um agente nosso não tem o que sincronizar.
   const conhecida = await db.conversation.findUnique({

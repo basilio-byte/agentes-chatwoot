@@ -94,8 +94,8 @@ export default async function AgentesPage({
         </div>
 
         <div className="space-y-1 text-right">
-          <Meta className="block">
-            {conversasPorAgente.get(agente.id) ?? 0} conversa(s) ·{" "}
+          <Meta className="block" title="Conversas que este agente já atendeu, e quantas vezes ele rodou">
+            {conversasPorAgente.get(agente.id) ?? 0} atendida(s) ·{" "}
             {agente._count.runs} execução(ões)
           </Meta>
           <Meta className="block">dono: {agente.owner?.name ?? "—"}</Meta>

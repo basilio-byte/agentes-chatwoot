@@ -217,11 +217,11 @@ export function EmptyState({
 export function Meta({
   children,
   className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+  ...props
+}: React.ComponentProps<"span">) {
   return (
-    <span className={cn("text-xs text-muted", className)}>{children}</span>
+    <span className={cn("text-xs text-muted", className)} {...props}>
+      {children}
+    </span>
   );
 }

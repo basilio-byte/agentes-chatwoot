@@ -7,7 +7,7 @@ import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
 import { obterSegredosDoBot } from "@/server/integrations/chatwoot/credenciais";
 import { decidirSeResponde } from "@/server/integrations/chatwoot/eventos";
 import { agendarAtendimento } from "@/server/queue/atendimento";
-import { sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
+import { lerConversa, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,6 +112,9 @@ export async function POST(
   // privada). O worker ainda reconfere o estado no banco depois do debounce.
   const decisao = decidirSeResponde(payload);
   if (!decisao.responder) {
+    // Registra o status que veio no evento de conversa: sem isso, descobrir por
+    // que uma resolução não foi detectada vira adivinhação sobre o payload.
+    const lida = lerConversa(payload as Parameters<typeof lerConversa>[0]);
     logger.debug(
       { agentId, eventType, motivo: decisao.motivo },
       "evento recebido sem resposta",
@@ -121,7 +124,9 @@ export async function POST(
       data: {
         processedAt: new Date(),
         resultado: "ignorado",
-        detalhe: decisao.motivo ?? "evento sem resposta",
+        detalhe: lida.status
+          ? `${decisao.motivo ?? "evento sem resposta"} · conversa ${lida.conversationId ?? "?"} está ${lida.status}`
+          : (decisao.motivo ?? "evento sem resposta"),
       },
     });
     return NextResponse.json({ ok: true, respondera: false });
