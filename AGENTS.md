@@ -154,6 +154,39 @@ ordem que vai para a API continua sendo alfabética por nome.
 - Todas as 32 ligadas pesam **~3,9k tokens em toda mensagem**. A tela mostra a
   estimativa (`tokensAproximadosDaTool`) para a escolha ser informada.
 
+### Assinatura eletrônica: três caminhos, armadilhas opostas
+
+Conexa (D4Sign por dentro), **ZapSign** e **ClickSign** convivem. Os testes das
+duas últimas moram no **mesmo arquivo** (`integrations/assinatura.test.ts`) de
+propósito: as autenticações são opostas e é fácil trocar uma pela outra.
+
+```text
+ZapSign   → Authorization: Bearer <token>
+ClickSign → Authorization: <token>          ← com Bearer, recusa
+```
+
+- **A barra final da ZapSign não é decorativa.** É Django REST: `/docs` sem
+  barra vira redirect e o corpo do POST se perde. Toda rota termina em `/`.
+- **O status do signatário muda de vocabulário por endpoint** — `signed` no
+  detalhe, `assinou` na listagem. Comparar sem normalizar conclui que ninguém
+  assinou; usar `normalizarStatusDeSignatario`.
+- **URL de arquivo da ZapSign expira em 60 min** e a listagem tem cache de 60 s
+  (documento recém-criado não aparece nela — use `detalhar`).
+- **WhatsApp automático nasce desligado**: a ZapSign cobra por envio.
+- **ClickSign fala JSON:API**, com `Content-Type: application/vnd.api+json` e o
+  corpo dentro de `data.type` + `attributes`. Use `corpoJsonApi`.
+- **O caminho mínimo da ClickSign são SEIS requisições**, e cada signatário
+  soma três. Agente passo a passo estoura `maxToolIterations` antes de terminar
+  — mesma lição dos campos personalizados. Por isso existe
+  `enviarParaAssinatura`, que faz tudo numa chamada.
+- **Ativar exige requisito de autenticação em cada signatário**, senão é 422. E
+  `running` não volta para `draft`.
+- **A URL de produção da ClickSign não é pública** — vem do gerente de conta. O
+  campo é obrigatório e **sem padrão** de propósito: chutar mandaria contrato de
+  cliente para o ambiente errado.
+- **README de MCP não é fonte de rota.** O MCP oficial da ZapSign lista
+  `GET /documents`; a API real é `GET /api/v1/docs/`.
+
 ### Regras globais de atendimento
 
 Em `src/server/integrations/chatwoot/regras.ts`, puras e testadas. Aplicadas em
