@@ -3,9 +3,9 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
 import { obterSecretDaConta } from "@/server/integrations/chatwoot/credenciais";
-import { ehResolvida, podeAgir } from "@/server/integrations/chatwoot/regras";
+import { podeAgir } from "@/server/integrations/chatwoot/regras";
 import { eventoChatwootSchema } from "@/server/integrations/chatwoot/eventos";
-import { sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
+import { entregarAoHumano, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 import { ConversationStatus } from "@/generated/prisma/enums";
 
 export const runtime = "nodejs";
@@ -84,14 +84,19 @@ export async function POST(req: Request) {
     assigneeId: conversa?.assignee_id ?? conversa?.meta?.assignee?.id ?? null,
   });
 
-  await db.conversation.updateMany({
-    where: { chatwootConversationId: conversationId },
-    data: {
-      status: veredito.pode
-        ? ConversationStatus.BOT
-        : ConversationStatus.HUMAN,
-    },
-  });
+  if (veredito.pode) {
+    await db.conversation.updateMany({
+      where: { chatwootConversationId: conversationId },
+      // Só o status: o relógio da espera continua correndo, porque quem deve
+      // resposta ao cliente segue sendo o bot.
+      data: { status: ConversationStatus.BOT },
+    });
+  } else {
+    await entregarAoHumano(
+      conversationId,
+      veredito.motivo ?? "assumida no Chatwoot",
+    );
+  }
 
   return NextResponse.json({ ok: true, podeResponder: veredito.pode });
 }

@@ -39,6 +39,32 @@ export async function marcarResolvida(chatwootConversationId: number) {
 }
 
 /**
+ * Passa a conversa para uma pessoa. **Única porta** para esse estado.
+ *
+ * Existia espalhada por seis lugares — as três tools de atribuição, a trava do
+ * laço, o vigia e o webhook de conta — todas repetindo a mesma tripa de campos.
+ * O dia em que alguém adicionasse um campo novo, seis lugares precisariam
+ * lembrar; foi exatamente o que aconteceu com `aguardandoDesde`, e o resultado
+ * era o vigia reescalando conversa que já estava com um humano.
+ */
+export async function entregarAoHumano(
+  chatwootConversationId: number,
+  motivo: string,
+) {
+  await db.conversation.updateMany({
+    where: { chatwootConversationId },
+    data: {
+      status: ConversationStatus.HUMAN,
+      handoffReason: motivo,
+      handoffAt: new Date(),
+      // Daqui em diante quem deve resposta é uma pessoa, e o vigia não cobra
+      // pessoa. Sem zerar, ele escalaria de novo o que já foi escalado.
+      aguardandoDesde: null,
+    },
+  });
+}
+
+/**
  * De onde sai o id e o status da conversa — que **muda conforme o evento**.
  *
  * Em `message_created` o payload é a mensagem, e a conversa vem aninhada em

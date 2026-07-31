@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { ConversationStatus } from "@/generated/prisma/enums";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
+import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
 /**
@@ -108,15 +109,10 @@ async function escalar(conversa: Parada, minutos: number) {
     }
   }
 
-  await db.conversation.update({
-    where: { id: conversa.id },
-    data: {
-      status: ConversationStatus.HUMAN,
-      aguardandoDesde: null,
-      handoffReason: `vigia: cliente esperou mais de ${minutos} min sem resposta`,
-      handoffAt: new Date(),
-    },
-  });
+  await entregarAoHumano(
+    conversaId,
+    `vigia: cliente esperou mais de ${minutos} min sem resposta`,
+  );
 
   logger.warn(
     { conversa: conversaId, minutos },

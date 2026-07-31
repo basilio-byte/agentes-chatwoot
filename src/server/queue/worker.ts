@@ -11,7 +11,7 @@ import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { montarContexto } from "@/server/integrations/chatwoot/historico";
 import { podeAgir, precisaAbrir } from "@/server/integrations/chatwoot/regras";
-import { marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
+import { entregarAoHumano, marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import {
   mensagemDeBastao,
   resolverAgenteAtivo,
@@ -161,12 +161,10 @@ async function atender(job: Job<JobAtendimento>) {
     if (veredito.resolvida) {
       await marcarResolvida(chatwootConversationId);
     } else {
-      await db.conversation.updateMany({
-        where: { chatwootConversationId },
-        // Zera o relógio junto: a partir daqui quem deve resposta é uma
-        // pessoa, e o vigia não cobra pessoa.
-        data: { status: ConversationStatus.HUMAN, aguardandoDesde: null },
-      });
+      await entregarAoHumano(
+        chatwootConversationId,
+        veredito.motivo ?? "assumida por uma pessoa",
+      );
     }
     return;
   }
@@ -456,14 +454,7 @@ async function escalarParaHumano(args: {
 
     await cliente.alternarStatus(chatwootConversationId, "open");
 
-    await db.conversation.updateMany({
-      where: { chatwootConversationId },
-      data: {
-        status: ConversationStatus.HUMAN,
-        handoffReason: `equipe de agentes: ${motivo}`,
-        handoffAt: new Date(),
-      },
-    });
+    await entregarAoHumano(chatwootConversationId, `equipe de agentes: ${motivo}`);
 
     await cliente.enviarMensagem(
       chatwootConversationId,

@@ -257,6 +257,27 @@ Cadeia longa é **legítima** (reservas → documentos → serviços → suporte
 recurso), e um agente concentrador é visitado várias vezes — os limites são
 generosos por isso, e só são seguros porque encostar neles escala para humano.
 
+#### O relógio da espera (`aguardandoDesde`)
+
+Mede **uma coisa só**: há quanto tempo o cliente está sem resposta do bot. Não é
+o tempo da conversa, nem silêncio do cliente, nem SLA de pessoa.
+
+- **Acende** quando a mensagem do cliente chega ao webhook — e só se ninguém já
+  estava esperando: três mensagens picotadas são UMA espera.
+- **Para** quando o agente responde. Se não parasse, viraria o tempo total da
+  conversa e toda conversa longa acabaria escalada, com o agente respondendo na
+  hora. Tem teste em `worker.test.ts`.
+- **Segue correndo durante as transferências.** O aviso de passagem não é
+  atendimento — o cliente continua esperando a resposta de verdade, e não se
+  importa por quantas mãos a conversa passou.
+- **Para também ao entregar a conversa a uma pessoa**, em qualquer um dos seis
+  caminhos. Por isso `entregarAoHumano` é a **única porta** para o estado
+  `HUMAN`: a tripa de campos estava repetida em seis lugares, e quando
+  `aguardandoDesde` entrou, cinco esqueceram — o vigia reescalava conversa que
+  já estava com alguém.
+- **Resolver zera.** Sem isso o relógio sobrevivia à reabertura e o vigia
+  escalava a conversa nova no primeiro minuto, sem ninguém entender por quê.
+
 - **Invariante acima de tudo: o turno nunca termina com o cliente sem nada.**
   `garantirRespostaAoCliente` roda no `finally` e cobre exceção, agente sem
   texto e destino que sumiu. Humano assumido no meio não conta como falha.

@@ -132,6 +132,8 @@ beforeEach(() => {
     handoffResumo: null,
     handoffMotivo: null,
     handoffDeNome: null,
+    // Relógio do vigia, aceso pelo webhook quando a mensagem do cliente chegou.
+    aguardandoDesde: new Date("2026-07-31T12:00:00Z"),
   };
   handoffsGravados = [];
   enviadas = [];
@@ -144,6 +146,46 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 const publicas = () => enviadas.filter((m) => !m.privado).map((m) => m.texto);
+
+describe("relógio de espera do cliente", () => {
+  /**
+   * O vigia mede uma coisa só: há quanto tempo o cliente está sem resposta.
+   * Se o relógio não parasse a cada turno respondido, ele viraria o tempo total
+   * da conversa — e toda conversa longa acabaria escalada para um humano,
+   * mesmo com o agente respondendo na hora.
+   */
+  it("para a cada resposta — não acumula entre turnos", async () => {
+    respostasDoModelo = [{ resposta: "Olá!" }];
+
+    await processarAtendimento(job());
+
+    expect(conversa.aguardandoDesde).toBeNull();
+  });
+
+  it("segue correndo durante a cadeia de transferências", async () => {
+    // O aviso de passagem não é atendimento: o cliente continua esperando a
+    // resposta de verdade, e só ela solta o relógio.
+    respostasDoModelo = [passarPara("reservas"), { resposta: "pronto" }];
+
+    await processarAtendimento(job());
+
+    expect(agentesQueRodaram).toEqual(["entrada", "reservas"]);
+    expect(conversa.aguardandoDesde).toBeNull();
+  });
+
+  it("entregar a conversa a um humano também para o relógio", async () => {
+    // Daqui em diante quem deve resposta é uma pessoa, e o vigia não cobra
+    // pessoa — deixar o relógio correndo escalaria o que já foi escalado.
+    respostasDoModelo = Array.from({ length: 12 }, (_, i) =>
+      passarPara(i % 2 === 0 ? "reservas" : "entrada"),
+    );
+
+    await processarAtendimento(job());
+
+    expect(conversa.status).toBe("HUMAN");
+    expect(conversa.aguardandoDesde).toBeNull();
+  });
+});
 
 describe("roteamento inicial", () => {
   it("sem dono, quem atende é o agente de entrada", async () => {

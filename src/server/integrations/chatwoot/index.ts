@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { ConversationStatus, IntegrationProvider } from "@/generated/prisma/enums";
+import { IntegrationProvider } from "@/generated/prisma/enums";
 import type { IntegrationDefinition } from "../types";
 import { chatwootConfigSchema } from "./config";
 import { clienteDoAgente } from "./credenciais";
 import { montarRoster, resolverDestino } from "@/server/agents/equipe";
 import { resolverAtendente } from "./atendentes";
 import { proximoDoRodizio } from "./rodizio";
+import { entregarAoHumano } from "./resolucao";
 
 const transferirSchema = z.object({
   motivo: z
@@ -239,14 +240,7 @@ export const chatwootIntegration: IntegrationDefinition = {
         await cliente.alternarStatus(conversa, "open");
         await cliente.atribuir(conversa, { assigneeId: achado.atendente.id });
 
-        await db.conversation.updateMany({
-          where: { chatwootConversationId: conversa },
-          data: {
-            status: ConversationStatus.HUMAN,
-            handoffReason: `atribuído a ${nome}: ${args.motivo}`,
-            handoffAt: new Date(),
-          },
-        });
+        await entregarAoHumano(conversa, `atribuído a ${nome}: ${args.motivo}`);
 
         logger.info({ conversa, atendente: nome }, "conversa atribuída a pessoa");
 
@@ -369,14 +363,10 @@ export const chatwootIntegration: IntegrationDefinition = {
         await cliente.alternarStatus(conversa, "open");
         await cliente.atribuir(conversa, { assigneeId: alvo.atendente.id });
 
-        await db.conversation.updateMany({
-          where: { chatwootConversationId: conversa },
-          data: {
-            status: ConversationStatus.HUMAN,
-            handoffReason: `rodízio ${chave} → ${nome}: ${args.motivo}`,
-            handoffAt: new Date(),
-          },
-        });
+        await entregarAoHumano(
+          conversa,
+          `rodízio ${chave} → ${nome}: ${args.motivo}`,
+        );
 
         logger.info({ conversa, rodizio: chave, atendente: nome }, "rodízio girou");
 
@@ -441,14 +431,7 @@ export const chatwootIntegration: IntegrationDefinition = {
         await cliente.adicionarLabel(conversa, "transferido-pelo-bot");
 
         // Cala o bot nesta conversa até alguém devolver para `pending`.
-        await db.conversation.updateMany({
-          where: { chatwootConversationId: conversa },
-          data: {
-            status: ConversationStatus.HUMAN,
-            handoffReason: motivo,
-            handoffAt: new Date(),
-          },
-        });
+        await entregarAoHumano(conversa, motivo);
 
         logger.info({ conversa, motivo }, "conversa transferida para humano");
 
