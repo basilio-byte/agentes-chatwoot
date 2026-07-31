@@ -289,6 +289,27 @@ o tempo da conversa, nem silêncio do cliente, nem SLA de pessoa.
 - **Invariante acima de tudo: o turno nunca termina com o cliente sem nada.**
   `garantirRespostaAoCliente` roda no `finally` e cobre exceção, agente sem
   texto e destino que sumiu. Humano assumido no meio não conta como falha.
+  Tool que já avisou o cliente marca `sinais.avisouCliente` — sem isso o
+  contorno sairia por cima de uma transferência bem-sucedida.
+
+#### "Passar para a equipe" precisa entregar a alguém
+
+`transferir_para_humano` deixava a conversa **órfã**: status humano, dono
+nenhum, e o vigia não olha para ela porque só vigia conversa do bot. A nota
+dizia "Transferido pelo agente" e ninguém estava a caminho — sem erro nenhum,
+como sempre.
+
+- **O responsável padrão do agente (`fallbackAtendente`) é quem assume.** O
+  campo servia só ao vigia; agora vale para os dois casos em que o bot precisa
+  de uma pessoa e não tem um nome. Time do Chatwoot (`handoffTeamId`) continua
+  valendo e soma com a pessoa.
+- **Sem responsável configurado, a nota interna diz isso em letras claras.**
+  Conversa sem dono some no meio da fila; melhor a equipe saber pela nota do que
+  descobrir pelo cliente cobrando.
+- **`aviso` virou obrigatório aqui também**, e sai **antes** da atribuição —
+  com `assignee_id` preenchido a regra global cala o bot e a mensagem seria
+  descartada. Era por isso que a tool mandava o modelo escrever depois; agora o
+  sistema garante.
 
 ### Regras do projeto
 

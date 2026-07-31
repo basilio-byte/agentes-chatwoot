@@ -29,6 +29,15 @@ export type SinalDeHandoff = {
 /** Efeitos que uma tool comunica para fora do turno. */
 export type SinaisDoTurno = {
   handoff?: SinalDeHandoff;
+  /**
+   * A tool já enviou a mensagem de passagem ao cliente.
+   *
+   * As tools que entregam o atendimento a uma pessoa precisam avisar **antes**
+   * de atribuir — assim que existe `assignee_id`, a regra global cala o bot e a
+   * mensagem seria descartada. Sem este sinal, o worker acharia que o turno
+   * terminou mudo e mandaria a resposta de contorno por cima do aviso.
+   */
+  avisouCliente?: boolean;
 };
 
 export type ToolContext = {

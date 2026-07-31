@@ -21,6 +21,12 @@ const transferirSchema = z.object({
     .string()
     .optional()
     .describe("Resumo do que o cliente já contou, para o humano não repetir perguntas."),
+  aviso: z
+    .string()
+    .min(5)
+    .describe(
+      "A mensagem que o CLIENTE vai ler antes de a conversa mudar de mãos. Natural, primeira pessoa. É a última coisa que você diz nesta conversa.",
+    ),
 });
 
 /**
@@ -236,6 +242,7 @@ export const chatwootIntegration: IntegrationDefinition = {
         // manda o agente calar — o texto final do turno seria descartado e o
         // cliente veria a conversa mudar de mãos sem uma palavra.
         await cliente.enviarMensagem(conversa, args.aviso.trim());
+        if (ctx.sinais) ctx.sinais.avisouCliente = true;
 
         await cliente.alternarStatus(conversa, "open");
         await cliente.atribuir(conversa, { assigneeId: achado.atendente.id });
@@ -359,6 +366,7 @@ export const chatwootIntegration: IntegrationDefinition = {
 
         // Antes de atribuir, pelo mesmo motivo de atribuir_para_atendente.
         await cliente.enviarMensagem(conversa, args.aviso.trim());
+        if (ctx.sinais) ctx.sinais.avisouCliente = true;
 
         await cliente.alternarStatus(conversa, "open");
         await cliente.atribuir(conversa, { assigneeId: alvo.atendente.id });
@@ -386,7 +394,9 @@ export const chatwootIntegration: IntegrationDefinition = {
       inputSchema: transferirSchema,
       requiresConfirmation: false,
       async execute(entrada, ctx) {
-        const { motivo, resumo } = entrada as z.infer<typeof transferirSchema>;
+        const { motivo, resumo, aviso } = entrada as z.infer<
+          typeof transferirSchema
+        >;
 
         if (!ctx.chatwootConversationId) {
           return "Sem conversa do Chatwoot neste contexto — nada a transferir.";
@@ -402,7 +412,11 @@ export const chatwootIntegration: IntegrationDefinition = {
 
         const agente = await db.agent.findUniqueOrThrow({
           where: { id: ctx.agentId },
-          select: { handoffEnabled: true, handoffTeamId: true },
+          select: {
+            handoffEnabled: true,
+            handoffTeamId: true,
+            fallbackAtendente: true,
+          },
         });
 
         if (!agente.handoffEnabled) {
@@ -411,19 +425,59 @@ export const chatwootIntegration: IntegrationDefinition = {
 
         const conversa = ctx.chatwootConversationId;
 
+        // Quem assume. "Passar para a equipe" sem ninguém atribuído deixava a
+        // conversa órfã: status humano, dono nenhum, e o vigia não olha para
+        // ela porque só vigia conversa do bot. Ninguém estava a caminho.
+        let assigneeId: number | undefined;
+        let dono: string | null = null;
+
+        if (agente.fallbackAtendente) {
+          const achado = resolverAtendente(
+            agente.fallbackAtendente,
+            await cliente.listarAtendentes(),
+          );
+          if (achado.tipo === "achado") {
+            assigneeId = achado.atendente.id;
+            dono = achado.atendente.name ?? agente.fallbackAtendente;
+          } else {
+            logger.warn(
+              { conversa, alvo: agente.fallbackAtendente },
+              "responsável padrão do agente não existe no Chatwoot",
+            );
+          }
+        }
+
+        const semDono = !assigneeId && !agente.handoffTeamId;
+
         // Nota interna primeiro: se algo falhar depois, a equipe já tem o contexto.
         await cliente.enviarMensagem(
           conversa,
-          [`🤖 Transferido pelo agente. Motivo: ${motivo}`, resumo && `Resumo: ${resumo}`]
+          [
+            `🤖 Transferido pelo agente. Motivo: ${motivo}`,
+            resumo && `Resumo: ${resumo}`,
+            dono && `Atribuído a ${dono}.`,
+            // Uma conversa sem dono some no meio da fila. Melhor a equipe
+            // saber disso pela nota do que descobrir pelo cliente cobrando.
+            semDono &&
+              "⚠️ Ninguém foi atribuído: este agente não tem responsável padrão configurado no painel. A conversa fica na fila.",
+          ]
             .filter(Boolean)
             .join("\n"),
           { privado: true },
         );
 
+        // O aviso vai ANTES de atribuir: com `assignee_id` preenchido a regra
+        // global cala o bot, e a mensagem ao cliente seria descartada.
+        await cliente.enviarMensagem(conversa, aviso.trim());
+        if (ctx.sinais) ctx.sinais.avisouCliente = true;
+
         await cliente.alternarStatus(conversa, "open");
 
-        if (agente.handoffTeamId) {
-          await cliente.atribuir(conversa, { teamId: agente.handoffTeamId });
+        if (assigneeId || agente.handoffTeamId) {
+          await cliente.atribuir(conversa, {
+            ...(assigneeId ? { assigneeId } : {}),
+            ...(agente.handoffTeamId ? { teamId: agente.handoffTeamId } : {}),
+          });
         }
 
         // Acrescenta, não substitui: apagar os labels da conversa apagaria o
@@ -433,9 +487,11 @@ export const chatwootIntegration: IntegrationDefinition = {
         // Cala o bot nesta conversa até alguém devolver para `pending`.
         await entregarAoHumano(conversa, motivo);
 
-        logger.info({ conversa, motivo }, "conversa transferida para humano");
+        logger.info({ conversa, motivo, dono }, "conversa transferida para humano");
 
-        return "Transferido. Avise o cliente que alguém da equipe vai continuar o atendimento e encerre sua resposta.";
+        return dono
+          ? `Transferido para ${dono} e o cliente já foi avisado. Encerre o turno sem escrever mais nada.`
+          : "Transferido para a fila da equipe e o cliente já foi avisado. Encerre o turno sem escrever mais nada.";
       },
     },
   ],

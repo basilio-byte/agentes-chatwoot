@@ -65,6 +65,11 @@ export type ResultadoExecucao = {
   latenciaMs: number;
   /** Preenchido quando o agente pediu para passar a conversa a um colega. */
   handoff?: SinalDeHandoff;
+  /**
+   * Uma tool já mandou a mensagem de passagem ao cliente. O worker usa isto
+   * para não disparar a resposta de contorno por cima de um turno bem-sucedido.
+   */
+  avisouCliente?: boolean;
 };
 
 const USO_ZERADO: UsoTokens = {
@@ -293,6 +298,7 @@ export async function executarAgente(
       custoUsd,
       latenciaMs,
       handoff: sinais.handoff,
+      avisouCliente: sinais.avisouCliente ?? false,
     };
   } catch (erro) {
     const mensagem = erro instanceof Error ? erro.message : String(erro);

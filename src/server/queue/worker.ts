@@ -242,6 +242,11 @@ async function atender(job: Job<JobAtendimento>) {
 
       const handoff = resultado.handoff;
 
+      // Entregou a conversa a uma pessoa e já avisou o cliente de dentro da
+      // tool (tem de ser antes de atribuir, senão a regra global cala o envio).
+      // O turno não terminou mudo — a rede de segurança não deve disparar.
+      if (resultado.avisouCliente) clienteRecebeuResposta = true;
+
       if (!handoff) {
         const resposta = resultado.resposta.trim();
 

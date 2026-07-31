@@ -122,8 +122,8 @@ export function EscopoDoAgente({
           </Field>
 
           <Field
-            label="Para quem (opcional)"
-            hint="Nome de quem assume nesse caso. Em branco, a conversa volta para a fila sem dono."
+            label="Responsável padrão (opcional)"
+            hint="Quem assume quando o agente entrega a conversa a uma pessoa sem nomear ninguém — na transferência para a equipe e quando o tempo acima estoura. Em branco, a conversa fica na fila sem dono."
           >
             <Input
               name="fallbackAtendente"
