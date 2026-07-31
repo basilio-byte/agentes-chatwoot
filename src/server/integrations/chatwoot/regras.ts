@@ -44,3 +44,18 @@ export function podeAgir(estado: EstadoDaConversa): Veredito {
 export function ehResolvida(status?: string | null) {
   return status?.toLowerCase() === "resolved";
 }
+
+/**
+ * Regra 4: conversa atendida pelo bot nunca fica **pendente**.
+ *
+ * O Chatwoot coloca em `pending` a conversa de uma caixa que tem Agent Bot, e
+ * `pending` **não aparece na visualização padrão** — só por filtro. Uma
+ * conversa que o bot está tocando ficaria invisível para a equipe, e ninguém
+ * perceberia se ela precisasse de gente.
+ *
+ * O bot só age em `open` e `pending` (ver `podeAgir`), mas **termina sempre em
+ * `open`**. Ele nunca resolve: encerrar atendimento é decisão de pessoa.
+ */
+export function precisaAbrir(status?: string | null): boolean {
+  return (status ?? "").toLowerCase() === "pending";
+}

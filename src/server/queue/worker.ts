@@ -9,7 +9,7 @@ import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { montarContexto } from "@/server/integrations/chatwoot/historico";
-import { podeAgir } from "@/server/integrations/chatwoot/regras";
+import { podeAgir, precisaAbrir } from "@/server/integrations/chatwoot/regras";
 import {
   mensagemDeBastao,
   resolverAgenteAtivo,
@@ -246,6 +246,15 @@ async function atender(job: Job<JobAtendimento>) {
         await cliente.enviarMensagem(chatwootConversationId, resposta);
         clienteRecebeuResposta = true;
 
+        // Pendente some da visualização padrão do Chatwoot. Conversa que o bot
+        // está tocando não pode ficar invisível para a equipe.
+        await abrirSePendente(
+          cliente,
+          chatwootConversationId,
+          antesDeEnviar.status,
+          log,
+        );
+
         await db.conversation.updateMany({
           where: { chatwootConversationId },
           data: { lastMessageAt: new Date() },
@@ -320,6 +329,27 @@ async function atender(job: Job<JobAtendimento>) {
     if (!clienteRecebeuResposta) {
       await garantirRespostaAoCliente({ cliente, chatwootConversationId, log });
     }
+  }
+}
+
+/**
+ * Deixa a conversa aberta quando ela estava pendente.
+ *
+ * Melhor esforço: falhar aqui não pode desfazer a resposta que o cliente já
+ * recebeu — no pior caso a conversa fica pendente e alguém a acha por filtro.
+ */
+async function abrirSePendente(
+  cliente: ChatwootClient,
+  chatwootConversationId: number,
+  status: string | null,
+  log: Registro,
+) {
+  if (!precisaAbrir(status)) return;
+
+  try {
+    await cliente.alternarStatus(chatwootConversationId, "open");
+  } catch (erro) {
+    log.warn({ erro }, "não consegui tirar a conversa de pendente");
   }
 }
 
@@ -447,6 +477,10 @@ async function garantirRespostaAoCliente(args: {
       chatwootConversationId,
       "Tive uma instabilidade rápida por aqui e não consegui concluir sua resposta agora. Pode mandar de novo, por favor? Se preferir, um atendente pode continuar seu atendimento.",
     );
+
+    // Ainda mais importante aqui: o turno falhou, e é justamente quando alguém
+    // precisa enxergar a conversa na fila.
+    await abrirSePendente(cliente, chatwootConversationId, aoVivo.status, log);
   } catch (erro) {
     log.error({ erro }, "rede de segurança de resposta também falhou");
   }

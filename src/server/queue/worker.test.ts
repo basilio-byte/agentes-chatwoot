@@ -277,6 +277,38 @@ describe("travas", () => {
   });
 });
 
+describe("o bot nunca deixa a conversa pendente", () => {
+  it("responde e abre a conversa que chegou pendente", async () => {
+    // `pending` não aparece na visualização padrão do Chatwoot: a conversa
+    // ficaria escondida da equipe justamente enquanto está sendo atendida.
+    statusChatwoot = { status: "pending", assigneeId: null };
+    respostasDoModelo = [{ resposta: "Olá! Como posso ajudar?" }];
+
+    await processarAtendimento(job());
+
+    expect(publicas()).toEqual(["Olá! Como posso ajudar?"]);
+    expect(statusChatwoot.status).toBe("open");
+  });
+
+  it("já aberta continua aberta", async () => {
+    statusChatwoot = { status: "open", assigneeId: null };
+    respostasDoModelo = [{ resposta: "oi" }];
+
+    await processarAtendimento(job());
+
+    expect(statusChatwoot.status).toBe("open");
+  });
+
+  it("o bot nunca resolve — encerrar é decisão de pessoa", async () => {
+    statusChatwoot = { status: "pending", assigneeId: null };
+    respostasDoModelo = [{ resposta: "pronto" }];
+
+    await processarAtendimento(job());
+
+    expect(statusChatwoot.status).not.toBe("resolved");
+  });
+});
+
 describe("invariante: o cliente nunca fica sem resposta", () => {
   it("agente que não produz texto ainda gera mensagem de contorno", async () => {
     respostasDoModelo = [{ resposta: "" }];

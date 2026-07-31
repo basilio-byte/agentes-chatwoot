@@ -148,6 +148,11 @@ As regras:
 
 - **Conversa atribuída a humano: o agente cala.** Vale mesmo com a conversa aberta.
 - **Conversa resolvida: nenhuma interação.**
+- **Conversa do bot nunca fica pendente.** O Chatwoot põe em `pending` a
+  conversa de caixa com Agent Bot, e `pending` não aparece na visualização
+  padrão — ficaria invisível para a equipe. O bot **age** em `open` e
+  `pending`, mas **termina sempre em `open`** (`precisaAbrir`). E nunca
+  resolve: encerrar é decisão de pessoa.
 - **Resolver corta o histórico** (`Conversation.historicoDesde`). Reabriu, começa
   do zero: o mesmo cliente costuma voltar por outro assunto, e arrastar contexto
   antigo faz o agente responder a pergunta errada.
