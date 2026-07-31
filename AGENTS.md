@@ -175,6 +175,14 @@ As regras:
   do zero: o mesmo cliente costuma voltar por outro assunto, e arrastar contexto
   antigo faz o agente responder a pergunta errada.
 
+⚠ **Resolver no Chatwoot não desatribui ninguém.** A conversa resolvida continua
+com o dono que tinha, e dono é justamente o que cala o bot — então ela fica muda
+para sempre, sem erro nenhum. Quem tira o dono é uma **automação nativa do
+Chatwoot**, do lado de lá, e ela precisa existir **em cada conta/caixa** que este
+sistema atende. Não a reimplemente aqui: capacidade duplicada é a que diverge.
+Caixa nova sem a automação = bot silencioso; o diagnóstico está em Entregas
+recebidas, com `conversa atribuída a um humano` no detalhe.
+
 ⚠ O webhook de **Agent Bot pode não entregar `conversation_status_changed`**. Por
 isso existe o webhook **de conta** (`/api/webhooks/chatwoot/conta`), com secret
 próprio: ele dá precisão ao corte quando a conversa é resolvida sem ninguém
