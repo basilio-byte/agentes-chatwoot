@@ -58,6 +58,16 @@ modelos `anthropic/*` como padrão.
 - `message_type` é **string** no webhook (`incoming`) e **número** na API de
   mensagens (0 entrada, 1 saída). Confundir faz o bot ler as próprias respostas.
 - `jobId` do BullMQ **não aceita `:`** — use `conversa-<id>`.
+- **`add` com `jobId` existente é ignorado em silêncio**, inclusive quando o job
+  já terminou. Como o id é fixo por conversa, um job que falhou de vez envenenava
+  a conversa por 24h (`removeOnFail`): toda mensagem seguinte sumia, o webhook
+  respondia "agendado" e o worker nunca via nada. `agendarAtendimento` remove o
+  job existente em **qualquer** estado menos `active`.
+- **O token de Agent Bot escreve mas não lê.** `GET /conversations/{id}` responde
+  `Access to this endpoint is not authorized for bots`. Por isso o
+  `ChatwootClient` recebe dois tokens: o do bot para agir e um **token de
+  usuário** para ler estado e histórico (global, em Integrações). Sem o de
+  leitura o atendimento morre antes de chamar o modelo.
 
 ### ClickUp: armadilhas da API v2
 

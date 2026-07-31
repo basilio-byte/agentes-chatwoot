@@ -49,9 +49,16 @@ export async function agendarAtendimento(
   const existente = await fila.getJob(jobId);
   if (existente) {
     const estado = await existente.getState();
-    // Só dá para reagendar o que ainda não começou. Se já está rodando, a
-    // mensagem nova entra no próximo ciclo — o worker relê o histórico.
-    if (estado === "delayed" || estado === "waiting") {
+
+    // Só não dá para mexer no que está rodando agora — a mensagem nova entra
+    // no próximo ciclo, e o worker relê o histórico inteiro de qualquer forma.
+    //
+    // Todo o resto sai, inclusive `failed` e `completed`. O BullMQ IGNORA em
+    // silêncio um `add` com jobId que já existe, mesmo terminado: um job que
+    // falhou de vez envenenava a conversa pelas 24h do `removeOnFail`, e toda
+    // mensagem seguinte sumia sem processar e sem deixar rastro. Foi assim que
+    // uma conversa ficou muda depois de um 401 (produção, 2026-07-31).
+    if (estado !== "active") {
       await existente.remove();
     }
   }
