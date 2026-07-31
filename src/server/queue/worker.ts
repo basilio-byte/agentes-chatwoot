@@ -175,6 +175,8 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
         source: RunSource.CHATWOOT,
         conversationId: conversa?.id,
         chatwootConversationId,
+        // Toda credencial de canal vem da porta: o especialista pode não ter bot.
+        canalAgentId: portaId,
         historico: contexto.historico,
         mensagem: contexto.mensagem,
         inboxId: inboxId ?? aoVivo.inboxId ?? conversa?.chatwootInboxId,

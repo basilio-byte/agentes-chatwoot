@@ -36,6 +36,8 @@ export type EntradaExecucao = {
   chatwootConversationId?: number;
   /** Caixa de entrada da conversa — filtra quem aparece no roster. */
   inboxId?: number | null;
+  /** Agente dono do bot pelo qual a conversa entrou. Ver ToolContext.canalAgentId. */
+  canalAgentId?: string;
   /**
    * Bastão recebido de outro agente. Entra como mensagem `system` junto do
    * contexto temporal, nunca no systemPrompt — ele muda por conversa e no
@@ -251,6 +253,7 @@ export async function executarAgente(
             agentId: agente.id,
             conversationId: entrada.conversationId,
             chatwootConversationId: entrada.chatwootConversationId,
+            canalAgentId: entrada.canalAgentId,
             sinais,
             registro: toolCalls,
           }),
@@ -326,6 +329,7 @@ async function executarTool(args: {
   agentId: string;
   conversationId?: string;
   chatwootConversationId?: number;
+  canalAgentId?: string;
   sinais: SinaisDoTurno;
   registro: ToolCallRegistrado[];
 }): Promise<OpenAI.Chat.Completions.ChatCompletionToolMessageParam> {
@@ -385,6 +389,7 @@ async function executarTool(args: {
       agentId: args.agentId,
       conversationId: args.conversationId,
       chatwootConversationId: args.chatwootConversationId,
+      canalAgentId: args.canalAgentId,
       sinais: args.sinais,
     });
     return finalizar({ saida, isError: false, input: validacao.data });

@@ -38,6 +38,16 @@ export type ToolContext = {
   /** Segredo já decifrado. `null` quando a integração não exige credencial. */
   credential: string | null;
   agentId: string;
+  /**
+   * Agente dono do bot pelo qual a conversa entrou — a "porta".
+   *
+   * O Chatwoot amarra um bot por caixa de entrada, então só a porta tem token
+   * com acesso àquela conversa. Um especialista que assumiu por transferência
+   * normalmente **não** tem bot próprio: sem isto, a escalada para humano dele
+   * falharia justamente por não achar credencial. Ausente = o próprio agente
+   * (playground e instalação de um agente só).
+   */
+  canalAgentId?: string;
   conversationId?: string;
   /** Id da conversa no Chatwoot, quando a execução veio de um atendimento. */
   chatwootConversationId?: number;

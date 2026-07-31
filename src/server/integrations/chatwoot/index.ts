@@ -142,9 +142,12 @@ export const chatwootIntegration: IntegrationDefinition = {
           return "Sem conversa do Chatwoot neste contexto — nada a transferir.";
         }
 
-        const cliente = await clienteDoAgente(ctx.agentId);
+        // Bot da PORTA, não do agente atual: quem assumiu por transferência
+        // costuma não ter bot próprio, e a escalada para humano não pode falhar
+        // justamente por isso.
+        const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
         if (!cliente) {
-          throw new Error("Bot do Chatwoot não configurado para este agente.");
+          throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
         }
 
         const agente = await db.agent.findUniqueOrThrow({
