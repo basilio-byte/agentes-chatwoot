@@ -17,8 +17,10 @@ Plataforma de agentes de I.A. que atendem no Chatwoot da Seahub Coworking.
   adicionar sem pedido explícito.
 - **Chatwoot é self-hosted.** A versão exata ainda não foi confirmada — a API de
   Agent Bots mudou entre versões, então confira antes de escrever o cliente (Fase 2).
-- **ClickUp e ERP Conexa:** a documentação de API ainda não foi fornecida. Não
-  invente endpoints nem shapes de payload dessas duas integrações.
+- **ERP Conexa:** a documentação chegou em 31/07/2026. A fonte é a coleção
+  Postman em `docs/`, e a leitura humana dela está em
+  **`docs/02-api-conexa.md`** (83 endpoints, extraídos). Fora do que está ali,
+  continua valendo: não invente endpoint nem shape de payload.
 - Documentos, UI e mensagens ao operador em **pt-BR**. Código e identificadores em inglês.
 
 ### Versões que fogem do treino
