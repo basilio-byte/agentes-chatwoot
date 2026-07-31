@@ -221,9 +221,20 @@ export async function salvarEscopoDoAgente(
     accountId = n;
   }
 
+  const minutosBruto = String(formData.get("fallbackMinutos") ?? "").trim();
+  const minutos = minutosBruto ? Number.parseInt(minutosBruto, 10) : null;
+  if (minutosBruto && (!Number.isInteger(minutos) || minutos! < 1)) {
+    return { erro: "Os minutos de espera precisam ser um número a partir de 1." };
+  }
+
   await db.agent.update({
     where: { id: agentId },
-    data: { inboxMode: modo, inboxIds: modo === "specific" ? ids : [] },
+    data: {
+      inboxMode: modo,
+      inboxIds: modo === "specific" ? ids : [],
+      fallbackMinutos: minutos,
+      fallbackAtendente: String(formData.get("fallbackAtendente") ?? "").trim() || null,
+    },
   });
 
   // Só mexe na conta se o bot já existe — sem bot não há token a que associá-la.

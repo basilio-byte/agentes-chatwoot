@@ -91,6 +91,16 @@ model Agent {
   /// atender é uma segunda decisão, consciente.
   archivedAt DateTime?
 
+  /// Quantos minutos o cliente pode ficar esperando antes de a conversa ser
+  /// entregue a uma pessoa. Nulo = usa o padrão do sistema.
+  ///
+  /// Existe porque nem toda falha grita: modelo pendurado, worker morto no meio
+  /// do turno ou job perdido deixam o cliente no vácuo sem erro nenhum.
+  fallbackMinutos Int?
+  /// Para quem escalar quando o tempo estoura. Nulo = devolve à fila humana
+  /// sem escolher pessoa.
+  fallbackAtendente String?
+
   /// Espera antes de responder, para agrupar mensagens picotadas do cliente
   /// ("oi" / "tudo bem?" / "queria saber sobre sala") numa resposta só.
   /// Canal mais conversacional pede mais; e-mail pede menos.
@@ -331,6 +341,18 @@ model Conversation {
   /// assunto e o contexto antigo atrapalharia mais do que ajudaria.
   historicoDesde DateTime?
   resolvidaEm    DateTime?
+
+  /// Desde quando o cliente espera resposta. Gravado quando a mensagem dele
+  /// entra na fila e zerado quando o agente responde — é o relógio do vigia.
+  ///
+  /// Separado de , que é atualizado pelos dois lados e por isso
+  /// não distingue "cliente esperando" de "conversa ativa".
+  aguardandoDesde DateTime?
+
+  /// Agente dono do bot pelo qual a conversa entrou. Quem precisa falar com o
+  /// Chatwoot fora de um turno (o vigia) não teria outro jeito de achar a
+  /// credencial certa.
+  portaAgentId String?
 
   /// Por que o último processamento não chegou a responder.
   ///

@@ -255,6 +255,8 @@ export default async function AgentePage({
                   accountId={agente.chatwootBot?.accountId ?? null}
                   contaPadrao={contaPadrao}
                   temBot={Boolean(agente.chatwootBot)}
+                  fallbackMinutos={agente.fallbackMinutos}
+                  fallbackAtendente={agente.fallbackAtendente}
                   somenteLeitura={!editavel}
                 />
               </div>

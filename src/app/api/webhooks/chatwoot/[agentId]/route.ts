@@ -143,12 +143,22 @@ export async function POST(
     return NextResponse.json({ ok: true, respondera: false });
   }
 
+  const conversaExistente = await db.conversation.findUnique({
+    where: { chatwootConversationId: decisao.conversationId },
+    select: { aguardandoDesde: true },
+  });
+
   await db.conversation.upsert({
     where: { chatwootConversationId: decisao.conversationId },
     update: {
       lastMessageAt: new Date(),
       contactName: decisao.contato.nome,
       contactIdentifier: decisao.contato.identificador,
+      portaAgentId: agentId,
+      // Relógio do vigia. Só começa a contar se ninguém já estava esperando —
+      // três mensagens picotadas do cliente são UMA espera, e reiniciar a cada
+      // uma daria ao agente travado um tempo extra a cada linha digitada.
+      aguardandoDesde: conversaExistente?.aguardandoDesde ?? new Date(),
     },
     create: {
       chatwootConversationId: decisao.conversationId,
@@ -157,6 +167,8 @@ export async function POST(
       contactName: decisao.contato.nome,
       contactIdentifier: decisao.contato.identificador,
       lastMessageAt: new Date(),
+      portaAgentId: agentId,
+      aguardandoDesde: new Date(),
     },
   });
 

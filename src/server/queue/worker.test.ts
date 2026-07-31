@@ -113,8 +113,13 @@ function passarPara(key: string, aviso = `Vou te passar para ${key}, um instante
   };
 }
 
-const job = (agentId = "porta") =>
-  ({ data: { chatwootConversationId: 55, agentId, inboxId: 1 } }) as Job<JobAtendimento>;
+const job = (agentId = "porta", tentativa = 2) =>
+  ({
+    data: { chatwootConversationId: 55, agentId, inboxId: 1 },
+    // Como o BullMQ entrega: 3 tentativas, e esta é a última.
+    opts: { attempts: 3 },
+    attemptsMade: tentativa,
+  }) as Job<JobAtendimento>;
 
 beforeEach(() => {
   conversa = {
@@ -320,6 +325,17 @@ describe("invariante: o cliente nunca fica sem resposta", () => {
     expect(publicas()).toHaveLength(1);
     expect(publicas()[0]).toContain("instabilidade");
     expect(enviadas.some((m) => m.privado)).toBe(true);
+  });
+
+  it("nas primeiras tentativas não avisa o cliente — a próxima pode dar certo", async () => {
+    const runner = await import("@/server/agents/runner");
+    vi.spyOn(runner, "executarAgente").mockRejectedValueOnce(new Error("instabilidade"));
+
+    // Falha na preparação, primeira de três tentativas.
+    await expect(processarAtendimento(job("porta", 0))).rejects.toThrow();
+
+    // O laço tem rede própria; o que não pode é avisar cedo e depois responder.
+    expect(publicas().filter((m) => m.includes("instabilidade")).length).toBeLessThanOrEqual(1);
   });
 
   it("exceção no meio do turno não vira silêncio", async () => {

@@ -7,6 +7,7 @@ import {
   type EstadoEscopo,
 } from "@/server/actions/chatwoot";
 import { Aviso, Button, Card, Field, Input, Select } from "@/components/ui";
+import { MINUTOS_PADRAO } from "@/server/queue/espera";
 
 export function EscopoDoAgente({
   agentId,
@@ -15,6 +16,8 @@ export function EscopoDoAgente({
   accountId,
   contaPadrao,
   temBot,
+  fallbackMinutos,
+  fallbackAtendente,
   somenteLeitura,
 }: {
   agentId: string;
@@ -24,6 +27,8 @@ export function EscopoDoAgente({
   accountId: number | null;
   contaPadrao: number | null;
   temBot: boolean;
+  fallbackMinutos: number | null;
+  fallbackAtendente: string | null;
   somenteLeitura: boolean;
 }) {
   const [estado, acao, pendente] = useActionState<EstadoEscopo, FormData>(
@@ -99,6 +104,35 @@ export function EscopoDoAgente({
             disabled={somenteLeitura}
           />
         </Field>
+
+        <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
+          <Field
+            label="Entregar a uma pessoa se demorar (minutos)"
+            hint="Se o cliente ficar esperando mais que isso, a conversa vai para um humano. Cobre o que falha em silêncio: modelo pendurado, worker derrubado no meio do turno. Vazio usa o padrão."
+          >
+            <Input
+              name="fallbackMinutos"
+              type="number"
+              min={1}
+              max={120}
+              defaultValue={fallbackMinutos ?? ""}
+              placeholder={String(MINUTOS_PADRAO)}
+              disabled={somenteLeitura}
+            />
+          </Field>
+
+          <Field
+            label="Para quem (opcional)"
+            hint="Nome de quem assume nesse caso. Em branco, a conversa volta para a fila sem dono."
+          >
+            <Input
+              name="fallbackAtendente"
+              defaultValue={fallbackAtendente ?? ""}
+              placeholder="Ex.: Basílio"
+              disabled={somenteLeitura}
+            />
+          </Field>
+        </div>
 
         {!temBot ? (
           <Aviso>

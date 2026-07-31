@@ -5,6 +5,7 @@ import { getRedis } from "./conexao";
 import { FILA_ATENDIMENTO, type JobAtendimento } from "./atendimento";
 import { iniciarBatimento } from "./batimento";
 import { iniciarLimpeza } from "./limpeza";
+import { iniciarVigia } from "./vigia";
 import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
@@ -58,7 +59,56 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     // resposta" para sempre.
     const motivo = erro instanceof Error ? erro.message : String(erro);
     await registrarFalha(chatwootConversationId, motivo);
+
+    // Falha na PREPARAÇÃO (buscar a conversa, listar mensagens) acontece antes
+    // do laço, então a rede de segurança de lá não roda. Nas primeiras
+    // tentativas isso é certo — a próxima pode dar certo e o cliente nem
+    // percebe. Na última, alguém tem de falar com ele.
+    if (ultimaTentativa(job)) {
+      await avisarFalhaDefinitiva(job.data.agentId, chatwootConversationId);
+    }
+
     throw erro; // deixa o BullMQ tentar de novo
+  }
+}
+
+/**
+ * O BullMQ conta a partir de zero; `attempts` é o total permitido.
+ *
+ * Sem essa informação, trata como tentativa única — avisar o cliente cedo
+ * demais é melhor que nunca avisar.
+ */
+function ultimaTentativa(job: Job<JobAtendimento>): boolean {
+  const total = job.opts?.attempts ?? 1;
+  return (job.attemptsMade ?? 0) + 1 >= total;
+}
+
+/**
+ * Última palavra ao cliente quando o atendimento não foi nem começado.
+ *
+ * Melhor esforço, e sem marcar a conversa como humana: o vigia cuida disso se
+ * ninguém aparecer, e aqui a intenção é só não deixar a pessoa no vácuo.
+ */
+async function avisarFalhaDefinitiva(
+  portaId: string,
+  chatwootConversationId: number,
+) {
+  try {
+    const cliente = await clienteDoAgente(portaId);
+    if (!cliente) return;
+
+    const aoVivo = await cliente.obterConversa(chatwootConversationId);
+    if (aoVivo.assigneeId != null) return; // humano já assumiu
+
+    await cliente.enviarMensagem(
+      chatwootConversationId,
+      "Tive uma instabilidade por aqui e não consegui responder agora. Pode mandar de novo, por favor? Se preferir, um atendente pode continuar seu atendimento.",
+    );
+  } catch (erro) {
+    logger.error(
+      { conversa: chatwootConversationId, erro },
+      "não consegui avisar o cliente da falha definitiva",
+    );
   }
 }
 
@@ -230,9 +280,10 @@ async function atender(job: Job<JobAtendimento>) {
           log,
         );
 
+        // Respondeu: ninguém mais está esperando, o vigia pode soltar esta.
         await db.conversation.updateMany({
           where: { chatwootConversationId },
-          data: { lastMessageAt: new Date() },
+          data: { lastMessageAt: new Date(), aguardandoDesde: null },
         });
 
         log.info(
@@ -488,6 +539,9 @@ export function iniciarWorker() {
   iniciarBatimento();
   // Poda o histórico de entregas — sem isto a tabela cresce para sempre.
   iniciarLimpeza();
+  // Pega o que falha em silêncio: modelo pendurado, job perdido, worker morto
+  // no meio do turno — nada disso gera erro, só cliente esperando.
+  iniciarVigia();
 
   logger.info("worker de atendimento no ar");
   return worker;
