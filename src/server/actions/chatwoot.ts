@@ -15,7 +15,7 @@ import {
 import {
   clienteDoAgente,
   obterConfigChatwoot,
-  salvarSecretDaConta,
+  salvarSegredosDaConta,
   salvarSegredosDoBot,
 } from "@/server/integrations/chatwoot/credenciais";
 import { lerIdsDeCaixa, MODOS_DE_CAIXA } from "@/server/agents/equipe";
@@ -71,10 +71,11 @@ export async function salvarConfigChatwoot(
     },
   });
 
-  const secretDaConta = String(formData.get("secretDaConta") ?? "").trim();
-  if (secretDaConta) {
-    await salvarSecretDaConta(secretDaConta);
-  }
+  // Campo em branco mantém o valor atual — o formulário nunca devolve o segredo.
+  await salvarSegredosDaConta({
+    secretDaConta: String(formData.get("secretDaConta") ?? ""),
+    tokenDeLeitura: String(formData.get("tokenDeLeitura") ?? ""),
+  });
 
   revalidatePath("/integracoes");
   return { ok: "Configuração salva." };

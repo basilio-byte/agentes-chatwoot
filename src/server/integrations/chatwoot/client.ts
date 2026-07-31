@@ -5,9 +5,22 @@ import type { ChatwootConfig } from "./config";
  * Agent Bot. Só o que o atendimento precisa — não é um SDK completo.
  */
 export class ChatwootClient {
+  /**
+   * @param token     Token do Agent Bot. **Escreve**: manda mensagem, muda
+   *                  status, atribui, aplica rótulo.
+   * @param tokenDeLeitura Token de um usuário do Chatwoot. **Lê**: estado da
+   *                  conversa e histórico de mensagens.
+   *
+   * Dois tokens porque o Chatwoot separa isso e recusa leitura de bot com
+   * `Access to this endpoint is not authorized for bots` (constatado em
+   * produção, 2026-07-31). Sem o de leitura, o worker não consegue nem aplicar
+   * as regras globais nem montar o histórico — o atendimento morre antes de
+   * começar. Ausente, cai para o do bot, que é o comportamento antigo.
+   */
   constructor(
     private readonly config: ChatwootConfig,
     private readonly token: string,
+    private readonly tokenDeLeitura?: string | null,
   ) {}
 
   private url(caminho: string) {
@@ -17,11 +30,17 @@ export class ChatwootClient {
   private async requisitar<T>(
     caminho: string,
     init: RequestInit = {},
+    /** Leitura usa o token de usuário quando existe. */
+    leitura = false,
   ): Promise<T> {
+    const usandoTokenDeLeitura = leitura && Boolean(this.tokenDeLeitura);
+
     const resposta = await fetch(this.url(caminho), {
       ...init,
       headers: {
-        api_access_token: this.token,
+        api_access_token: usandoTokenDeLeitura
+          ? this.tokenDeLeitura!
+          : this.token,
         "Content-Type": "application/json",
         ...(init.headers ?? {}),
       },
@@ -30,6 +49,21 @@ export class ChatwootClient {
 
     if (!resposta.ok) {
       const corpo = await resposta.text().catch(() => "");
+
+      // O erro mais confuso desta API: o token está certo, só não pode LER.
+      // Sem esta tradução, a mensagem no painel não diz o que fazer.
+      if (
+        resposta.status === 401 &&
+        corpo.includes("not authorized for bots") &&
+        !usandoTokenDeLeitura
+      ) {
+        throw new ChatwootApiError(
+          resposta.status,
+          "o token do Agent Bot não tem permissão de leitura no Chatwoot. " +
+            "Configure o token de leitura em Integrações → Chatwoot (token de acesso de um usuário).",
+        );
+      }
+
       throw new ChatwootApiError(resposta.status, corpo.slice(0, 300));
     }
 
@@ -55,7 +89,7 @@ export class ChatwootClient {
     indeterminado?: boolean;
   }> {
     try {
-      await this.requisitar("/conversations?status=all&page=1");
+      await this.requisitar("/conversations?status=all&page=1", {}, true);
       return {
         ok: true,
         mensagem:
@@ -133,7 +167,7 @@ export class ChatwootClient {
       labels?: string[] | null;
       meta?: { assignee?: { id?: number } | null };
       assignee_id?: number | null;
-    }>(`/conversations/${conversationId}`);
+    }>(`/conversations/${conversationId}`, {}, true);
 
     return {
       status: bruta.status ?? null,
@@ -155,6 +189,8 @@ export class ChatwootClient {
   async listarMensagens(conversationId: number) {
     const resposta = await this.requisitar<{ payload?: MensagemChatwoot[] }>(
       `/conversations/${conversationId}/messages`,
+      {},
+      true,
     );
     return resposta.payload ?? [];
   }
@@ -201,6 +237,8 @@ export class ChatwootClient {
   async listarLabels(conversationId: number): Promise<string[]> {
     const resposta = await this.requisitar<{ payload?: string[] }>(
       `/conversations/${conversationId}/labels`,
+      {},
+      true,
     );
     return resposta.payload ?? [];
   }

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import { obterIntegracao } from "@/server/integrations/registry";
 import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
+import { obterSegredosDaConta } from "@/server/integrations/chatwoot/credenciais";
 import { clickupConfigSchema } from "@/server/integrations/clickup/config";
 import {
   IntegrationProvider,
@@ -42,6 +43,7 @@ export default async function IntegracoesPage({
     obterIntegracao(IntegrationProvider.CLICKUP)?.tools.length ?? 0;
 
   const comBot = await db.agentChatwootBot.count();
+  const segredosDaConta = await obterSegredosDaConta();
 
   const cabecalhos = await headers();
   const origem = `${cabecalhos.get("x-forwarded-proto") ?? "https"}://${
@@ -105,7 +107,8 @@ export default async function IntegracoesPage({
                   }
                   habilitada={chatwoot?.enabled ?? false}
                   somenteLeitura={!editavel}
-                  temSecretDaConta={Boolean(chatwoot?.credential)}
+                  temSecretDaConta={segredosDaConta.secretDaConta.length > 0}
+                  temTokenDeLeitura={segredosDaConta.tokenDeLeitura.length > 0}
                   urlWebhookConta={`${origem}/api/webhooks/chatwoot/conta`}
                 />
 

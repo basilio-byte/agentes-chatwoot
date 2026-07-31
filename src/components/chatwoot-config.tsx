@@ -13,6 +13,7 @@ export function ChatwootConfigForm({
   habilitada,
   somenteLeitura,
   temSecretDaConta,
+  temTokenDeLeitura,
   urlWebhookConta,
 }: {
   baseUrl: string;
@@ -20,6 +21,7 @@ export function ChatwootConfigForm({
   habilitada: boolean;
   somenteLeitura: boolean;
   temSecretDaConta: boolean;
+  temTokenDeLeitura: boolean;
   urlWebhookConta: string;
 }) {
   const [estado, acao, pendente] = useActionState<EstadoChatwoot, FormData>(
@@ -61,6 +63,22 @@ export function ChatwootConfigForm({
           />
         </Field>
       </div>
+
+      <Field
+        label="Token de leitura"
+        hint={
+          temTokenDeLeitura
+            ? "Já configurado. Preencha de novo só para rotacionar."
+            : "OBRIGATÓRIO para o atendimento funcionar. O token do Agent Bot só ESCREVE — o Chatwoot recusa leitura de bot, e sem ler a conversa o agente não consegue nem aplicar as regras nem ver o histórico. Use o token de acesso de um usuário: Perfil → Configurações do perfil → Token de acesso."
+        }
+      >
+        <Input
+          name="tokenDeLeitura"
+          type="password"
+          placeholder={temTokenDeLeitura ? "••••••••" : "Token de acesso de um usuário"}
+          disabled={somenteLeitura}
+        />
+      </Field>
 
       <Field
         label="Secret do webhook de conta (opcional)"

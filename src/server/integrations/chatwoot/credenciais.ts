@@ -34,7 +34,53 @@ export async function obterConfigChatwoot(): Promise<{
  * receber. Sem ele as regras continuam valendo (o worker checa ao vivo), mas o
  * corte de histórico só acontece quando alguém escreve na conversa.
  */
-export async function salvarSecretDaConta(secret: string) {
+/**
+ * Segredos da conta: secret do webhook de conta + token de leitura.
+ *
+ * Guardados num blob JSON só. O formato antigo era a string crua do secret —
+ * `obterSegredosDaConta` ainda lê isso, senão uma instalação existente perderia
+ * o secret na primeira leitura depois do deploy.
+ */
+export type SegredosDaConta = {
+  secretDaConta: string;
+  /** Token de um usuário do Chatwoot. Sem ele o bot não consegue LER nada. */
+  tokenDeLeitura: string;
+};
+
+export async function obterSegredosDaConta(): Promise<SegredosDaConta> {
+  const vazio = { secretDaConta: "", tokenDeLeitura: "" };
+
+  const integracao = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    include: { credential: true },
+  });
+  if (!integracao?.credential) return vazio;
+
+  try {
+    const bruto = decifrar(integracao.credential);
+    try {
+      const json = JSON.parse(bruto);
+      return {
+        secretDaConta: String(json.secretDaConta ?? ""),
+        tokenDeLeitura: String(json.tokenDeLeitura ?? ""),
+      };
+    } catch {
+      // Formato antigo: a string inteira era o secret do webhook de conta.
+      return { secretDaConta: bruto, tokenDeLeitura: "" };
+    }
+  } catch {
+    return vazio;
+  }
+}
+
+/** Grava só o que veio preenchido — campo em branco mantém o valor atual. */
+export async function salvarSegredosDaConta(novos: Partial<SegredosDaConta>) {
+  const atuais = await obterSegredosDaConta();
+  const mesclado: SegredosDaConta = {
+    secretDaConta: novos.secretDaConta?.trim() || atuais.secretDaConta,
+    tokenDeLeitura: novos.tokenDeLeitura?.trim() || atuais.tokenDeLeitura,
+  };
+
   const integracao = await db.integration.upsert({
     where: { provider: IntegrationProvider.CHATWOOT },
     update: {},
@@ -46,7 +92,7 @@ export async function salvarSecretDaConta(secret: string) {
     },
   });
 
-  const cifrado = cifrar(secret);
+  const cifrado = cifrar(JSON.stringify(mesclado));
   await db.integrationCredential.upsert({
     where: { integrationId: integracao.id },
     update: { ...cifrado, rotatedAt: new Date() },
@@ -54,18 +100,13 @@ export async function salvarSecretDaConta(secret: string) {
   });
 }
 
-export async function obterSecretDaConta(): Promise<string | null> {
-  const integracao = await db.integration.findUnique({
-    where: { provider: IntegrationProvider.CHATWOOT },
-    include: { credential: true },
-  });
-  if (!integracao?.credential) return null;
+export async function salvarSecretDaConta(secret: string) {
+  await salvarSegredosDaConta({ secretDaConta: secret });
+}
 
-  try {
-    return decifrar(integracao.credential);
-  } catch {
-    return null;
-  }
+export async function obterSecretDaConta(): Promise<string | null> {
+  const { secretDaConta } = await obterSegredosDaConta();
+  return secretDaConta || null;
 }
 
 export async function salvarSegredosDoBot(args: {
@@ -143,13 +184,14 @@ export async function obterSegredosDoBot(
 export async function clienteDoAgente(
   agentId: string,
 ): Promise<ChatwootClient | null> {
-  const [{ config }, segredos, bot] = await Promise.all([
+  const [{ config }, segredos, bot, daConta] = await Promise.all([
     obterConfigChatwoot(),
     obterSegredosDoBot(agentId),
     db.agentChatwootBot.findUnique({
       where: { agentId },
       select: { accountId: true },
     }),
+    obterSegredosDaConta(),
   ]);
 
   if (!config || !segredos) return null;
@@ -159,5 +201,6 @@ export async function clienteDoAgente(
   return new ChatwootClient(
     { ...config, accountId: bot?.accountId ?? config.accountId },
     segredos.token,
+    daConta.tokenDeLeitura || null,
   );
 }
