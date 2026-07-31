@@ -5,7 +5,7 @@ import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
 import { obterSecretDaConta } from "@/server/integrations/chatwoot/credenciais";
 import { ehResolvida, podeAgir } from "@/server/integrations/chatwoot/regras";
 import { eventoChatwootSchema } from "@/server/integrations/chatwoot/eventos";
-import { marcarResolvida } from "@/server/queue/worker";
+import { sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 import { ConversationStatus } from "@/generated/prisma/enums";
 
 export const runtime = "nodejs";
@@ -76,14 +76,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ignorado: "conversa desconhecida" });
   }
 
-  if (ehResolvida(conversa?.status)) {
-    await marcarResolvida(conversationId);
-    logger.info(
-      { conversa: conversationId },
-      "conversa resolvida — histórico cortado",
-    );
-    return NextResponse.json({ ok: true, resolvida: true });
-  }
+  const { resolvida } = await sincronizarResolucao(evento);
+  if (resolvida) return NextResponse.json({ ok: true, resolvida: true });
 
   const veredito = podeAgir({
     status: conversa?.status,

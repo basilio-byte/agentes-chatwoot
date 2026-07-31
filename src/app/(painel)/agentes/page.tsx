@@ -35,9 +35,20 @@ export default async function AgentesPage({
       owner: { select: { name: true } },
       updatedBy: { select: { name: true } },
       chatwootBot: { select: { botName: true } },
-      _count: { select: { runs: true, conversations: true } },
+      _count: { select: { runs: true } },
     },
   });
+
+  // Conversas ATENDIDAS, não conversas que o agente possui agora. Resolver
+  // libera o dono (`Conversation.agentId` vira nulo), então contar por posse
+  // faria o número sumir justamente quando o atendimento terminou bem.
+  const atendidas = await db.$queryRaw<{ agentId: string; total: number }[]>`
+    SELECT "agentId", COUNT(DISTINCT "conversationId")::int AS total
+    FROM "AgentRun"
+    WHERE "conversationId" IS NOT NULL
+    GROUP BY "agentId"
+  `;
+  const conversasPorAgente = new Map(atendidas.map((a) => [a.agentId, a.total]));
 
   const ativos = agentes.filter((a) => !a.archivedAt);
   const arquivados = agentes.filter((a) => a.archivedAt);
@@ -84,8 +95,8 @@ export default async function AgentesPage({
 
         <div className="space-y-1 text-right">
           <Meta className="block">
-            {agente._count.conversations} conversa(s) · {agente._count.runs}{" "}
-            execução(ões)
+            {conversasPorAgente.get(agente.id) ?? 0} conversa(s) ·{" "}
+            {agente._count.runs} execução(ões)
           </Meta>
           <Meta className="block">dono: {agente.owner?.name ?? "—"}</Meta>
           <Meta className="block">

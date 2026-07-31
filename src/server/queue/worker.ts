@@ -10,6 +10,7 @@ import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { montarContexto } from "@/server/integrations/chatwoot/historico";
 import { podeAgir, precisaAbrir } from "@/server/integrations/chatwoot/regras";
+import { marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import {
   mensagemDeBastao,
   resolverAgenteAtivo,
@@ -26,40 +27,14 @@ import {
 import { ConversationStatus, RunSource } from "@/generated/prisma/enums";
 import type { SinalDeHandoff } from "@/server/integrations/types";
 
+export { marcarResolvida };
+
 /** Só o que estas funções usam do logger — evita casar a tipagem do pino. */
 type Registro = {
   info: (obj: object, msg?: string) => void;
   warn: (obj: object, msg?: string) => void;
   error: (obj: object, msg?: string) => void;
 };
-
-/**
- * Marca a conversa como encerrada e corta o histórico.
- *
- * O corte é o coração da regra: o mesmo cliente costuma voltar por outro
- * assunto, e arrastar o contexto anterior faria o agente responder a pergunta
- * errada. Reabriu, começa do zero.
- *
- * Zera junto o dono e o bastão. Sem isso, uma conversa reaberta voltaria direto
- * para o especialista do atendimento passado — que é justamente o contexto que
- * a regra manda esquecer.
- */
-export async function marcarResolvida(chatwootConversationId: number) {
-  const agora = new Date();
-  await db.conversation.updateMany({
-    where: { chatwootConversationId },
-    data: {
-      status: ConversationStatus.CLOSED,
-      resolvidaEm: agora,
-      historicoDesde: agora,
-      agentId: null,
-      handoffParaAgentId: null,
-      handoffResumo: null,
-      handoffMotivo: null,
-      handoffDeNome: null,
-    },
-  });
-}
 
 /**
  * Processa um atendimento: relê a conversa no Chatwoot, roda o agente

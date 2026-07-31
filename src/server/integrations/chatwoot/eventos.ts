@@ -12,6 +12,11 @@ export const eventoChatwootSchema = z
   .object({
     event: z.string(),
     id: z.union([z.number(), z.string()]).optional(),
+    /**
+     * Em `conversation_status_changed` o status vem no topo, e não dentro de
+     * `conversation` — depende do evento.
+     */
+    status: z.string().optional(),
     content: z.string().nullable().optional(),
     message_type: z.string().optional(),
     private: z.boolean().optional(),

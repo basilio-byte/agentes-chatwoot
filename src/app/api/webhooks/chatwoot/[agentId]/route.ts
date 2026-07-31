@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@/generated/prisma/client";
+import { ConversationStatus } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
 import { obterSegredosDoBot } from "@/server/integrations/chatwoot/credenciais";
 import { decidirSeResponde } from "@/server/integrations/chatwoot/eventos";
 import { agendarAtendimento } from "@/server/queue/atendimento";
+import { sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,6 +99,15 @@ export async function POST(
     throw erro;
   }
 
+  // O webhook DE BOT também recebe conversation_updated (visto em produção).
+  // Aproveitar isso é o que faz a conversa resolvida zerar de verdade, sem
+  // depender do webhook de conta estar configurado.
+  const { resolvida } = await sincronizarResolucao(payload);
+  if (resolvida) {
+    await marcarEntrega(entrega, "resolvido", "conversa zerada: volta do começo");
+    return NextResponse.json({ ok: true, resolvida: true });
+  }
+
   // Decisão barata aqui para não encher a fila de ruído (typing, eco, nota
   // privada). O worker ainda reconfere o estado no banco depois do debounce.
   const decisao = decidirSeResponde(payload);
@@ -142,6 +153,21 @@ export async function POST(
       contactIdentifier: decisao.contato.identificador,
       lastMessageAt: new Date(),
     },
+  });
+
+  // Mensagem nova reabre o atendimento: encerrada volta a ser do bot, e volta
+  // limpa — `historicoDesde` e o dono já foram zerados quando ela foi
+  // resolvida. Sem isto o worker recusaria a conversa para sempre, porque ele
+  // só processa status BOT.
+  //
+  // Só sai de CLOSED. HUMAN continua HUMAN: quem assumiu não perde a conversa
+  // porque o cliente escreveu de novo.
+  await db.conversation.updateMany({
+    where: {
+      chatwootConversationId: decisao.conversationId,
+      status: ConversationStatus.CLOSED,
+    },
+    data: { status: ConversationStatus.BOT },
   });
 
   await agendarAtendimento(
