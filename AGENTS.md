@@ -63,6 +63,24 @@ modelos `anthropic/*` como padrão.
   a conversa por 24h (`removeOnFail`): toda mensagem seguinte sumia, o webhook
   respondia "agendado" e o worker nunca via nada. `agendarAtendimento` remove o
   job existente em **qualquer** estado menos `active`.
+- **O formato do payload muda por evento.** Em `message_created` a conversa vem
+  aninhada em `conversation`; em `conversation_status_changed` e
+  `conversation_updated` o payload **é** a conversa — id no topo, sem
+  `conversation`. Ler só o aninhado fazia a resolução passar batido. Ver
+  `lerConversa`, e a guarda de que o id do topo só vale para evento de conversa
+  (em mensagem, aquele id é da MENSAGEM, e resolveria a conversa errada).
+- **Resolver é detectado por QUALQUER entrega**, dos dois webhooks. Mensagem
+  nova depois disso reabre o atendimento — só de `CLOSED`, porque `HUMAN`
+  continua com quem assumiu. Sem reabrir, o worker recusaria a conversa para
+  sempre, já que ele só processa `BOT`.
+- **Chatwoot nasce ligado em todo agente.** Não é integração opcional: é o
+  canal. Desligá-lo não cala o agente, só tira as tools de transferência — quem
+  quer um agente que nunca transfere usa a allowlist. Antes só quem tinha bot
+  ganhava o vínculo, e com a porta única o especialista nascia sem transferir.
+- **Silêncio precisa deixar rastro.** Batimento do worker no Redis, entregas de
+  webhook com resultado e detalhe (inclusive as recusadas, cujo corpo NÃO é
+  guardado por não ter sido verificado), e `Conversation.ultimaFalha` para falha
+  anterior à chamada do modelo — que não cria `AgentRun` e ficaria invisível.
 - **O token de Agent Bot escreve mas não lê.** `GET /conversations/{id}` responde
   `Access to this endpoint is not authorized for bots`. Por isso o
   `ChatwootClient` recebe dois tokens: o do bot para agir e um **token de
