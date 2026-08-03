@@ -65,6 +65,19 @@ modelos `anthropic/*` como padrão.
   a conversa por 24h (`removeOnFail`): toda mensagem seguinte sumia, o webhook
   respondia "agendado" e o worker nunca via nada. `agendarAtendimento` remove o
   job existente em **qualquer** estado menos `active`.
+- **`active` é o buraco que sobrou desse conserto**, e some pelo Redis. Não dá
+  para remover o job que está rodando, então a mensagem que chega durante o
+  turno deixa um recado (`atendimento:pendente:<id>`) e o worker o consome no
+  evento **`completed`** — de dentro do handler não adianta, o job ainda está
+  `active`. Sem isso a mensagem sumia de vez: o agente responde ao turno
+  anterior, zera `aguardandoDesde`, e o vigia para de vigiar justamente a
+  mensagem que ninguém leu. `consumirPendente` lê e apaga numa operação só,
+  porque a concorrência é 4.
+- **Retry só vale para turno que não falou com o cliente.** O BullMQ reexecuta o
+  turno **inteiro**, e ele não é idempotente: o modelo roda de novo, o cliente
+  recebe a mesma resposta (ou o mesmo "vou te passar") de novo, e a OpenRouter
+  cobra de novo. Falha depois do envio é registrada em `ultimaFalha` e **não**
+  relançada — `EstadoDoTurno.clienteRecebeuResposta` é quem decide.
 - **O formato do payload muda por evento.** Em `message_created` a conversa vem
   aninhada em `conversation`; em `conversation_status_changed` e
   `conversation_updated` o payload **é** a conversa — id no topo, sem

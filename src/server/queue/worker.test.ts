@@ -41,6 +41,10 @@ let respostasDoModelo: Array<{
   resolveNoMeio?: boolean;
 }>;
 let agentesQueRodaram: string[];
+/** Simula falha DEPOIS de a resposta já ter saído para o cliente. */
+let quebrarUpdateMany: boolean;
+/** Simula falha ANTES de qualquer contato com o cliente. */
+let quebrarObterConversa: boolean;
 let bastoesRecebidos: (string | null | undefined)[];
 
 vi.mock("@/lib/db", () => ({
@@ -48,6 +52,11 @@ vi.mock("@/lib/db", () => ({
     conversation: {
       findUnique: async () => conversa,
       updateMany: async ({ data }: { data: Record<string, unknown> }) => {
+        // Só a gravação que acontece DEPOIS do envio — `assumirConversa` e
+        // `registrarFalha` passam pelo mesmo caminho e precisam funcionar.
+        if (quebrarUpdateMany && "lastMessageAt" in data) {
+          throw new Error("banco fora do ar depois do envio");
+        }
         Object.assign(conversa, data);
         return { count: 1 };
       },
@@ -64,7 +73,10 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
   clienteDoAgente: async () => ({
-    obterConversa: async () => statusChatwoot,
+    obterConversa: async () => {
+      if (quebrarObterConversa) throw new Error("Chatwoot fora do ar");
+      return statusChatwoot;
+    },
     listarMensagens: async () => [
       { id: 1, message_type: 0, content: "quero alugar uma sala", private: false },
     ],
@@ -148,6 +160,8 @@ beforeEach(() => {
   respostasDoModelo = [];
   agentesQueRodaram = [];
   bastoesRecebidos = [];
+  quebrarUpdateMany = false;
+  quebrarObterConversa = false;
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -456,6 +470,34 @@ describe("invariante: o cliente nunca fica sem resposta", () => {
     await processarAtendimento(job());
 
     // A regra global barra antes de rodar; nada é enviado ao cliente.
+    expect(publicas()).toEqual([]);
+  });
+});
+
+describe("retry não pode duplicar o que já saiu", () => {
+  /**
+   * O BullMQ reexecuta o turno INTEIRO, e o turno não é idempotente: o modelo
+   * roda de novo, o cliente recebe a mesma resposta de novo e a OpenRouter
+   * cobra de novo. Uma falha DEPOIS do envio — gravar a passagem, mexer no
+   * status, o segundo agente de uma cadeia — não pode virar nova tentativa.
+   */
+  it("falha depois de responder não relança o erro", async () => {
+    respostasDoModelo = [{ resposta: "já foi para o cliente" }];
+    // A gravação pós-envio explode. Antes, isso reexecutava o turno inteiro.
+    quebrarUpdateMany = true;
+
+    await expect(processarAtendimento(job())).resolves.toBeUndefined();
+
+    expect(publicas()).toEqual(["já foi para o cliente"]);
+  });
+
+  it("falha ANTES de falar com o cliente continua relançando, para tentar de novo", async () => {
+    // Instabilidade na preparação: a próxima tentativa pode dar certo e o
+    // cliente nem percebe. Aqui o retry é exatamente o que queremos.
+    quebrarObterConversa = true;
+
+    await expect(processarAtendimento(job())).rejects.toThrow();
+
     expect(publicas()).toEqual([]);
   });
 });

@@ -2,7 +2,12 @@ import { Worker, type Job } from "bullmq";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { getRedis } from "./conexao";
-import { FILA_ATENDIMENTO, type JobAtendimento } from "./atendimento";
+import {
+  agendarAtendimento,
+  consumirPendente,
+  FILA_ATENDIMENTO,
+  type JobAtendimento,
+} from "./atendimento";
 import { iniciarBatimento } from "./batimento";
 import { iniciarLimpeza } from "./limpeza";
 import { iniciarVigia } from "./vigia";
@@ -37,6 +42,9 @@ type Registro = {
   error: (obj: object, msg?: string) => void;
 };
 
+/** O que o turno já fez, para quem está fora dele poder decidir. */
+type EstadoDoTurno = { clienteRecebeuResposta: boolean };
+
 /**
  * Processa um atendimento: relê a conversa no Chatwoot, roda o agente
  * responsável e responde. Se ele passar o atendimento a um colega, o colega
@@ -49,8 +57,10 @@ type Registro = {
  */
 export async function processarAtendimento(job: Job<JobAtendimento>) {
   const { chatwootConversationId } = job.data;
+  const turno: EstadoDoTurno = { clienteRecebeuResposta: false };
+
   try {
-    await atender(job);
+    await atender(job, turno);
     // Deu certo: limpa a falha anterior para o painel não mostrar erro velho.
     await registrarFalha(chatwootConversationId, null);
   } catch (erro) {
@@ -59,6 +69,22 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     // resposta" para sempre.
     const motivo = erro instanceof Error ? erro.message : String(erro);
     await registrarFalha(chatwootConversationId, motivo);
+
+    // O BullMQ reexecuta o turno INTEIRO, e o turno não é idempotente: o
+    // modelo roda de novo, o cliente recebe a mesma resposta (ou o mesmo "vou
+    // te passar") de novo, e a OpenRouter cobra de novo. Uma falha depois de já
+    // termos falado com o cliente — gravar a passagem, mexer no status, o
+    // segundo agente de uma cadeia — não pode virar nova tentativa.
+    //
+    // Não é silêncio: o cliente já tem resposta, a falha ficou em
+    // `ultimaFalha` e o vigia continua de olho se ninguém aparecer.
+    if (turno.clienteRecebeuResposta) {
+      logger.error(
+        { conversa: chatwootConversationId, erro: motivo },
+        "turno falhou DEPOIS de falar com o cliente — sem nova tentativa, para não duplicar",
+      );
+      return;
+    }
 
     // Falha na PREPARAÇÃO (buscar a conversa, listar mensagens) acontece antes
     // do laço, então a rede de segurança de lá não roda. Nas primeiras
@@ -126,7 +152,7 @@ async function registrarFalha(
   }
 }
 
-async function atender(job: Job<JobAtendimento>) {
+async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
   const { chatwootConversationId, agentId: portaId, inboxId } = job.data;
   const log = logger.child({ conversa: chatwootConversationId, porta: portaId });
 
@@ -226,8 +252,6 @@ async function atender(job: Job<JobAtendimento>) {
       : null;
 
   /** Verdade sobre o turno: só vira true depois de um envio confirmado. */
-  let clienteRecebeuResposta = false;
-
   try {
     while (true) {
       await assumirConversa(chatwootConversationId, ativo.id);
@@ -250,7 +274,7 @@ async function atender(job: Job<JobAtendimento>) {
       // Entregou a conversa a uma pessoa e já avisou o cliente de dentro da
       // tool (tem de ser antes de atribuir, senão a regra global cala o envio).
       // O turno não terminou mudo — a rede de segurança não deve disparar.
-      if (resultado.avisouCliente) clienteRecebeuResposta = true;
+      if (resultado.avisouCliente) turno.clienteRecebeuResposta = true;
 
       if (!handoff) {
         const resposta = resultado.resposta.trim();
@@ -274,12 +298,12 @@ async function atender(job: Job<JobAtendimento>) {
           );
           if (aindaPode.resolvida) await marcarResolvida(chatwootConversationId);
           // Humano assumiu: não é silêncio, é a regra funcionando.
-          clienteRecebeuResposta = true;
+          turno.clienteRecebeuResposta = true;
           break;
         }
 
         await cliente.enviarMensagem(chatwootConversationId, resposta);
-        clienteRecebeuResposta = true;
+        turno.clienteRecebeuResposta = true;
 
         // Pendente some da visualização padrão do Chatwoot. Conversa que o bot
         // está tocando não pode ficar invisível para a equipe.
@@ -328,7 +352,7 @@ async function atender(job: Job<JobAtendimento>) {
           motivo: autorizado.motivo,
           log,
         });
-        clienteRecebeuResposta = true;
+        turno.clienteRecebeuResposta = true;
         break;
       }
 
@@ -336,7 +360,7 @@ async function atender(job: Job<JobAtendimento>) {
       // um lugar só: uma transferência que falhasse depois deixaria um "vou te
       // passar" solto na conversa.
       await cliente.enviarMensagem(chatwootConversationId, handoff.aviso.trim());
-      clienteRecebeuResposta = true;
+      turno.clienteRecebeuResposta = true;
 
       await registrarPassagem({
         conversaId: conversa?.id,
@@ -362,7 +386,7 @@ async function atender(job: Job<JobAtendimento>) {
     // INVARIANTE: o turno nunca termina com o cliente sem nada. Vale para
     // exceção no meio do laço, para agente que não produziu texto e para
     // destino que sumiu — todos os caminhos que, sem isto, viram silêncio.
-    if (!clienteRecebeuResposta) {
+    if (!turno.clienteRecebeuResposta) {
       await garantirRespostaAoCliente({ cliente, chatwootConversationId, log });
     }
   }
@@ -559,6 +583,39 @@ async function garantirRespostaAoCliente(args: {
   }
 }
 
+/**
+ * Segundos até processar a mensagem que chegou durante o turno.
+ *
+ * Curto de propósito: ela já esperou um turno inteiro: um novo debounce cheio
+ * só faria o cliente esperar duas vezes. Se ele ainda estiver digitando, o
+ * próprio webhook reagenda com o debounce do agente.
+ */
+const DEBOUNCE_DO_REAGENDAMENTO_S = 1;
+
+/**
+ * Processa a mensagem que chegou enquanto o turno rodava.
+ *
+ * Melhor esforço e fora do handler: falhar aqui não pode derrubar um turno que
+ * já deu certo. Se falhar, a mensagem espera a próxima do cliente — e o agente
+ * relê o histórico inteiro, então nada de conteúdo se perde.
+ */
+async function reprocessarPendente(dados: JobAtendimento) {
+  try {
+    if (!(await consumirPendente(dados.chatwootConversationId))) return;
+
+    logger.info(
+      { conversa: dados.chatwootConversationId },
+      "mensagem chegou durante o turno — reagendando",
+    );
+    await agendarAtendimento(dados, DEBOUNCE_DO_REAGENDAMENTO_S);
+  } catch (erro) {
+    logger.error(
+      { conversa: dados.chatwootConversationId, erro },
+      "não consegui reagendar a mensagem que chegou durante o turno",
+    );
+  }
+}
+
 export function iniciarWorker() {
   const worker = new Worker<JobAtendimento>(
     FILA_ATENDIMENTO,
@@ -580,6 +637,10 @@ export function iniciarWorker() {
 
   worker.on("completed", (job) => {
     logger.debug({ jobId: job.id }, "atendimento concluído");
+    // Só aqui dá para reagendar: dentro do handler o job ainda está `active`,
+    // e o `add` com o mesmo jobId seria ignorado — que é justamente o bug que
+    // este caminho conserta.
+    void reprocessarPendente(job.data);
   });
 
   // Sinal de vida para o painel poder responder "o worker está rodando?".

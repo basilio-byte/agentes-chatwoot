@@ -50,21 +50,63 @@ export async function agendarAtendimento(
   if (existente) {
     const estado = await existente.getState();
 
-    // Só não dá para mexer no que está rodando agora — a mensagem nova entra
-    // no próximo ciclo, e o worker relê o histórico inteiro de qualquer forma.
+    // `active` é o único estado em que não dá para mexer: o job está rodando
+    // agora, e o `add` abaixo seria IGNORADO em silêncio. Deixamos um recado
+    // no Redis — o worker o lê quando o turno termina e agenda o próximo.
     //
+    // Sem esse recado a mensagem sumia de vez: o agente responde ao turno
+    // anterior, zera `aguardandoDesde` ao responder, e o vigia deixa de vigiar
+    // justamente a mensagem que ninguém leu. Silêncio sem erro nenhum.
+    if (estado === "active") {
+      await marcarPendente(dados.chatwootConversationId);
+      return null;
+    }
+
     // Todo o resto sai, inclusive `failed` e `completed`. O BullMQ IGNORA em
     // silêncio um `add` com jobId que já existe, mesmo terminado: um job que
     // falhou de vez envenenava a conversa pelas 24h do `removeOnFail`, e toda
     // mensagem seguinte sumia sem processar e sem deixar rastro. Foi assim que
     // uma conversa ficou muda depois de um 401 (produção, 2026-07-31).
-    if (estado !== "active") {
-      await existente.remove();
-    }
+    await existente.remove();
   }
 
   return fila.add("responder", dados, {
     jobId,
     delay: Math.max(0, debounceSegundos) * 1000,
   });
+}
+
+/**
+ * Recado de "chegou mensagem enquanto o turno rodava".
+ *
+ * Fica no Redis, e não no Postgres, porque é estado de fila e some sozinho: se
+ * o worker morrer antes de consumir, a próxima mensagem do cliente reagenda de
+ * qualquer forma, e o TTL evita recado eterno de conversa abandonada.
+ */
+const CHAVE_PENDENTE = (chatwootConversationId: number) =>
+  `atendimento:pendente:${chatwootConversationId}`;
+
+const VALIDADE_DO_RECADO_S = 3600;
+
+async function marcarPendente(chatwootConversationId: number) {
+  await getRedis().set(
+    CHAVE_PENDENTE(chatwootConversationId),
+    "1",
+    "EX",
+    VALIDADE_DO_RECADO_S,
+  );
+}
+
+/**
+ * Lê **e apaga** o recado numa operação só.
+ *
+ * Atômico de propósito: o worker roda com concorrência 4, e dois turnos
+ * terminando juntos não podem reagendar a mesma mensagem duas vezes.
+ */
+export async function consumirPendente(
+  chatwootConversationId: number,
+): Promise<boolean> {
+  const chave = CHAVE_PENDENTE(chatwootConversationId);
+  const resultado = await getRedis().multi().get(chave).del(chave).exec();
+  return resultado?.[0]?.[1] === "1";
 }
