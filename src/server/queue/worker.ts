@@ -10,7 +10,7 @@ import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { montarContexto } from "@/server/integrations/chatwoot/historico";
-import { podeAgir, precisaAbrir } from "@/server/integrations/chatwoot/regras";
+import { ehResolvida, podeAgir, precisaAbrir } from "@/server/integrations/chatwoot/regras";
 import { entregarAoHumano, marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import {
   mensagemDeBastao,
@@ -152,7 +152,12 @@ async function atender(job: Job<JobAtendimento>) {
   // Estado ao vivo do Chatwoot — é o que torna as regras globais absolutas.
   // Não depende de qual webhook o Agent Bot recebe, e fecha a janela entre um
   // humano assumir a conversa e o agente enviar a resposta.
-  const aoVivo = await cliente.obterConversa(chatwootConversationId);
+  const aoVivo = await reabrirSeResolvida(
+    cliente,
+    chatwootConversationId,
+    await cliente.obterConversa(chatwootConversationId),
+    log,
+  );
   const veredito = podeAgir(aoVivo);
 
   if (!veredito.pode) {
@@ -364,6 +369,41 @@ async function atender(job: Job<JobAtendimento>) {
 }
 
 /**
+ * Reabre no Chatwoot a conversa resolvida em que o cliente acabou de escrever.
+ *
+ * Existe um job para esta conversa, e job só nasce de mensagem de cliente —
+ * então ela voltou a existir, por definição. O Chatwoot normalmente reabre
+ * sozinho ao receber mensagem em conversa encerrada, mas em 2026-08-03 a
+ * conversa ficou `resolved` mesmo com a mensagem entregue, e o atendimento
+ * morreu ali: sem reabrir, `podeAgir` recusa, nada mais muda aquele status, e a
+ * conversa fica muda para sempre.
+ *
+ * **Só reabre o que não tem dono.** Conversa resolvida com um humano atribuído
+ * continua sendo dele — reabrir seria o bot tomando de volta um atendimento que
+ * uma pessoa encerrou.
+ *
+ * Melhor esforço: se a reabertura falhar, seguimos com o estado real e as
+ * regras globais decidem — o pior caso volta a ser o de hoje, não pior que ele.
+ */
+async function reabrirSeResolvida(
+  cliente: ChatwootClient,
+  chatwootConversationId: number,
+  aoVivo: { status: string | null; assigneeId: number | null; inboxId: number | null; labels: string[] },
+  log: Registro,
+) {
+  if (!ehResolvida(aoVivo.status) || aoVivo.assigneeId != null) return aoVivo;
+
+  try {
+    await cliente.alternarStatus(chatwootConversationId, "open");
+    log.info({}, "conversa resolvida reaberta pela mensagem do cliente");
+    return { ...aoVivo, status: "open" };
+  } catch (erro) {
+    log.warn({ erro }, "não consegui reabrir a conversa resolvida");
+    return aoVivo;
+  }
+}
+
+/**
  * Deixa a conversa aberta quando ela estava pendente.
  *
  * Melhor esforço: falhar aqui não pode desfazer a resposta que o cliente já
@@ -488,6 +528,15 @@ async function garantirRespostaAoCliente(args: {
     // Se um humano assumiu no meio, o silêncio do bot é o comportamento certo.
     const aoVivo = await cliente.obterConversa(chatwootConversationId);
     if (aoVivo.assigneeId != null) return;
+
+    // Idem se resolveram a conversa enquanto o agente pensava. A regra de ouro
+    // — conversa resolvida não recebe interação — vale também para a rede de
+    // segurança: um contorno aqui reabriria a discussão numa conversa que uma
+    // pessoa acabou de encerrar. E não é silêncio de falha: é a regra.
+    if (ehResolvida(aoVivo.status)) {
+      log.info({}, "conversa foi resolvida durante o turno — sem contorno");
+      return;
+    }
 
     log.error({}, "turno terminou sem resposta ao cliente — enviando contorno");
 

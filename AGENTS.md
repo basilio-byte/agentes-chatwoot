@@ -200,7 +200,17 @@ três pontos, e o terceiro é o que as torna absolutas:
 As regras:
 
 - **Conversa atribuída a humano: o agente cala.** Vale mesmo com a conversa aberta.
-- **Conversa resolvida: nenhuma interação.**
+- **Conversa resolvida: nenhuma interação.** Vale para a rede de segurança
+  também: se resolverem no meio do turno, o contorno **não** sai — reabriria a
+  discussão numa conversa que alguém acabou de encerrar. O que **não** é
+  interação em conversa resolvida é a **mensagem nova do cliente**: ela é o
+  sinal de que a conversa voltou, e o worker reabre no Chatwoot antes de
+  responder (`reabrirSeResolvida`). O Chatwoot costuma reabrir sozinho e em
+  2026-08-03 não reabriu — sem isso, nada mais mudaria aquele status e a
+  conversa ficava muda para sempre. **Só reabre o que não tem dono**, e só no
+  começo do turno: resolução que acontece durante o turno ganha.
+  E `message_created` **nunca** conta como sinal de resolução — o status ali é
+  só contexto, e tratá-lo como resolução engolia a mensagem que reabriria tudo.
 - **Conversa do bot nunca fica pendente.** O Chatwoot põe em `pending` a
   conversa de caixa com Agent Bot, e `pending` não aparece na visualização
   padrão — ficaria invisível para a equipe. O bot **age** em `open` e

@@ -120,7 +120,15 @@ export function decidirSeResponde(bruto: unknown): Decisao {
     status: conversa.status,
     assigneeId: conversa.assignee_id ?? conversa.meta?.assignee?.id ?? null,
   });
-  if (!veredito.pode) {
+
+  // "Resolvida" NÃO cala uma mensagem nova do cliente: ela é justamente o sinal
+  // de que a conversa voltou a existir. O Chatwoot costuma reabrir sozinho, mas
+  // nem sempre reabre (visto em produção, 2026-08-03) — e quando ele não
+  // reabre, recusar aqui deixava a conversa muda para sempre, porque nada mais
+  // chegaria a mudar aquele status. Quem reabre no Chatwoot é o worker.
+  //
+  // As outras recusas continuam valendo, inclusive dono humano.
+  if (!veredito.pode && !veredito.resolvida) {
     return { responder: false, motivo: veredito.motivo };
   }
 

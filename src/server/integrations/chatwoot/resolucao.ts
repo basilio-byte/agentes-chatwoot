@@ -119,6 +119,16 @@ export async function sincronizarResolucao(
   if (!parsed.success) return { resolvida: false };
 
   const evento = parsed.data;
+
+  // Mensagem NÃO é sinal de resolução. Em `message_created` o status da
+  // conversa é só contexto, e vem "resolved" quando o cliente escreve numa
+  // conversa encerrada — exatamente o caso em que ela está voltando à vida.
+  // Tratar isso como resolução engolia a mensagem: a rota registrava
+  // "conversa zerada" e devolvia 200 sem enfileirar nada.
+  //
+  // Quem resolve avisa por evento de conversa, e é de lá que a resolução vem.
+  if (evento.event === "message_created") return { resolvida: false };
+
   const { conversationId, status } = lerConversa(evento);
 
   if (!conversationId || !ehResolvida(status)) return { resolvida: false };

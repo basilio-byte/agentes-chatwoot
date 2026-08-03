@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lerConversa } from "./resolucao";
+import { lerConversa, sincronizarResolucao } from "./resolucao";
 
 /**
  * O formato muda conforme o evento, e errar isso fez a resolução passar batido
@@ -56,5 +56,33 @@ describe("de onde sai o id e o status da conversa", () => {
       lerConversa({ event: "conversation_updated", id: "abc", status: "resolved" })
         .conversationId,
     ).toBeUndefined();
+  });
+});
+
+describe("o que conta como resolução", () => {
+  /**
+   * Em `message_created` o status da conversa é só contexto — e vem "resolved"
+   * justamente quando o cliente escreve numa conversa encerrada, que é o
+   * momento em que ela volta à vida. Tratar isso como resolução engolia a
+   * mensagem: a rota registrava "conversa zerada" e devolvia 200 sem
+   * enfileirar nada (visto em produção, 2026-08-03).
+   *
+   * Não toca no banco: se tocasse, este teste falharia sem Postgres.
+   */
+  it("mensagem do cliente NÃO resolve, nem trazendo status resolved", async () => {
+    const r = await sincronizarResolucao({
+      event: "message_created",
+      id: 991,
+      message_type: "incoming",
+      conversation: { id: 55, status: "resolved" },
+    });
+
+    expect(r).toEqual({ resolvida: false });
+  });
+
+  it("payload que não é do Chatwoot não resolve nada", async () => {
+    expect(await sincronizarResolucao({ foo: "bar" })).toEqual({
+      resolvida: false,
+    });
   });
 });

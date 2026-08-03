@@ -75,12 +75,35 @@ describe("decisão de responder", () => {
     expect(d.responder).toBe(false);
   });
 
-  it("não responde conversa resolvida", () => {
+  /**
+   * O caso de 2026-08-03: o cliente escreveu numa conversa encerrada e o
+   * Chatwoot não reabriu. Recusar aqui deixava a conversa muda para sempre —
+   * nada mais chegaria a mudar aquele status. A mensagem do cliente É o sinal
+   * de que a conversa voltou; quem reabre no Chatwoot é o worker.
+   */
+  it("mensagem nova REABRE conversa resolvida em vez de calar", () => {
     const d = decidirSeResponde(
       evento({ conversation: { id: 55, status: "resolved" } }),
     );
 
-    expect(d).toEqual({ responder: false, motivo: "conversa resolvida" });
+    expect(d.responder).toBe(true);
+  });
+
+  it("mas conversa resolvida COM dono continua sendo da pessoa", () => {
+    const d = decidirSeResponde(
+      evento({
+        conversation: {
+          id: 55,
+          status: "resolved",
+          meta: { assignee: { id: 4 } },
+        },
+      }),
+    );
+
+    expect(d).toEqual({
+      responder: false,
+      motivo: "conversa atribuída a um humano",
+    });
   });
 
   it("ignora outros eventos", () => {

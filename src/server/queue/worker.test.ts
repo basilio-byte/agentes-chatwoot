@@ -34,7 +34,12 @@ let handoffsGravados: Record<string, unknown>[];
 let enviadas: { texto: string; privado: boolean }[];
 let statusChatwoot: { status: string; assigneeId: number | null };
 /** Fila de respostas do "modelo", consumida a cada chamada de executarAgente. */
-let respostasDoModelo: Array<{ resposta?: string; handoff?: unknown }>;
+let respostasDoModelo: Array<{
+  resposta?: string;
+  handoff?: unknown;
+  /** Um humano resolve a conversa enquanto o agente pensa. */
+  resolveNoMeio?: boolean;
+}>;
 let agentesQueRodaram: string[];
 let bastoesRecebidos: (string | null | undefined)[];
 
@@ -83,6 +88,8 @@ vi.mock("@/server/agents/runner", () => ({
     bastoesRecebidos.push(entrada.bastao);
 
     const proxima = respostasDoModelo.shift() ?? { resposta: "pronto" };
+    // Simula um humano resolvendo a conversa enquanto o agente pensava.
+    if (proxima.resolveNoMeio) statusChatwoot = { ...statusChatwoot, status: "resolved" };
     return {
       runId: `run-${agentesQueRodaram.length}`,
       resposta: proxima.resposta ?? "",
@@ -355,6 +362,57 @@ describe("o bot nunca deixa a conversa pendente", () => {
     await processarAtendimento(job());
 
     expect(statusChatwoot.status).not.toBe("resolved");
+  });
+});
+
+describe("cliente escreveu em conversa resolvida", () => {
+  /**
+   * Existe um job, e job só nasce de mensagem de cliente — então a conversa
+   * voltou a existir. O Chatwoot costuma reabrir sozinho e em 2026-08-03 não
+   * reabriu: a conversa ficou `resolved` com a mensagem entregue, e o
+   * atendimento morreu ali. Sem reabrir aqui, nada mais mudaria aquele status.
+   */
+  it("reabre no Chatwoot e responde", async () => {
+    statusChatwoot = { status: "resolved", assigneeId: null };
+    respostasDoModelo = [{ resposta: "Oi! Como posso ajudar?" }];
+
+    await processarAtendimento(job());
+
+    expect(statusChatwoot.status).toBe("open");
+    expect(publicas()).toEqual(["Oi! Como posso ajudar?"]);
+  });
+
+  it("resolvida COM dono continua da pessoa — o bot não toma de volta", async () => {
+    statusChatwoot = { status: "resolved", assigneeId: 4 };
+    respostasDoModelo = [{ resposta: "não deveria sair" }];
+
+    await processarAtendimento(job());
+
+    expect(statusChatwoot.status).toBe("resolved");
+    expect(publicas()).toEqual([]);
+  });
+});
+
+describe("regra de ouro: resolvida não recebe interação", () => {
+  it("resolveram durante o turno — a resposta pronta é descartada", async () => {
+    respostasDoModelo = [{ resposta: "resposta que não deve sair", resolveNoMeio: true }];
+
+    await processarAtendimento(job());
+
+    expect(publicas()).toEqual([]);
+  });
+
+  /**
+   * A rede de segurança olhava só o dono. Numa conversa resolvida sem ninguém
+   * atribuído, ela mandava o contorno — reabrindo a conversa que uma pessoa
+   * acabou de encerrar. Aqui o silêncio não é falha: é a regra funcionando.
+   */
+  it("resolveram durante o turno e o agente não produziu texto — nem contorno sai", async () => {
+    respostasDoModelo = [{ resposta: "", resolveNoMeio: true }];
+
+    await processarAtendimento(job());
+
+    expect(enviadas).toEqual([]);
   });
 });
 
