@@ -5,6 +5,7 @@ import { obterIntegracao } from "@/server/integrations/registry";
 import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
 import { obterSegredosDaConta } from "@/server/integrations/chatwoot/credenciais";
 import { clickupConfigSchema } from "@/server/integrations/clickup/config";
+import { conexaConfigSchema } from "@/server/integrations/conexa/config";
 import {
   IntegrationProvider,
   IntegrationStatus,
@@ -12,6 +13,7 @@ import {
 } from "@/generated/prisma/enums";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
+import { ConexaConfigForm } from "@/components/conexa-config";
 import { Building2, ListChecks, MessagesSquare } from "lucide-react";
 import { Abas } from "@/components/abas";
 import { Aviso, Badge, Card, PageHeader } from "@/components/ui";
@@ -38,7 +40,13 @@ export default async function IntegracoesPage({
     (i) => i.provider === IntegrationProvider.CLICKUP,
   );
   const configChatwoot = chatwootConfigSchema.safeParse(chatwoot?.config ?? {});
+  const conexa = registros.find(
+    (i) => i.provider === IntegrationProvider.CONEXA,
+  );
   const configClickUp = clickupConfigSchema.safeParse(clickup?.config ?? {});
+  const configConexa = conexaConfigSchema.safeParse(conexa?.config ?? {});
+  const toolsConexa =
+    obterIntegracao(IntegrationProvider.CONEXA)?.tools.length ?? 0;
   const toolsClickUp =
     obterIntegracao(IntegrationProvider.CLICKUP)?.tools.length ?? 0;
 
@@ -195,16 +203,72 @@ export default async function IntegracoesPage({
             rotulo: "ERP Conexa",
             icone: <Building2 size={14} aria-hidden />,
             conteudo: (
-              <Card className="space-y-2">
+              <Card className="space-y-3">
                 <div className="flex items-center gap-2">
                   <h2 className="font-medium">ERP Conexa</h2>
-                  <Badge>aguardando documentação de API</Badge>
+                  {conexa?.enabled ? (
+                    <Badge tone="success">ligada</Badge>
+                  ) : (
+                    <Badge>desligada</Badge>
+                  )}
+                  {conexa?.status === IntegrationStatus.OK ? (
+                    <Badge tone="success">conexão ok</Badge>
+                  ) : conexa?.status === IntegrationStatus.ERROR ? (
+                    <Badge tone="danger">falha na conexão</Badge>
+                  ) : null}
                 </div>
+
                 <p className="text-sm text-muted">
-                  Consulta de cadastro, contratos e financeiro dos clientes. O
-                  contrato do registry já existe — falta a documentação para
-                  escrever o módulo.
+                  Clientes, planos, contratos com assinatura eletrônica,
+                  cobranças com Pix e reservas de sala. O agente recebe{" "}
+                  {toolsConexa} ferramenta(s) quando esta integração está ligada
+                  para ele.
                 </p>
+
+                <ConexaConfigForm
+                  baseUrl={configConexa.success ? configConexa.data.baseUrl : ""}
+                  unidades={
+                    configConexa.success
+                      ? configConexa.data.unidades
+                          .map((u) => `${u.nome} = ${u.companyId}`)
+                          .join("\n")
+                      : ""
+                  }
+                  salas={
+                    configConexa.success
+                      ? configConexa.data.salas
+                          .map((s) => `${s.nome} = ${s.roomId}`)
+                          .join("\n")
+                      : ""
+                  }
+                  sellerId={String(
+                    (configConexa.success && configConexa.data.sellerId) || "",
+                  )}
+                  contractTemplateId={String(
+                    (configConexa.success && configConexa.data.contractTemplateId) ||
+                      "",
+                  )}
+                  crmPartnerId={String(
+                    (configConexa.success && configConexa.data.crmPartnerId) || "",
+                  )}
+                  crmStatusId={String(
+                    (configConexa.success && configConexa.data.crmStatusId) || "",
+                  )}
+                  habilitada={conexa?.enabled ?? false}
+                  temToken={Boolean(conexa?.credential)}
+                  hintToken={conexa?.credential?.hint ?? null}
+                  somenteLeitura={!editavel}
+                  podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                />
+
+                {conexa?.lastError ? (
+                  <Aviso tone="danger">
+                    Último teste falhou: {conexa.lastError}
+                    {conexa.lastCheckedAt
+                      ? ` (${formatarData(conexa.lastCheckedAt)})`
+                      : ""}
+                  </Aviso>
+                ) : null}
               </Card>
             ),
           },
