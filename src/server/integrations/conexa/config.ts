@@ -44,6 +44,14 @@ export const conexaConfigSchema = z.object({
     .array(z.object({ nome: z.string().min(1), roomId: z.number().int().positive() }))
     .default([]),
 
+  /**
+   * Modelo de contrato usado ao pedir assinatura eletrônica.
+   *
+   * A API não lista modelos: o id vem do próprio Conexa, e sem ele
+   * `POST /contract/:id/signature/request` não tem o que gerar.
+   */
+  contractTemplateId: z.number().int().positive().optional(),
+
   /** Origem obrigatória ao registrar lead (`POST /potentialCustomer`). */
   crmPartnerId: z.number().int().positive().optional(),
   /** Status inicial do lead, quando a instância usa status. */

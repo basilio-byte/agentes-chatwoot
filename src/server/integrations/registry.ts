@@ -2,12 +2,13 @@ import type { IntegrationProvider } from "@/generated/prisma/enums";
 import type { IntegrationDefinition } from "./types";
 import { chatwootIntegration } from "./chatwoot";
 import { clickupIntegration } from "./clickup";
+import { conexaIntegration } from "./conexa";
 
 /**
  * Registro central de integrações.
  *
- * O ERP Conexa continua fora: a documentação de API dele ainda não foi
- * fornecida, e inventar endpoints garantiria retrabalho.
+ * ZapSign e ClickSign ainda estão fora: os clientes HTTP existem e têm teste,
+ * mas falta o catálogo de tools e o valor no enum `IntegrationProvider`.
  *
  * Para adicionar uma integração:
  *   1. criar `src/server/integrations/<provider>/index.ts` exportando um
@@ -18,6 +19,7 @@ import { clickupIntegration } from "./clickup";
 const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = {
   [chatwootIntegration.provider]: chatwootIntegration,
   [clickupIntegration.provider]: clickupIntegration,
+  [conexaIntegration.provider]: conexaIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {
