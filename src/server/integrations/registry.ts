@@ -8,8 +8,8 @@ import { zapsignIntegration } from "./zapsign";
 /**
  * Registro central de integrações.
  *
- * A ClickSign ainda está fora: o cliente HTTP existe e tem teste, mas falta o
- * catálogo de tools e o valor no enum `IntegrationProvider`.
+ * A ClickSign foi cancelada em 03/08/2026 e saiu do repositório — está no
+ * histórico do git se algum dia voltar.
  *
  * Para adicionar uma integração:
  *   1. criar `src/server/integrations/<provider>/index.ts` exportando um
