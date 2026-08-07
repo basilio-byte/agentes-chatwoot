@@ -14,16 +14,46 @@ const TOM: Record<string, "success" | "danger" | "neutral" | "accent"> = {
   agendado: "success",
   rejeitado: "danger",
   ignorado: "neutral",
+  // Vocabulário do gatilho HTTP — o Chatwoot nunca seta estes dois valores,
+  // então nada muda no uso atual.
+  executado: "success",
+  falhou: "danger",
 };
 
+const TEXTO_VAZIO_PADRAO = (
+  <>
+    Nada chegou ainda. Se você já mandou mensagem na caixa, o problema está do
+    lado do Chatwoot: confira se o bot tem a <strong>URL do webhook</strong>{" "}
+    preenchida e se ele está <strong>vinculado à caixa de entrada</strong>.
+  </>
+);
+
+const TEXTO_SEGREDO_QUEBRADO_PADRAO = (
+  <>
+    A última entrega foi recusada por assinatura. O{" "}
+    <strong>secret do webhook</strong> daqui não confere com o do bot no
+    Chatwoot — salve o secret de novo.
+  </>
+);
+
 /**
- * Últimas entregas que o Chatwoot fez neste webhook.
+ * Últimas entregas recebidas neste webhook — reaproveitado pelo Chatwoot e
+ * pelo gatilho HTTP genérico, com os textos ajustados por prop (o vocabulário
+ * de "secret do bot" não faz sentido para quem fala de "token do gatilho").
  *
- * Responde a pergunta que o log de container respondia mal: "o Chatwoot está
- * chamando?". Sem nada aqui, o problema é do lado de lá (bot sem URL, sem
- * vínculo com a caixa); com entregas recusadas, é o secret.
+ * Responde a pergunta que o log de container respondia mal: "algo está
+ * chamando?". Sem nada aqui, o problema é do lado de fora (bot sem URL, ou
+ * sistema externo mal configurado); com entregas recusadas, é o segredo.
  */
-export function EntregasDoWebhook({ entregas }: { entregas: Entrega[] }) {
+export function EntregasDoWebhook({
+  entregas,
+  textoVazio = TEXTO_VAZIO_PADRAO,
+  textoSegredoQuebrado = TEXTO_SEGREDO_QUEBRADO_PADRAO,
+}: {
+  entregas: Entrega[];
+  textoVazio?: React.ReactNode;
+  textoSegredoQuebrado?: React.ReactNode;
+}) {
   // Só avisa se a recusa ainda vale: uma entrega aceita depois dela significa
   // que o secret já foi corrigido. Sem isto, o alarme ficava vermelho para
   // sempre por causa de um erro resolvido meia hora antes.
@@ -48,19 +78,11 @@ export function EntregasDoWebhook({ entregas }: { entregas: Entrega[] }) {
       </div>
 
       {entregas.length === 0 ? (
-        <Aviso>
-          Nada chegou ainda. Se você já mandou mensagem na caixa, o problema está
-          do lado do Chatwoot: confira se o bot tem a <strong>URL do webhook</strong>{" "}
-          preenchida e se ele está <strong>vinculado à caixa de entrada</strong>.
-        </Aviso>
+        <Aviso>{textoVazio}</Aviso>
       ) : (
         <>
           {secretQuebrado ? (
-            <Aviso tone="danger">
-              A última entrega foi recusada por assinatura. O{" "}
-              <strong>secret do webhook</strong> daqui não confere com o do bot no
-              Chatwoot — salve o secret de novo.
-            </Aviso>
+            <Aviso tone="danger">{textoSegredoQuebrado}</Aviso>
           ) : null}
 
           {/* Rola em vez de crescer: dez linhas cabem, o resto fica a um

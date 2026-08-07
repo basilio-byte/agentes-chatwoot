@@ -102,6 +102,44 @@ modelos `anthropic/*` como padrão.
   usuário** para ler estado e histórico (global, em Integrações). Sem o de
   leitura o atendimento morre antes de chamar o modelo.
 
+### Gatilho HTTP: aciona um agente sem Chatwoot nenhum
+
+Um agente também pode ser acionado direto por POST de um sistema externo
+(ClickUp, n8n, `curl`) — `/api/webhooks/gatilho/<agentId>/<token>`. Sem
+conversa, sem cliente, sem canal de resposta: o agente só age pelas tools que
+tiver ligadas, e o payload vira a `mensagem` do turno (`RunSource.TRIGGER`).
+
+- **O token vai no PATH, não em header.** Pesquisado antes de escrever: a API
+  de webhook do ClickUp não permite anexar cabeçalho nenhum ao registrar — só a
+  URL é configurável. Header custom não é universal por definição; path é.
+- **Aqui o segredo nasce do NOSSO lado**, ao contrário de toda outra credencial
+  do projeto (que o operador cola de um sistema que já existe). Por isso é
+  cifrado como sempre, mas devolvido em texto puro **uma única vez**, na
+  criação/rotação — mesmo padrão de qualquer chave de API (Stripe, GitHub).
+- **Nasce desligado**, mesma doutrina de `Agent.active`/`Integration.enabled`.
+  Gerar o token não liga sozinho.
+- **Responde `200` para quase tudo**, inclusive gatilho desligado, cooldown ou
+  teto estourado — só `401`/`404` são erro de protocolo de verdade. A maioria
+  dos sistemas de webhook trata não-2xx como falha e reage agressivamente
+  (reenvio, ou desativa o webhook do lado dele); manter `200` deixa a decisão
+  inteiramente do nosso lado.
+- **Trava anti-loop, porque o risco é real**: o agente reage a um evento
+  mudando o mesmo recurso que disparou o evento, o sistema externo chama de
+  volta, e vira laço queimando crédito da OpenRouter sem ninguém perceber.
+  Cooldown de 20s por `recursoChave` (extraída do payload — `task_id` e
+  afins) pega a causa raiz; um teto de execuções por janela é a rede de
+  segurança e **desliga o gatilho sozinho** quando estoura, deixando rastro em
+  `AgentTrigger.pausadoAutomaticamenteMotivo` — silêncio precisa deixar rastro
+  vale aqui também.
+- **Retry só para falha ANTES de qualquer tool.** Mesmo bug já corrigido para o
+  atendimento do Chatwoot nesta sessão, reaplicado de propósito: o BullMQ
+  reexecuta o job inteiro, e uma tool que já rodou pode ter mudado algo de
+  verdade num sistema externo. `runner.ts` anota `runId` no erro antes de
+  relançar; o worker do gatilho confere se alguma `ToolCall` já foi persistida
+  para decidir se é seguro deixar o BullMQ tentar de novo.
+- **Fila e worker próprios** (`FILA_GATILHO`), mas no MESMO processo do worker
+  de atendimento — `iniciarWorker()` sobe os dois. Zero serviço novo de deploy.
+
 ### ClickUp: armadilhas da API v2
 
 Todas cobertas por teste em `src/server/integrations/clickup/client.test.ts` —

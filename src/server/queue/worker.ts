@@ -11,6 +11,8 @@ import {
 import { iniciarBatimento } from "./batimento";
 import { iniciarLimpeza } from "./limpeza";
 import { iniciarVigia } from "./vigia";
+import { FILA_GATILHO, type JobGatilho } from "./gatilho";
+import { processarGatilho } from "./gatilho-worker";
 import { executarAgente } from "@/server/agents/runner";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
@@ -616,7 +618,17 @@ async function reprocessarPendente(dados: JobAtendimento) {
   }
 }
 
-export function iniciarWorker() {
+/**
+ * Os dois workers do processo. `close()` de cada um é exposto porque o
+ * shutdown (`src/worker.ts`) precisa esperar os dois — matar um sem esperar
+ * o outro corta jobs em andamento sem necessidade.
+ */
+export type Workers = {
+  atendimento: Worker<JobAtendimento>;
+  gatilho: Worker<JobGatilho>;
+};
+
+export function iniciarWorker(): Workers {
   const worker = new Worker<JobAtendimento>(
     FILA_ATENDIMENTO,
     processarAtendimento,
@@ -643,6 +655,20 @@ export function iniciarWorker() {
     void reprocessarPendente(job.data);
   });
 
+  // Fila separada, mesmo processo — igual a iniciarVigia/iniciarBatimento
+  // logo abaixo: mais uma coisa rodando ao lado, zero serviço novo de deploy.
+  const workerGatilho = new Worker<JobGatilho>(FILA_GATILHO, processarGatilho, {
+    connection: getRedis(),
+    concurrency: 4,
+  });
+
+  workerGatilho.on("failed", (job, erro) => {
+    logger.error(
+      { jobId: job?.id, tentativa: job?.attemptsMade, erro: erro.message },
+      "gatilho falhou",
+    );
+  });
+
   // Sinal de vida para o painel poder responder "o worker está rodando?".
   iniciarBatimento();
   // Poda o histórico de entregas — sem isto a tabela cresce para sempre.
@@ -652,5 +678,5 @@ export function iniciarWorker() {
   iniciarVigia();
 
   logger.info("worker de atendimento no ar");
-  return worker;
+  return { atendimento: worker, gatilho: workerGatilho };
 }

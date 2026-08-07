@@ -9,10 +9,13 @@ import {
   MessagesSquare,
   Plug,
   Users,
+  Webhook,
 } from "lucide-react";
 import { Abas } from "@/components/abas";
 import { UserRole } from "@/generated/prisma/enums";
 import { resumoDoBot } from "@/server/actions/chatwoot";
+import { resumoDoGatilho } from "@/server/actions/gatilho";
+import { GatilhoDoAgente } from "@/components/gatilho-do-agente";
 import { obterConfigChatwoot } from "@/server/integrations/chatwoot/credenciais";
 import { listarIntegracoes } from "@/server/integrations/registry";
 import { tokensAproximadosDaTool } from "@/server/integrations/resolve";
@@ -72,8 +75,19 @@ export default async function AgentePage({
   const urlWebhook = `${protocolo}://${host}/api/webhooks/chatwoot/${agente.id}`;
   const resumoBot = await resumoDoBot(agente.id);
   const entregas = await db.webhookEvent.findMany({
-    where: { agentId: agente.id },
+    where: { agentId: agente.id, provider: "CHATWOOT" },
     // Cinquenta na lista rolável; a poda no worker cuida do resto.
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
+  });
+
+  // URL base do gatilho — falta só o token, que o operador só vê uma vez, na
+  // hora de gerar (server action, não aqui: nunca guardamos texto puro).
+  const urlBaseGatilho = `${protocolo}://${host}/api/webhooks/gatilho/${agente.id}`;
+  const resumoGatilho = await resumoDoGatilho(agente.id);
+  const entregasGatilho = await db.webhookEvent.findMany({
+    where: { agentId: agente.id, provider: "TRIGGER" },
     orderBy: { createdAt: "desc" },
     take: 50,
     select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
@@ -258,6 +272,24 @@ export default async function AgentePage({
                   fallbackMinutos={agente.fallbackMinutos}
                   fallbackAtendente={agente.fallbackAtendente}
                   somenteLeitura={!editavel}
+                />
+              </div>
+            ),
+          },
+          {
+            id: "gatilho",
+            rotulo: "Gatilho",
+            icone: <Webhook size={15} aria-hidden />,
+            alerta: Boolean(resumoGatilho.pausadoAutomaticamenteMotivo),
+            conteudo: (
+              <div className="max-w-3xl">
+                <GatilhoDoAgente
+                  agentId={agente.id}
+                  urlBase={urlBaseGatilho}
+                  resumo={resumoGatilho}
+                  entregas={entregasGatilho}
+                  somenteLeitura={!editavel}
+                  podeEditarCredencial={sessao.user.role === UserRole.OWNER}
                 />
               </div>
             ),

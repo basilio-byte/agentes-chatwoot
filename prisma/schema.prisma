@@ -128,6 +128,7 @@ model Agent {
   conversations Conversation[]
   runs          AgentRun[]
   chatwootBot   AgentChatwootBot?
+  trigger       AgentTrigger?
 
   handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
   handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
@@ -194,6 +195,41 @@ model AgentChatwootBot {
   rotatedAt DateTime @default(now())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+/// Gatilho HTTP genérico por agente — aciona fora de uma conversa do Chatwoot,
+/// por POST de qualquer sistema externo (ClickUp, n8n, curl). A URL inteira é
+/// `/api/webhooks/gatilho/<agentId>/<token>`.
+///
+/// Diferente de toda outra credencial do projeto: aqui o segredo nasce do
+/// NOSSO lado — é a única forma de o operador colá-lo na URL configurada no
+/// sistema externo. Por isso é devolvido em texto puro uma única vez, na
+/// criação/rotação; depois, só `hint`. Cifrado em repouso como tudo mais.
+model AgentTrigger {
+  id      String @id @default(cuid())
+  agentId String @unique
+
+  /// Nasce DESLIGADO — mesma doutrina de Agent.active/Integration.enabled
+  /// ("só entra em produção de propósito"). Gerar o token não liga sozinho; o
+  /// operador ainda precisa configurar o prompt e ligar conscientemente.
+  enabled Boolean @default(false)
+
+  ciphertext String @db.Text
+  iv         String
+  authTag    String
+  hint       String
+
+  rotatedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Preenchido quando o teto de execuções estourou e o sistema desligou o
+  /// gatilho sozinho. Fica visível no painel — silêncio precisa deixar
+  /// rastro — e só some quando alguém religar conscientemente.
+  pausadoAutomaticamenteEm     DateTime?
+  pausadoAutomaticamenteMotivo String?
 
   agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
 }
@@ -380,6 +416,7 @@ model Conversation {
 enum RunSource {
   PLAYGROUND
   CHATWOOT
+  TRIGGER
 }
 
 enum RunStatus {

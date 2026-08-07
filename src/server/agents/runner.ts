@@ -317,6 +317,15 @@ export async function executarAgente(
       },
     });
 
+    // Anota o runId no erro antes de relançar: é o que permite a quem chama
+    // (o worker do gatilho HTTP) saber se alguma ToolCall já foi persistida
+    // antes da falha — e portanto se um efeito colateral já aconteceu num
+    // sistema externo. Aditivo: quem já chama executarAgente e não lê essa
+    // propriedade (Chatwoot, Playground) não é afetado.
+    if (erro instanceof Error) {
+      (erro as Error & { runId?: string }).runId = run.id;
+    }
+
     throw erro;
   }
 }
