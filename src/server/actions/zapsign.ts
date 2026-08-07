@@ -87,7 +87,15 @@ export async function salvarConfigZapSign(
   });
 
   revalidatePath("/integracoes");
-  return { ok: "Configuração salva." };
+  // A mensagem NOMEIA o que foi gravado. Sem isso, "Configuração salva" não
+  // distingue salvar sandbox de salvar produção — e é a diferença entre um
+  // contrato de teste e um contrato de verdade.
+  return {
+    ok:
+      parsed.data.ambiente === "sandbox"
+        ? "Configuração salva. Ambiente gravado: SANDBOX (sem validade jurídica)."
+        : "Configuração salva. Ambiente gravado: PRODUÇÃO (com validade jurídica).",
+  };
 }
 
 export async function salvarTokenZapSign(
@@ -142,7 +150,10 @@ export async function testarConexaoZapSign(
     { ...config.data, ambiente: ambiente ?? config.data.ambiente },
     decifrar(atual.credential),
   );
+  const usado = ambiente ?? config.data.ambiente;
   const resultado = await cliente.testar();
+  // Diz contra QUEM falou: o mesmo token pode existir nos dois ambientes.
+  const onde = usado === "sandbox" ? "SANDBOX" : "PRODUÇÃO";
 
   await db.integration.update({
     where: { provider: PROVIDER },
@@ -154,7 +165,9 @@ export async function testarConexaoZapSign(
   });
 
   revalidatePath("/integracoes");
-  return resultado.ok ? { ok: resultado.mensagem } : { erro: resultado.mensagem };
+  return resultado.ok
+    ? { ok: `[${onde}] ${resultado.mensagem}` }
+    : { erro: `[${onde}] ${resultado.mensagem}` };
 }
 
 /**
@@ -184,9 +197,10 @@ export async function descobrirModelosZapSign(
       .filter((m) => m.active)
       .map((m) => ({ id: m.token, nome: m.name }));
 
+    const onde = (ambiente ?? config.data.ambiente) === "sandbox" ? "SANDBOX" : "PRODUÇÃO";
     return modelos.length
-      ? { ok: `${modelos.length} modelo(s) encontrado(s).`, modelos }
-      : { erro: "Nenhum modelo ativo nesta conta da ZapSign." };
+      ? { ok: `[${onde}] ${modelos.length} modelo(s) encontrado(s).`, modelos }
+      : { erro: `[${onde}] Nenhum modelo ativo nesta conta da ZapSign.` };
   } catch (erro) {
     return {
       erro: erro instanceof Error ? erro.message : "Falha ao buscar modelos.",

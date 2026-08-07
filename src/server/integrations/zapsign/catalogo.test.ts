@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { IntegrationProvider } from "@/generated/prisma/enums";
 import { zapsignIntegration } from "./index";
 
 const tools = zapsignIntegration.tools;
@@ -77,5 +78,56 @@ describe("catálogo da ZapSign", () => {
    */
   it("não expõe exclusão de documento", () => {
     expect(nomes.some((n) => n.includes("excluir"))).toBe(false);
+  });
+});
+
+describe("marca de ambiente nas respostas", () => {
+  /**
+   * Em sandbox o documento não tem validade jurídica, e nada na resposta da
+   * ZapSign diz isso. Sem a marca, o agente geraria um contrato de teste,
+   * mandaria o link ao cliente com toda a confiança, e a execução não guardaria
+   * pista nenhuma de que aquilo não valia nada.
+   */
+  const ctx = (ambiente: "producao" | "sandbox") => ({
+    provider: IntegrationProvider.ZAPSIGN,
+    config: { ambiente, modelos: [{ nome: "Contrato", templateId: "tpl-1" }] },
+    credential: "tok",
+    agentId: "a1",
+  });
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        token: "doc-1",
+        name: "Contrato",
+        status: "pending",
+        signers: [{ token: "s1", sign_url: "https://x", name: "Maria", status: "new" }],
+      }),
+      text: async () => "",
+    }));
+  });
+
+  const verDocumento = tools.find((t) => t.name === "zapsign_ver_documento")!;
+
+  it("sandbox marca a resposta e avisa que não vale como contrato", async () => {
+    const r = (await verDocumento.execute(
+      { documentoId: "doc-1234567890" },
+      ctx("sandbox"),
+    )) as Record<string, unknown>;
+
+    expect(r.ambiente).toBe("sandbox");
+    expect(String(r.avisoImportante)).toContain("NÃO tem validade jurídica");
+  });
+
+  it("produção marca sem aviso — não há o que ressalvar", async () => {
+    const r = (await verDocumento.execute(
+      { documentoId: "doc-1234567890" },
+      ctx("producao"),
+    )) as Record<string, unknown>;
+
+    expect(r.ambiente).toBe("producao");
+    expect(r.avisoImportante).toBeUndefined();
   });
 });

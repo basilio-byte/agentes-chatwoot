@@ -15,6 +15,11 @@ import {
 } from "@/server/integrations/zapsign/config";
 import { Aviso, Button, Field, Input, Select, Textarea } from "@/components/ui";
 
+const ROTULO_AMBIENTE: Record<string, string> = {
+  producao: "Produção",
+  sandbox: "Sandbox",
+};
+
 /** Rótulos em português para os modos de autenticação da ZapSign. */
 const ROTULO_AUTH: Record<string, string> = {
   assinaturaTela: "Assinatura na tela (grátis)",
@@ -69,6 +74,17 @@ export function ZapSignConfigForm({
   // está salvo. Testar token de sandbox contra a URL de produção devolve 401 —
   // que se parece com token errado e manda trocar a credencial certa.
   const [amb, setAmb] = useState<Ambiente>(ambiente);
+
+  // Depois de salvar, o servidor manda o valor gravado. Sem esta sincronia o
+  // seletor continuava mostrando o que foi digitado, mesmo que o banco tivesse
+  // outra coisa — e a tela mentiria sobre qual conta o agente vai usar.
+  const [ultimoSalvo, setUltimoSalvo] = useState<Ambiente>(ambiente);
+  if (ambiente !== ultimoSalvo) {
+    setUltimoSalvo(ambiente);
+    setAmb(ambiente);
+  }
+
+  const naoSalvo = amb !== ambiente;
 
   const erro = (campo: string) => estadoConfig.camposComErro?.[campo];
 
@@ -205,6 +221,15 @@ export function ZapSignConfigForm({
             <strong>Sandbox não tem validade jurídica.</strong> Contrato assinado
             aqui não vale como documento. Use para validar o fluxo e troque para
             produção antes de mandar para cliente de verdade.
+          </Aviso>
+        ) : null}
+
+        {naoSalvo ? (
+          <Aviso tone="danger">
+            Você escolheu <strong>{ROTULO_AMBIENTE[amb]}</strong>, mas o que está
+            gravado é <strong>{ROTULO_AMBIENTE[ambiente]}</strong>. É o gravado
+            que os agentes usam — salve antes de testar pelo playground ou pelo
+            WhatsApp.
           </Aviso>
         ) : null}
 

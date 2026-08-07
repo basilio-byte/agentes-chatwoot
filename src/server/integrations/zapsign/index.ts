@@ -61,14 +61,33 @@ function paraSignatario(s: EntradaSignatario): Signatario {
 }
 
 /**
+ * Marca de ambiente em toda resposta que cria ou consulta documento.
+ *
+ * Não é enfeite: em sandbox o documento **não tem validade jurídica**, e nada
+ * na resposta da ZapSign diz isso. Sem a marca, um agente geraria um contrato
+ * de teste, mandaria o link ao cliente com toda a confiança, e o registro da
+ * execução não guardaria nenhuma pista de que aquilo não valia nada.
+ */
+function marcaDeAmbiente(config: ZapSignConfig) {
+  return config.ambiente === "sandbox"
+    ? {
+        ambiente: "sandbox" as const,
+        avisoImportante:
+          "AMBIENTE DE TESTES: este documento NÃO tem validade jurídica. Não trate como contrato válido nem diga ao cliente que está assinado de verdade.",
+      }
+    : { ambiente: "producao" as const };
+}
+
+/**
  * O que o cliente precisa receber: o link de cada signatário.
  *
  * `original_file` e `signed_file` ficam de fora de propósito — expiram em 60
  * minutos, e devolver ao modelo uma URL que morre antes de ele usar só gera
  * mensagem quebrada para o cliente.
  */
-function formatarDocumento(doc: DocumentoCriado) {
+function formatarDocumento(doc: DocumentoCriado, config: ZapSignConfig) {
   return {
+    ...marcaDeAmbiente(config),
     documentoId: doc.token,
     nome: doc.name,
     status: doc.status,
@@ -223,7 +242,7 @@ export const zapsignIntegration: IntegrationDefinition = {
           : doc;
 
         return {
-          ...formatarDocumento(completo),
+          ...formatarDocumento(completo, config),
           observacao:
             "Mande o link ao signatário. Ele expira só quando o documento é assinado ou cancelado.",
         };
@@ -237,8 +256,8 @@ export const zapsignIntegration: IntegrationDefinition = {
       inputSchema: z.object({ documentoId: z.string().min(10) }),
       async execute(entrada, ctx) {
         const { documentoId } = entrada as { documentoId: string };
-        const { cliente } = contexto(ctx);
-        return formatarDocumento(await cliente.detalhar(documentoId));
+        const { cliente, config } = contexto(ctx);
+        return formatarDocumento(await cliente.detalhar(documentoId), config);
       },
     },
     {
@@ -257,13 +276,14 @@ export const zapsignIntegration: IntegrationDefinition = {
           emailDoSignatario?: string;
           pagina?: number;
         };
-        const { cliente } = contexto(ctx);
+        const { cliente, config } = contexto(ctx);
         const { count, results } = await cliente.listar({
           status: args.situacao,
           signer_email: args.emailDoSignatario,
           page: args.pagina ?? 1,
         });
         return {
+          ...marcaDeAmbiente(config),
           total: count,
           documentos: results.map((d) => ({
             documentoId: d.token,
@@ -292,7 +312,7 @@ export const zapsignIntegration: IntegrationDefinition = {
           signatarios: EntradaSignatario[];
           prazoParaAssinar?: string;
         };
-        const { cliente } = contexto(ctx);
+        const { cliente, config } = contexto(ctx);
 
         const ehDocx = args.urlDoArquivo.toLowerCase().includes(".docx");
         const doc = await cliente.criarDocumento({
@@ -303,7 +323,7 @@ export const zapsignIntegration: IntegrationDefinition = {
           signers: args.signatarios.map(paraSignatario),
           date_limit_to_sign: args.prazoParaAssinar,
         });
-        return formatarDocumento(doc);
+        return formatarDocumento(doc, config);
       },
     },
     {
@@ -318,9 +338,9 @@ export const zapsignIntegration: IntegrationDefinition = {
       }),
       async execute(entrada, ctx) {
         const args = entrada as { documentoId: string; motivo: string };
-        const { cliente } = contexto(ctx);
+        const { cliente, config } = contexto(ctx);
         await cliente.cancelarDocumento(args.documentoId, args.motivo);
-        return { cancelado: true };
+        return { ...marcaDeAmbiente(config), cancelado: true };
       },
     },
 
@@ -340,12 +360,16 @@ export const zapsignIntegration: IntegrationDefinition = {
           documentoId: string;
           signatario: EntradaSignatario;
         };
-        const { cliente } = contexto(ctx);
+        const { cliente, config } = contexto(ctx);
         const novo = await cliente.adicionarSignatario(
           args.documentoId,
           paraSignatario(args.signatario),
         );
-        return { signatarioId: novo.token, linkParaAssinar: novo.sign_url };
+        return {
+          ...marcaDeAmbiente(config),
+          signatarioId: novo.token,
+          linkParaAssinar: novo.sign_url,
+        };
       },
     },
     {
@@ -356,9 +380,10 @@ export const zapsignIntegration: IntegrationDefinition = {
       inputSchema: z.object({ signatarioId: z.string().min(10) }),
       async execute(entrada, ctx) {
         const { signatarioId } = entrada as { signatarioId: string };
-        const { cliente } = contexto(ctx);
+        const { cliente, config } = contexto(ctx);
         const s = await cliente.detalharSignatario(signatarioId);
         return {
+          ...marcaDeAmbiente(config),
           nome: s.name,
           situacao: normalizarStatusDeSignatario(s.status),
           vezesQueAbriu: s.times_viewed ?? 0,
@@ -387,7 +412,7 @@ export const zapsignIntegration: IntegrationDefinition = {
           telefone?: string;
           reenviarPorWhatsapp?: boolean;
         };
-        const { cliente } = contexto(ctx);
+        const { cliente, config } = contexto(ctx);
         await cliente.atualizarSignatario(args.signatarioId, {
           name: args.nome,
           email: args.email,
@@ -395,7 +420,7 @@ export const zapsignIntegration: IntegrationDefinition = {
           phone_number: args.telefone?.replace(/\D/g, ""),
           send_automatic_whatsapp: args.reenviarPorWhatsapp,
         } as Partial<Signatario>);
-        return { atualizado: true };
+        return { ...marcaDeAmbiente(config), atualizado: true };
       },
     },
   ],
