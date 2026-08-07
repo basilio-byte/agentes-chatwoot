@@ -1,4 +1,4 @@
-import type { AuthMode, ZapSignConfig } from "./config";
+import { urlDaApi, type AuthMode, type ZapSignConfig } from "./config";
 
 export class ZapSignApiError extends Error {
   constructor(
@@ -49,8 +49,7 @@ export class ZapSignClient {
     init: RequestInit = {},
     query?: Record<string, unknown>,
   ): Promise<T> {
-    const base = this.config.baseUrl.replace(/\/$/, "");
-    const url = new URL(`${base}${caminho}`);
+    const url = new URL(`${urlDaApi(this.config)}${caminho}`);
     for (const [chave, valor] of Object.entries(query ?? {})) {
       if (valor === undefined || valor === null || valor === "") continue;
       url.searchParams.set(chave, String(valor));

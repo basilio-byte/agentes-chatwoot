@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ZapSignClient } from "./client";
 import {
+  lerConfigZapSign,
   normalizarStatusDeSignatario,
   resolverModelo,
   zapsignConfigSchema,
@@ -164,5 +165,49 @@ describe("status do signatário", () => {
     expect(normalizarStatusDeSignatario("nao_abriu")).toBe("nao_abriu");
     expect(normalizarStatusDeSignatario("link-opened")).toBe("abriu");
     expect(normalizarStatusDeSignatario(undefined)).toBe("desconhecido");
+  });
+});
+
+describe("ambiente", () => {
+  /**
+   * Era um campo de URL livre e custou uma sessão de diagnóstico: com o token
+   * de sandbox e a URL de produção, a resposta é 401 — que se parece com token
+   * errado e manda o operador trocar a credencial certa.
+   */
+  it("produção e sandbox são hosts diferentes", async () => {
+    await zap().detalhar("doc-1");
+    expect(new URL(ultima().url).host).toBe("api.zapsign.com.br");
+
+    const teste = new ZapSignClient(
+      zapsignConfigSchema.parse({ ambiente: "sandbox" }),
+      "tok",
+    );
+    await teste.detalhar("doc-1");
+    expect(new URL(ultima().url).host).toBe("sandbox.api.zapsign.com.br");
+    expect(new URL(ultima().url).pathname).toBe("/api/v1/docs/doc-1/");
+  });
+
+  it("o padrão é produção", () => {
+    expect(zapsignConfigSchema.parse({}).ambiente).toBe("producao");
+  });
+
+  /**
+   * Quem já tinha salvo a URL do sandbox à mão não pode voltar para produção em
+   * silêncio: assinar em produção achando que está testando é o erro caro aqui.
+   */
+  it("config antiga com URL de sandbox continua em sandbox", () => {
+    const lida = lerConfigZapSign({
+      baseUrl: "https://sandbox.api.zapsign.com.br/api/v1/",
+    });
+
+    expect(lida.success && lida.data.ambiente).toBe("sandbox");
+  });
+
+  it("config antiga sem sandbox vai para produção", () => {
+    const lida = lerConfigZapSign({
+      baseUrl: "https://api.zapsign.com.br/api/v1",
+    });
+
+    expect(lida.success && lida.data.ambiente).toBe("producao");
   });
 });

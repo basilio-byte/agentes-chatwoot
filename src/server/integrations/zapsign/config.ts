@@ -14,15 +14,29 @@ export const AUTH_MODES = [
 
 export type AuthMode = (typeof AUTH_MODES)[number];
 
+/**
+ * Os dois ambientes da ZapSign. São hosts diferentes, com contas e tokens
+ * diferentes — token de um não funciona no outro.
+ *
+ * ⚠ **Sandbox não tem validade jurídica.** Documento assinado lá não vale como
+ * contrato. Serve para validar o fluxo; assinar cliente de verdade, nunca.
+ */
+export const AMBIENTES = {
+  producao: "https://api.zapsign.com.br/api/v1",
+  sandbox: "https://sandbox.api.zapsign.com.br/api/v1",
+} as const;
+
+export type Ambiente = keyof typeof AMBIENTES;
+
 export const zapsignConfigSchema = z.object({
   /**
-   * Base da API. Produção é `https://api.zapsign.com.br/api/v1`; a ZapSign tem
-   * ambiente de testes com host próprio, e é por isso que isto é configurável.
+   * Ambiente, em vez da URL crua.
+   *
+   * Era um campo de texto e custou caro: a URL certa tem host próprio e termina
+   * em `/api/v1`, e errar qualquer parte devolve 401 — que se parece com token
+   * errado e manda o operador trocar a credencial certa.
    */
-  baseUrl: z
-    .string()
-    .default("https://api.zapsign.com.br/api/v1")
-    .refine((v) => v.startsWith("http"), "A URL precisa começar com http"),
+  ambiente: z.enum(["producao", "sandbox"]).default("producao"),
 
   /**
    * Modelos DOCX por nome — "Contrato de Endereço Fiscal" em vez do token cru.
@@ -50,6 +64,29 @@ export const zapsignConfigSchema = z.object({
 });
 
 export type ZapSignConfig = z.infer<typeof zapsignConfigSchema>;
+
+/** URL da API para o ambiente escolhido. */
+export function urlDaApi(config: Pick<ZapSignConfig, "ambiente">) {
+  return AMBIENTES[config.ambiente] ?? AMBIENTES.producao;
+}
+
+/**
+ * Lê a config guardada, aceitando o formato antigo de `baseUrl` livre.
+ *
+ * A primeira versão pedia a URL na mão. Quem já tinha salvo apontando para o
+ * sandbox não pode voltar para produção em silêncio — assinar em produção
+ * achando que está testando é o erro caro nesta integração.
+ */
+export function lerConfigZapSign(bruto: unknown) {
+  const cru = (bruto ?? {}) as Record<string, unknown>;
+  const urlAntiga = typeof cru.baseUrl === "string" ? cru.baseUrl : "";
+
+  return zapsignConfigSchema.safeParse({
+    ...cru,
+    ambiente:
+      cru.ambiente ?? (urlAntiga.includes("sandbox") ? "sandbox" : undefined),
+  });
+}
 
 export const zapsignSegredoSchema = z.object({
   apiToken: z.string().min(10, "Token muito curto"),

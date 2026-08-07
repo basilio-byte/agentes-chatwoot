@@ -6,7 +6,7 @@ import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
 import { obterSegredosDaConta } from "@/server/integrations/chatwoot/credenciais";
 import { clickupConfigSchema } from "@/server/integrations/clickup/config";
 import { conexaConfigSchema } from "@/server/integrations/conexa/config";
-import { zapsignConfigSchema } from "@/server/integrations/zapsign/config";
+import { lerConfigZapSign } from "@/server/integrations/zapsign/config";
 import {
   IntegrationProvider,
   IntegrationStatus,
@@ -57,7 +57,7 @@ export default async function IntegracoesPage({
   const zapsign = registros.find(
     (i) => i.provider === IntegrationProvider.ZAPSIGN,
   );
-  const configZapSign = zapsignConfigSchema.safeParse(zapsign?.config ?? {});
+  const configZapSign = lerConfigZapSign(zapsign?.config ?? {});
   const toolsZapSign =
     obterIntegracao(IntegrationProvider.ZAPSIGN)?.tools.length ?? 0;
   const toolsClickUp =
@@ -313,10 +313,10 @@ export default async function IntegracoesPage({
                 </p>
 
                 <ZapSignConfigForm
-                  baseUrl={
+                  ambiente={
                     configZapSign.success
-                      ? configZapSign.data.baseUrl
-                      : "https://api.zapsign.com.br/api/v1"
+                      ? configZapSign.data.ambiente
+                      : "producao"
                   }
                   modelos={
                     configZapSign.success

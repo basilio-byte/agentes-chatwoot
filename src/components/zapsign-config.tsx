@@ -9,7 +9,10 @@ import {
   testarConexaoZapSign,
   type EstadoZapSign,
 } from "@/server/actions/zapsign";
-import { AUTH_MODES } from "@/server/integrations/zapsign/config";
+import {
+  AUTH_MODES,
+  type Ambiente,
+} from "@/server/integrations/zapsign/config";
 import { Aviso, Button, Field, Input, Select, Textarea } from "@/components/ui";
 
 /** Rótulos em português para os modos de autenticação da ZapSign. */
@@ -25,7 +28,7 @@ const ROTULO_AUTH: Record<string, string> = {
 };
 
 export function ZapSignConfigForm({
-  baseUrl,
+  ambiente,
   modelos,
   authModePadrao,
   whatsappAutomatico,
@@ -36,7 +39,7 @@ export function ZapSignConfigForm({
   somenteLeitura,
   podeEditarCredencial,
 }: {
-  baseUrl: string;
+  ambiente: Ambiente;
   /** Uma por linha, no formato `nome = token`. */
   modelos: string;
   authModePadrao: string;
@@ -62,6 +65,10 @@ export function ZapSignConfigForm({
     null,
   );
   const [ocupado, iniciar] = useTransition();
+  // O ambiente vive no estado para o teste usar o que está NA TELA, e não o que
+  // está salvo. Testar token de sandbox contra a URL de produção devolve 401 —
+  // que se parece com token errado e manda trocar a credencial certa.
+  const [amb, setAmb] = useState<Ambiente>(ambiente);
 
   const erro = (campo: string) => estadoConfig.camposComErro?.[campo];
 
@@ -123,7 +130,7 @@ export function ZapSignConfigForm({
             disabled={ocupado || !temToken}
             onClick={() =>
               iniciar(async () => {
-                const r = await descobrirModelosZapSign();
+                const r = await descobrirModelosZapSign(amb);
                 setTeste(r);
                 setAchados(r.modelos ?? null);
               })
@@ -176,16 +183,30 @@ export function ZapSignConfigForm({
         </div>
 
         <Field
-          label="URL da API"
-          hint={erro("baseUrl") ?? "Troque só para usar o ambiente de testes da ZapSign."}
+          label="Ambiente"
+          hint={
+            erro("ambiente") ??
+            "Cada ambiente tem conta e token próprios — o token de um não funciona no outro."
+          }
         >
-          <Input
-            name="baseUrl"
-            defaultValue={baseUrl}
-            placeholder="https://api.zapsign.com.br/api/v1"
+          <Select
+            name="ambiente"
+            value={amb}
+            onChange={(e) => setAmb(e.target.value as Ambiente)}
             disabled={somenteLeitura}
-          />
+          >
+            <option value="producao">Produção — com validade jurídica</option>
+            <option value="sandbox">Sandbox — testes, SEM validade jurídica</option>
+          </Select>
         </Field>
+
+        {amb === "sandbox" ? (
+          <Aviso tone="danger">
+            <strong>Sandbox não tem validade jurídica.</strong> Contrato assinado
+            aqui não vale como documento. Use para validar o fluxo e troque para
+            produção antes de mandar para cliente de verdade.
+          </Aviso>
+        ) : null}
 
         <label className="flex items-start gap-2 text-sm">
           <input
@@ -230,7 +251,7 @@ export function ZapSignConfigForm({
               variant="ghost"
               disabled={ocupado || !temToken}
               onClick={() =>
-                iniciar(async () => setTeste(await testarConexaoZapSign()))
+                iniciar(async () => setTeste(await testarConexaoZapSign(amb)))
               }
             >
               <Plug size={14} aria-hidden />

@@ -9,7 +9,11 @@ import {
   IntegrationStatus,
   UserRole,
 } from "@/generated/prisma/enums";
-import { zapsignConfigSchema } from "@/server/integrations/zapsign/config";
+import {
+  lerConfigZapSign,
+  zapsignConfigSchema,
+  type Ambiente,
+} from "@/server/integrations/zapsign/config";
 import { ZapSignClient } from "@/server/integrations/zapsign/client";
 
 export type EstadoZapSign = {
@@ -46,9 +50,7 @@ export async function salvarConfigZapSign(
   const sessao = await exigirPapel(UserRole.ADMIN);
 
   const parsed = zapsignConfigSchema.safeParse({
-    baseUrl:
-      String(formData.get("baseUrl") ?? "").trim() ||
-      "https://api.zapsign.com.br/api/v1",
+    ambiente: String(formData.get("ambiente") ?? "producao"),
     modelos: lerModelos(String(formData.get("modelos") ?? "")),
     authModePadrao: String(formData.get("authModePadrao") ?? "assinaturaTela-tokenEmail"),
     whatsappAutomatico: formData.get("whatsappAutomatico") === "on",
@@ -125,16 +127,21 @@ export async function salvarTokenZapSign(
   return { ok: "Token salvo. Use o botão de testar para confirmar." };
 }
 
-export async function testarConexaoZapSign(): Promise<EstadoZapSign> {
+export async function testarConexaoZapSign(
+  ambiente?: Ambiente,
+): Promise<EstadoZapSign> {
   await exigirPapel(UserRole.ADMIN);
 
   const atual = await registro();
   if (!atual?.credential) return { erro: "Salve o token antes de testar." };
 
-  const config = zapsignConfigSchema.safeParse(atual.config);
+  const config = lerConfigZapSign(atual.config);
   if (!config.success) return { erro: "Confira a configuração antes de testar." };
 
-  const cliente = new ZapSignClient(config.data, decifrar(atual.credential));
+  const cliente = new ZapSignClient(
+    { ...config.data, ambiente: ambiente ?? config.data.ambiente },
+    decifrar(atual.credential),
+  );
   const resultado = await cliente.testar();
 
   await db.integration.update({
@@ -156,19 +163,22 @@ export async function testarConexaoZapSign(): Promise<EstadoZapSign> {
  * O token do modelo é um uuid que só aparece na URL da ZapSign — é o dado mais
  * chato de achar, e é justamente o que o agente precisa para gerar contrato.
  */
-export async function descobrirModelosZapSign(): Promise<
-  EstadoZapSign & { modelos?: { id: string; nome: string }[] }
-> {
+export async function descobrirModelosZapSign(
+  ambiente?: Ambiente,
+): Promise<EstadoZapSign & { modelos?: { id: string; nome: string }[] }> {
   await exigirPapel(UserRole.ADMIN);
 
   const atual = await registro();
   if (!atual?.credential) return { erro: "Salve o token antes de buscar." };
 
-  const config = zapsignConfigSchema.safeParse(atual.config);
+  const config = lerConfigZapSign(atual.config);
   if (!config.success) return { erro: "Confira a configuração antes de buscar." };
 
   try {
-    const cliente = new ZapSignClient(config.data, decifrar(atual.credential));
+    const cliente = new ZapSignClient(
+    { ...config.data, ambiente: ambiente ?? config.data.ambiente },
+    decifrar(atual.credential),
+  );
     const { results } = await cliente.listarModelos();
     const modelos = results
       .filter((m) => m.active)
