@@ -24,6 +24,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.CHATWOOT]: "Chatwoot",
   [IntegrationProvider.CLICKUP]: "ClickUp",
   [IntegrationProvider.CONEXA]: "ERP Conexa",
+  [IntegrationProvider.ZAPSIGN]: "ZapSign",
 };
 
 async function main() {

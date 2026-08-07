@@ -6,6 +6,7 @@ import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
 import { obterSegredosDaConta } from "@/server/integrations/chatwoot/credenciais";
 import { clickupConfigSchema } from "@/server/integrations/clickup/config";
 import { conexaConfigSchema } from "@/server/integrations/conexa/config";
+import { zapsignConfigSchema } from "@/server/integrations/zapsign/config";
 import {
   IntegrationProvider,
   IntegrationStatus,
@@ -14,7 +15,13 @@ import {
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
 import { ConexaConfigForm } from "@/components/conexa-config";
-import { Building2, ListChecks, MessagesSquare } from "lucide-react";
+import { ZapSignConfigForm } from "@/components/zapsign-config";
+import {
+  Building2,
+  FileSignature,
+  ListChecks,
+  MessagesSquare,
+} from "lucide-react";
 import { Abas } from "@/components/abas";
 import { Aviso, Badge, Card, PageHeader } from "@/components/ui";
 import { formatarData } from "@/lib/utils";
@@ -47,6 +54,12 @@ export default async function IntegracoesPage({
   const configConexa = conexaConfigSchema.safeParse(conexa?.config ?? {});
   const toolsConexa =
     obterIntegracao(IntegrationProvider.CONEXA)?.tools.length ?? 0;
+  const zapsign = registros.find(
+    (i) => i.provider === IntegrationProvider.ZAPSIGN,
+  );
+  const configZapSign = zapsignConfigSchema.safeParse(zapsign?.config ?? {});
+  const toolsZapSign =
+    obterIntegracao(IntegrationProvider.ZAPSIGN)?.tools.length ?? 0;
   const toolsClickUp =
     obterIntegracao(IntegrationProvider.CLICKUP)?.tools.length ?? 0;
 
@@ -266,6 +279,75 @@ export default async function IntegracoesPage({
                     Último teste falhou: {conexa.lastError}
                     {conexa.lastCheckedAt
                       ? ` (${formatarData(conexa.lastCheckedAt)})`
+                      : ""}
+                  </Aviso>
+                ) : null}
+              </Card>
+            ),
+          },
+          {
+            id: "zapsign",
+            rotulo: "ZapSign",
+            icone: <FileSignature size={14} aria-hidden />,
+            conteudo: (
+              <Card className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="font-medium">ZapSign</h2>
+                  {zapsign?.enabled ? (
+                    <Badge tone="success">ligada</Badge>
+                  ) : (
+                    <Badge>desligada</Badge>
+                  )}
+                  {zapsign?.status === IntegrationStatus.OK ? (
+                    <Badge tone="success">conexão ok</Badge>
+                  ) : zapsign?.status === IntegrationStatus.ERROR ? (
+                    <Badge tone="danger">falha na conexão</Badge>
+                  ) : null}
+                </div>
+
+                <p className="text-sm text-muted">
+                  Assinatura eletrônica: o agente escolhe o modelo, preenche os
+                  campos, gera o contrato e devolve o link de assinatura. O
+                  agente recebe {toolsZapSign} ferramenta(s) quando esta
+                  integração está ligada para ele.
+                </p>
+
+                <ZapSignConfigForm
+                  baseUrl={
+                    configZapSign.success
+                      ? configZapSign.data.baseUrl
+                      : "https://api.zapsign.com.br/api/v1"
+                  }
+                  modelos={
+                    configZapSign.success
+                      ? configZapSign.data.modelos
+                          .map((m) => `${m.nome} = ${m.templateId}`)
+                          .join("\n")
+                      : ""
+                  }
+                  authModePadrao={
+                    configZapSign.success
+                      ? configZapSign.data.authModePadrao
+                      : "assinaturaTela-tokenEmail"
+                  }
+                  whatsappAutomatico={
+                    configZapSign.success
+                      ? configZapSign.data.whatsappAutomatico
+                      : false
+                  }
+                  lang={configZapSign.success ? configZapSign.data.lang : "pt-br"}
+                  habilitada={zapsign?.enabled ?? false}
+                  temToken={Boolean(zapsign?.credential)}
+                  hintToken={zapsign?.credential?.hint ?? null}
+                  somenteLeitura={!editavel}
+                  podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                />
+
+                {zapsign?.lastError ? (
+                  <Aviso tone="danger">
+                    Último teste falhou: {zapsign.lastError}
+                    {zapsign.lastCheckedAt
+                      ? ` (${formatarData(zapsign.lastCheckedAt)})`
                       : ""}
                   </Aviso>
                 ) : null}

@@ -183,6 +183,80 @@ export class ZapSignClient {
     }>("/docs/", {}, { page: 1, ...filtros });
   }
 
+  /**
+   * Modelos DOCX da conta.
+   *
+   * ⚠ Repare no prefixo: **listar** modelo é `/templates/`, mas **criar
+   * documento a partir de um** é `/models/create-doc/`. São dois caminhos
+   * diferentes para o mesmo conceito na mesma API — trocar um pelo outro dá
+   * 404 sem explicação.
+   */
+  listarModelos(page = 1) {
+    return this.requisitar<{
+      count: number;
+      next: string | null;
+      results: { token: string; name: string; active: boolean; lang?: string }[];
+    }>("/templates/", {}, { page });
+  }
+
+  /**
+   * Detalhe do modelo, com os campos que ele espera.
+   *
+   * `inputs[].variable` é o que vai em `data[].de` na criação — inclusive as
+   * chaves duplas, como `{{NOME COMPLETO}}`. É por isso que esta chamada existe:
+   * sem ela o agente teria de adivinhar o nome exato da variável.
+   */
+  detalharModelo(templateId: string) {
+    return this.requisitar<{
+      token: string;
+      name: string;
+      inputs?: {
+        variable: string;
+        label?: string;
+        required?: boolean;
+        order?: number;
+      }[];
+      signers?: { name?: string; auth_mode?: string }[];
+    }>(`/templates/${templateId}/`);
+  }
+
+  detalharSignatario(signerToken: string) {
+    return this.requisitar<{
+      token: string;
+      status: string;
+      name: string;
+      email?: string;
+      signed_at?: string | null;
+      times_viewed?: number;
+    }>(`/signers/${signerToken}/`);
+  }
+
+  /** Só funciona enquanto o signatário não assinou. */
+  atualizarSignatario(signerToken: string, dados: Partial<Signatario>) {
+    return this.requisitar<{ token: string }>(`/signers/${signerToken}/`, {
+      method: "POST",
+      body: JSON.stringify(dados),
+    });
+  }
+
+  /**
+   * Cancela o documento.
+   *
+   * A rota não tem o documento no caminho: o token vai no corpo, e o verbo é
+   * `refuse`. O documento não some — fica com marca d'água de cancelado.
+   */
+  cancelarDocumento(docToken: string, motivo: string) {
+    return this.requisitar<unknown>("/refuse/", {
+      method: "POST",
+      body: JSON.stringify({ doc_token: docToken, rejected_reason: motivo }),
+    });
+  }
+
+  /** Exclusão é lógica: some da interface, continua acessível pela API. */
+  excluirDocumento(docToken: string) {
+    return this.requisitar<unknown>(`/docs/${docToken}/`, { method: "DELETE" });
+  }
+
   async testar(): Promise<{ ok: boolean; mensagem: string }> {
     try {
       const { count } = await this.listar({ page: 1 });

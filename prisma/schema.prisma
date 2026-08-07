@@ -228,6 +228,7 @@ enum IntegrationProvider {
   CHATWOOT
   CLICKUP
   CONEXA
+  ZAPSIGN
 }
 
 enum IntegrationStatus {

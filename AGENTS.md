@@ -180,6 +180,18 @@ ClickSign → Authorization: <token>          ← com Bearer, recusa
 
 - **A barra final da ZapSign não é decorativa.** É Django REST: `/docs` sem
   barra vira redirect e o corpo do POST se perde. Toda rota termina em `/`.
+- **Modelo tem dois prefixos na ZapSign.** Listar e detalhar é `/templates/`;
+  criar documento a partir de um é `/models/create-doc/`. Mesmo conceito, dois
+  caminhos — trocar um pelo outro dá 404 sem explicação.
+- **`inputs[].variable` vem com as chaves** (`{{NOME COMPLETO}}`) e é isso que
+  vai em `data[].de`. Por isso `zapsign_ver_modelo` existe: sem ela o agente
+  adivinharia o nome da variável.
+- **Criar por modelo aceita UM signatário no corpo.** Os demais entram por
+  `add-signer`, um por chamada — `zapsign_gerar_contrato` faz isso por dentro,
+  senão o agente pararia com contrato criado e metade dos signatários faltando.
+- **Cancelar é `POST /refuse/` com o token no CORPO**, não na rota. O documento
+  não some: fica com marca d'água. Excluir (`DELETE /docs/{token}/`) existe e
+  ficou fora do catálogo de propósito.
 - **O status do signatário muda de vocabulário por endpoint** — `signed` no
   detalhe, `assinou` na listagem. Comparar sem normalizar conclui que ninguém
   assinou; usar `normalizarStatusDeSignatario`.
