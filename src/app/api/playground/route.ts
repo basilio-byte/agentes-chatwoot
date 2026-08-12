@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { podeEditar } from "@/server/auth-guard";
 import { executarAgente } from "@/server/agents/runner";
 import { RunSource } from "@/generated/prisma/enums";
 import { logger } from "@/lib/logger";
@@ -25,6 +26,17 @@ export async function POST(req: Request) {
   const sessao = await auth();
   if (!sessao?.user) {
     return NextResponse.json({ erro: "Não autenticado." }, { status: 401 });
+  }
+
+  // Playground roda o modelo de verdade e a OpenRouter cobra por isso. Só a
+  // sessão não basta: sem esta checagem, "Leitura" gastava crédito — e a tela
+  // de Usuários prometia justamente o contrário. A UI já esconde o playground
+  // de quem não edita; aqui é onde a promessa é garantida.
+  if (!podeEditar(sessao.user.role)) {
+    return NextResponse.json(
+      { erro: "Seu papel é de leitura — testar um agente gasta crédito." },
+      { status: 403 },
+    );
   }
 
   const parsed = corpoSchema.safeParse(await req.json());

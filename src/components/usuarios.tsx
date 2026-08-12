@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { KeyRound, UserPlus } from "lucide-react";
+import { Check, KeyRound, UserPlus, X } from "lucide-react";
 import { UserRole } from "@/generated/prisma/enums";
 import {
   alterarPapel,
@@ -22,19 +22,60 @@ import {
   Ponto,
   Select,
 } from "@/components/ui";
+import { ORDEM_DOS_PAPEIS, PAPEIS } from "@/lib/papeis";
 import { formatarData } from "@/lib/utils";
 
-export const PAPEIS: Record<UserRole, string> = {
-  OWNER: "Proprietário",
-  ADMIN: "Administrador",
-  VIEWER: "Leitura",
-};
+/**
+ * O que o papel escolhido concede e o que ele nega, lado a lado.
+ *
+ * A lista do que **não** pode é tão importante quanto a do que pode: quem
+ * libera acesso precisa saber o que está segurando, e uma frase de resumo não
+ * cabe isso.
+ */
+function DetalheDoPapel({ papel }: { papel: UserRole }) {
+  const { pode, naoPode } = PAPEIS[papel];
 
-const DESCRICAO_PAPEL: Record<UserRole, string> = {
-  OWNER: "Faz tudo, incluindo credenciais e contas.",
-  ADMIN: "Cria e edita agentes; não mexe em credenciais.",
-  VIEWER: "Só visualiza.",
-};
+  return (
+    <div className="grid gap-3 rounded-lg border border-line bg-surface-2 p-3 text-xs leading-relaxed sm:grid-cols-2">
+      <div className="space-y-1">
+        <p className="font-medium text-success">Pode</p>
+        <ul className="space-y-0.5 text-muted">
+          {pode.map((item) => (
+            <li key={item} className="flex gap-1.5">
+              <Check size={12} aria-hidden className="mt-0.5 shrink-0 text-success" />
+              {item}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="space-y-1">
+        <p className="font-medium text-muted">Não pode</p>
+        <ul className="space-y-0.5 text-muted">
+          {naoPode.map((item) => (
+            <li key={item} className="flex gap-1.5">
+              <X size={12} aria-hidden className="mt-0.5 shrink-0 text-muted/70" />
+              {item}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/** Opções do seletor, da menor para a maior permissão. */
+function OpcoesDePapel() {
+  return (
+    <>
+      {ORDEM_DOS_PAPEIS.map((papel) => (
+        <option key={papel} value={papel}>
+          {PAPEIS[papel].rotulo}
+        </option>
+      ))}
+    </>
+  );
+}
 
 export type UsuarioDaLista = {
   id: string;
@@ -56,6 +97,11 @@ export function GestaoDeUsuarios({
   souOwner: boolean;
 }) {
   const [criando, setCriando] = useState(false);
+  // O papel escolhido é estado da tela porque a descrição embaixo do seletor
+  // precisa acompanhá-lo. Antes a dica era fixa na do Administrador, então
+  // "Leitura" e "Proprietário" apareciam descritos como se fossem admin — e é
+  // por essa frase que alguém decide o que está entregando.
+  const [papelNovo, setPapelNovo] = useState<UserRole>(UserRole.ADMIN);
   const [estadoNovo, acaoNova, salvandoNovo] = useActionState<
     EstadoUsuario,
     FormData
@@ -93,16 +139,18 @@ export function GestaoDeUsuarios({
               >
                 <Input name="password" type="password" required />
               </Field>
-              <Field label="Papel" hint={DESCRICAO_PAPEL.ADMIN}>
-                <Select name="role" defaultValue={UserRole.ADMIN}>
-                  {Object.entries(PAPEIS).map(([valor, rotulo]) => (
-                    <option key={valor} value={valor}>
-                      {rotulo}
-                    </option>
-                  ))}
+              <Field label="Papel" hint={PAPEIS[papelNovo].resumo}>
+                <Select
+                  name="role"
+                  value={papelNovo}
+                  onChange={(e) => setPapelNovo(e.target.value as UserRole)}
+                >
+                  <OpcoesDePapel />
                 </Select>
               </Field>
             </div>
+
+            <DetalheDoPapel papel={papelNovo} />
 
             {estadoNovo.erro ? <Aviso tone="danger">{estadoNovo.erro}</Aviso> : null}
             {estadoNovo.ok ? <Aviso tone="success">{estadoNovo.ok}</Aviso> : null}
@@ -138,8 +186,12 @@ export function GestaoDeUsuarios({
 
               {souOwner ? (
                 <div className="flex items-center gap-2">
+                  {/* `title` com o resumo do papel atual: aqui não há espaço
+                      para a descrição, e sem ela o seletor é só um rótulo. */}
                   <Select
                     className="h-8 w-auto text-[13px]"
+                    aria-label={`Papel de ${u.name}`}
+                    title={PAPEIS[u.role].resumo}
                     value={u.role}
                     disabled={ocupado}
                     onChange={(e) =>
@@ -150,11 +202,7 @@ export function GestaoDeUsuarios({
                       )
                     }
                   >
-                    {Object.entries(PAPEIS).map(([valor, rotulo]) => (
-                      <option key={valor} value={valor}>
-                        {rotulo}
-                      </option>
-                    ))}
+                    <OpcoesDePapel />
                   </Select>
 
                   <Button
@@ -183,7 +231,9 @@ export function GestaoDeUsuarios({
                   </Button>
                 </div>
               ) : (
-                <Badge>{PAPEIS[u.role]}</Badge>
+                <Badge title={PAPEIS[u.role].resumo}>
+                  {PAPEIS[u.role].rotulo}
+                </Badge>
               )}
             </div>
 

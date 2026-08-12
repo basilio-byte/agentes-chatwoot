@@ -481,6 +481,27 @@ que **não carimba nada** e é resolvido por `prefers-color-scheme`.
   conforme o valor só repetiria em cor o que o comprimento já diz. Duas medidas
   nunca dividem o mesmo eixo — troca-se a medida e a escala inteira troca junto.
 
+### Papéis: a descrição faz parte da permissão
+
+`OWNER > ADMIN > VIEWER`, com os pesos em `auth-guard.ts`. O que cada papel
+concede está descrito em **`src/lib/papeis.ts`**, e essa é a fonte única —
+rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários mostra.
+
+- **Mudou a permissão de uma ação? A descrição é parte da mudança.** É por essa
+  frase que alguém decide a quem entregar uma conta; uma descrição errada
+  entrega poder que ninguém quis dar. Um teste trava o catálogo contra o enum,
+  para papel novo não aparecer sem rótulo.
+- **O playground exige `ADMIN`**, não só sessão. Cada mensagem ali roda o modelo
+  e a OpenRouter cobra — "Leitura" gastando crédito contradizia o próprio nome
+  do papel. A tela esconde e a rota recusa com `403`: esconder sozinho não é
+  garantia.
+- **A ordem dos seletores vai do menor para o maior privilégio**
+  (`ORDEM_DOS_PAPEIS`), para quem libera acesso encontrar primeiro a opção mais
+  contida.
+- **Só `OWNER` toca em credencial, em token de gatilho e em conta.** `ADMIN` faz
+  todo o resto: agentes, config de integração, tools por agente e liga/desliga
+  do gatilho.
+
 ### Regras do projeto
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`

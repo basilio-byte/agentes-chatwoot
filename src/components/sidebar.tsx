@@ -15,6 +15,7 @@ import {
 import type { UserRole } from "@/generated/prisma/enums";
 import { Button } from "@/components/ui";
 import { SeletorDeTema } from "@/components/tema";
+import { PAPEIS } from "@/lib/papeis";
 import { cn } from "@/lib/utils";
 
 const SECOES = [
@@ -35,12 +36,6 @@ const SECOES = [
     ],
   },
 ];
-
-const PAPEL: Record<UserRole, string> = {
-  OWNER: "Proprietário",
-  ADMIN: "Administrador",
-  VIEWER: "Leitura",
-};
 
 export function Sidebar({
   usuario,
@@ -122,8 +117,11 @@ export function Sidebar({
             <p className="truncate text-[13px] font-medium">
               {usuario.name ?? usuario.email}
             </p>
-            <p className="truncate text-[11px] text-muted">
-              {PAPEL[usuario.role]}
+            <p
+              className="truncate text-[11px] text-muted"
+              title={PAPEIS[usuario.role].resumo}
+            >
+              {PAPEIS[usuario.role].rotulo}
             </p>
           </div>
         </div>

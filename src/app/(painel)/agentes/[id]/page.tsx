@@ -32,7 +32,7 @@ import {
 } from "@/server/actions/agents";
 import { AgenteForm } from "@/components/agente-form";
 import { Playground } from "@/components/playground";
-import { Aviso, Badge, Button, Card } from "@/components/ui";
+import { Aviso, Badge, Button, Card, EmptyState } from "@/components/ui";
 import { formatarData } from "@/lib/utils";
 import { openrouterConfigurada } from "@/server/agents/openrouter";
 import { listarModelos } from "@/server/agents/catalogo";
@@ -240,7 +240,18 @@ export default async function AgentePage({
             // Integrações ligar uma ferramenta e voltar para cá.
             conteudo: (
               <div className="max-w-3xl">
-                <Playground agentId={agente.id} agenteAtivo={agente.active} />
+                {/* Cada mensagem aqui roda o modelo e é cobrada pela OpenRouter,
+                    então o playground segue a mesma permissão de editar. A rota
+                    também recusa por conta própria. */}
+                {editavel ? (
+                  <Playground agentId={agente.id} agenteAtivo={agente.active} />
+                ) : (
+                  <EmptyState
+                    icone={<FlaskConical size={18} aria-hidden />}
+                    titulo="Testar exige permissão de edição"
+                    descricao="Cada mensagem no playground roda o modelo e é cobrada pela OpenRouter, então o papel de leitura não envia. Para acompanhar o que o agente respondeu de verdade, veja Conversas e Execuções."
+                  />
+                )}
               </div>
             ),
           },
