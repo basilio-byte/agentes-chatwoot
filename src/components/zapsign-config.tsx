@@ -94,11 +94,11 @@ export function ZapSignConfigForm({
         <Field
           label="API Token"
           hint={
-            estadoToken.camposComErro?.apiToken ??
-            (temToken
+            temToken
               ? `Salvo: ${hintToken}. Preencha de novo só para rotacionar.`
-              : "Fica em Configurações → Integrações, dentro da ZapSign. Confira se é do ambiente certo: token de testes não funciona em produção.")
+              : "Fica em Configurações → Integrações, dentro da ZapSign. Confira se é do ambiente certo: token de testes não funciona em produção."
           }
+          erro={estadoToken.camposComErro?.apiToken}
         >
           <Input
             name="apiToken"
@@ -124,10 +124,8 @@ export function ZapSignConfigForm({
       <form action={salvarConfig} className="space-y-4 border-t border-line pt-5">
         <Field
           label="Modelos de documento"
-          hint={
-            erro("modelos") ??
-            "Um por linha, no formato nome = id. O agente pede o modelo pelo nome; o id vem daqui. Use o botão abaixo para descobrir os ids."
-          }
+          hint="Um por linha, no formato nome = id. O agente pede o modelo pelo nome; o id vem daqui. Use o botão abaixo para descobrir os ids."
+          erro={erro("modelos")}
         >
           <Textarea
             name="modelos"
@@ -171,10 +169,8 @@ export function ZapSignConfigForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Autenticação padrão do signatário"
-            hint={
-              erro("authModePadrao") ??
-              "Como quem assina confirma a identidade, quando o fluxo não define outra."
-            }
+            hint="Como quem assina confirma a identidade, quando o fluxo não define outra."
+            erro={erro("authModePadrao")}
           >
             <Select
               name="authModePadrao"
@@ -189,7 +185,7 @@ export function ZapSignConfigForm({
             </Select>
           </Field>
 
-          <Field label="Idioma dos documentos" hint={erro("lang") ?? undefined}>
+          <Field label="Idioma dos documentos" erro={erro("lang")}>
             <Select name="lang" defaultValue={lang} disabled={somenteLeitura}>
               <option value="pt-br">Português</option>
               <option value="es">Espanhol</option>
@@ -200,10 +196,8 @@ export function ZapSignConfigForm({
 
         <Field
           label="Ambiente"
-          hint={
-            erro("ambiente") ??
-            "Cada ambiente tem conta e token próprios — o token de um não funciona no outro."
-          }
+          hint="Cada ambiente tem conta e token próprios — o token de um não funciona no outro."
+          erro={erro("ambiente")}
         >
           <Select
             name="ambiente"

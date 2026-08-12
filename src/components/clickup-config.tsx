@@ -55,11 +55,11 @@ export function ClickUpConfigForm({
         <Field
           label="Token pessoal da API"
           hint={
-            estadoToken.camposComErro?.apiToken ??
-            (temToken
+            temToken
               ? `Salvo: ${hintToken}. Preencha de novo só para rotacionar.`
-              : "No ClickUp: foto do perfil → Settings → Apps → API Token. Começa com pk_.")
+              : "No ClickUp: foto do perfil → Settings → Apps → API Token. Começa com pk_."
           }
+          erro={estadoToken.camposComErro?.apiToken}
         >
           <Input
             name="apiToken"
@@ -119,7 +119,8 @@ export function ClickUpConfigForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Id do workspace"
-            hint={erroConfig("teamId") ?? "Use o botão acima para descobrir."}
+            hint="Use o botão acima para descobrir."
+            erro={erroConfig("teamId")}
           >
             <Input
               name="teamId"

@@ -55,7 +55,7 @@ export function AgenteForm({
     <form action={submeter} className="space-y-5">
       <Card className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Nome" hint={erroDe("name")}>
+          <Field label="Nome" erro={erroDe("name")}>
             <Input
               name="name"
               defaultValue={valores.name}
@@ -64,7 +64,7 @@ export function AgenteForm({
             />
           </Field>
 
-          <Field label="Descrição (opcional)" hint={erroDe("description")}>
+          <Field label="Descrição (opcional)" erro={erroDe("description")}>
             <Input
               name="description"
               defaultValue={valores.description}
@@ -75,10 +75,8 @@ export function AgenteForm({
 
         <Field
           label="Quando me transferir uma conversa"
-          hint={
-            erroDe("routingDescription") ??
-            "Uma frase dizendo o que este agente atende. É o que os COLEGAS leem para decidir passar a conversa para ele. Vazio significa que ninguém transfere para este agente."
-          }
+          hint="Uma frase dizendo o que este agente atende. É o que os COLEGAS leem para decidir passar a conversa para ele. Vazio significa que ninguém transfere para este agente."
+          erro={erroDe("routingDescription")}
         >
           <Textarea
             name="routingDescription"
@@ -92,10 +90,8 @@ export function AgenteForm({
 
         <Field
           label="Prompt do agente"
-          hint={
-            erroDe("systemPrompt") ??
-            "Define o comportamento. Evite datas ou identificadores dinâmicos aqui — isso invalida o cache do provedor e encarece cada mensagem."
-          }
+          hint="Define o comportamento. Evite datas ou identificadores dinâmicos aqui — isso invalida o cache do provedor e encarece cada mensagem."
+          erro={erroDe("systemPrompt")}
         >
           <Textarea
             name="systemPrompt"
@@ -128,10 +124,8 @@ export function AgenteForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Máximo de tokens por resposta"
-            hint={
-              erroDe("maxTokens") ??
-              "Inclui o raciocínio, nos modelos que raciocinam. Alto de propósito: um turno pode encadear transferências e usos de tool. É cortado automaticamente pelo limite do modelo escolhido."
-            }
+            hint="Inclui o raciocínio, nos modelos que raciocinam. Alto de propósito: um turno pode encadear transferências e usos de tool. É cortado automaticamente pelo limite do modelo escolhido."
+            erro={erroDe("maxTokens")}
           >
             <Input
               name="maxTokens"
@@ -145,10 +139,8 @@ export function AgenteForm({
 
           <Field
             label="Máximo de rodadas de tool"
-            hint={
-              erroDe("maxToolIterations") ??
-              "Teto de segurança contra laço. Descobrir a estrutura, consultar e então agir já gasta várias rodadas."
-            }
+            hint="Teto de segurança contra laço. Descobrir a estrutura, consultar e então agir já gasta várias rodadas."
+            erro={erroDe("maxToolIterations")}
           >
             <Input
               name="maxToolIterations"

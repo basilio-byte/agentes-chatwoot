@@ -125,19 +125,24 @@ export function GestaoDeUsuarios({
         <Card>
           <form action={acaoNova} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Nome" hint={estadoNovo.camposComErro?.name}>
+              <Field label="Nome" erro={estadoNovo.camposComErro?.name}>
                 <Input name="name" required autoFocus />
               </Field>
-              <Field label="E-mail" hint={estadoNovo.camposComErro?.email}>
+              <Field label="E-mail" erro={estadoNovo.camposComErro?.email}>
                 <Input name="email" type="email" required />
               </Field>
               <Field
                 label="Senha inicial"
-                hint={
-                  estadoNovo.camposComErro?.password ?? "Mínimo de 10 caracteres."
-                }
+                hint="Mínimo de 10 caracteres."
+                erro={estadoNovo.camposComErro?.password}
               >
-                <Input name="password" type="password" required />
+                <Input
+                  name="password"
+                  type="password"
+                  required
+                  minLength={10}
+                  autoComplete="new-password"
+                />
               </Field>
               <Field label="Papel" hint={PAPEIS[papelNovo].resumo}>
                 <Select
@@ -272,8 +277,18 @@ function RedefinirSenha({
   return (
     <form action={acao} className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
       <div className="min-w-56 flex-1">
-        <Field label="Nova senha" hint={estado.camposComErro?.password}>
-          <Input name="password" type="password" required />
+        <Field
+          label="Nova senha"
+          hint="Mínimo de 10 caracteres."
+          erro={estado.camposComErro?.password}
+        >
+          <Input
+            name="password"
+            type="password"
+            required
+            minLength={10}
+            autoComplete="new-password"
+          />
         </Field>
       </div>
       <Button type="submit" size="sm" disabled={salvando}>
@@ -298,14 +313,21 @@ export function TrocarMinhaSenha() {
       </div>
 
       <form action={acao} className="grid gap-4 sm:grid-cols-2">
-        <Field label="Senha atual" hint={estado.camposComErro?.atual}>
+        <Field label="Senha atual" erro={estado.camposComErro?.atual}>
           <Input name="atual" type="password" required autoComplete="current-password" />
         </Field>
         <Field
           label="Nova senha"
-          hint={estado.camposComErro?.nova ?? "Mínimo de 10 caracteres."}
+          hint="Mínimo de 10 caracteres."
+          erro={estado.camposComErro?.nova}
         >
-          <Input name="nova" type="password" required autoComplete="new-password" />
+          <Input
+            name="nova"
+            type="password"
+            required
+            minLength={10}
+            autoComplete="new-password"
+          />
         </Field>
 
         <div className="sm:col-span-2">

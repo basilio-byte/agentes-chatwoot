@@ -66,20 +66,51 @@ export function Select({
   return <select className={cn(campo, "h-9 px-2.5", className)} {...props} />;
 }
 
+/**
+ * Rótulo + campo + uma linha embaixo.
+ *
+ * `hint` é ajuda; `erro` é recusa — e os dois **não** podem sair iguais. Eles
+ * saíam: a mensagem de validação vinha por `hint` e era pintada no mesmo cinza
+ * do texto de ajuda, enquanto o formulário anunciava "confira os campos
+ * destacados" sem destacar nenhum. Quem errava a senha lia "Use pelo menos 10
+ * caracteres" achando que era instrução, não motivo da falha.
+ *
+ * Com `erro` preenchido, a mensagem vem em vermelho e a borda do controle
+ * acompanha — inclusive de `select` e `textarea`, por isso o seletor de
+ * descendente em vez de uma classe no filho: `Field` não controla o que
+ * recebe.
+ */
 export function Field({
   label,
   hint,
+  erro,
   children,
 }: {
   label: string;
   hint?: React.ReactNode;
+  erro?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <label className="block space-y-1.5">
+    <label
+      className={cn(
+        "block space-y-1.5",
+        erro &&
+          "[&_input]:border-danger [&_select]:border-danger [&_textarea]:border-danger",
+      )}
+    >
       <span className="text-[13px] font-medium">{label}</span>
       {children}
-      {hint ? (
+
+      {erro ? (
+        <span
+          // Anunciado por leitor de tela quando aparece depois do envio.
+          role="alert"
+          className="block text-xs leading-relaxed font-medium text-danger"
+        >
+          {erro}
+        </span>
+      ) : hint ? (
         <span className="block text-xs leading-relaxed text-muted">{hint}</span>
       ) : null}
     </label>

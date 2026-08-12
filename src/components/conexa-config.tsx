@@ -58,11 +58,11 @@ export function ConexaConfigForm({
         <Field
           label="Token de API"
           hint={
-            estadoToken.camposComErro?.apiToken ??
-            (temToken
+            temToken
               ? `Salvo: ${hintToken}. Preencha de novo só para rotacionar.`
-              : "Token permanente, criado por um administrador dentro do Conexa. Vai no cabeçalho como Bearer.")
+              : "Token permanente, criado por um administrador dentro do Conexa. Vai no cabeçalho como Bearer."
           }
+          erro={estadoToken.camposComErro?.apiToken}
         >
           <Input
             name="apiToken"
@@ -88,10 +88,8 @@ export function ConexaConfigForm({
       <form action={salvarConfig} className="space-y-4 border-t border-line pt-5">
         <Field
           label="URL da API"
-          hint={
-            erro("baseUrl") ??
-            "Com o subdomínio da sua instância e terminando em /index.php/api/v2."
-          }
+          hint="Com o subdomínio da sua instância e terminando em /index.php/api/v2."
+          erro={erro("baseUrl")}
         >
           <Input
             name="baseUrl"
@@ -103,10 +101,8 @@ export function ConexaConfigForm({
 
         <Field
           label="Unidades"
-          hint={
-            erro("unidades") ??
-            "Uma por linha, no formato nome = id. O agente escreve o nome; o id vem daqui. Clique em testar para ver os ids da conta."
-          }
+          hint="Uma por linha, no formato nome = id. O agente escreve o nome; o id vem daqui. Clique em testar para ver os ids da conta."
+          erro={erro("unidades")}
         >
           <Textarea
             name="unidades"
@@ -119,10 +115,8 @@ export function ConexaConfigForm({
 
         <Field
           label="Salas de reunião"
-          hint={
-            erro("salas") ??
-            "Uma por linha, nome = id. A API do Conexa não lista salas — sem este cadastro, nenhum agente consegue reservar."
-          }
+          hint="Uma por linha, nome = id. A API do Conexa não lista salas — sem este cadastro, nenhum agente consegue reservar."
+          erro={erro("salas")}
         >
           <Textarea
             name="salas"
@@ -136,10 +130,8 @@ export function ConexaConfigForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Id do vendedor"
-            hint={
-              erro("sellerId") ??
-              "A quem as vendas da IA são atribuídas. Obrigatório com token de API: sem usuário logado, o Conexa exige o vendedor explícito."
-            }
+            hint="A quem as vendas da IA são atribuídas. Obrigatório com token de API: sem usuário logado, o Conexa exige o vendedor explícito."
+            erro={erro("sellerId")}
           >
             <Input
               name="sellerId"
@@ -152,10 +144,8 @@ export function ConexaConfigForm({
 
           <Field
             label="Id do modelo de contrato"
-            hint={
-              erro("contractTemplateId") ??
-              "Usado ao mandar o contrato para assinatura. Sem ele, o agente cria o contrato mas não consegue enviá-lo."
-            }
+            hint="Usado ao mandar o contrato para assinatura. Sem ele, o agente cria o contrato mas não consegue enviá-lo."
+            erro={erro("contractTemplateId")}
           >
             <Input
               name="contractTemplateId"
@@ -168,10 +158,8 @@ export function ConexaConfigForm({
 
           <Field
             label="Origem do CRM"
-            hint={
-              erro("crmPartnerId") ??
-              "Obrigatório para registrar cliente potencial (partnerId)."
-            }
+            hint="Obrigatório para registrar cliente potencial (partnerId)."
+            erro={erro("crmPartnerId")}
           >
             <Input
               name="crmPartnerId"
@@ -184,7 +172,8 @@ export function ConexaConfigForm({
 
           <Field
             label="Status inicial do lead (opcional)"
-            hint={erro("crmStatusId") ?? "Só se a sua instância usar status."}
+            hint="Só se a sua instância usar status."
+            erro={erro("crmStatusId")}
           >
             <Input
               name="crmStatusId"

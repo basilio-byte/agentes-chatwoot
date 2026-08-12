@@ -35,7 +35,8 @@ export function ChatwootConfigForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label="URL da instância"
-          hint={erroDe("baseUrl") ?? "Ex.: https://chatwoot.seahealth.io"}
+          hint="Ex.: https://chatwoot.seahealth.io"
+          erro={erroDe("baseUrl")}
         >
           <Input
             name="baseUrl"
@@ -48,10 +49,8 @@ export function ChatwootConfigForm({
 
         <Field
           label="Id da conta"
-          hint={
-            erroDe("accountId") ??
-            "O número na URL: /app/accounts/1/dashboard → 1"
-          }
+          hint="O número na URL: /app/accounts/1/dashboard → 1"
+          erro={erroDe("accountId")}
         >
           <Input
             name="accountId"

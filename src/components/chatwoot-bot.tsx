@@ -102,7 +102,7 @@ export function ChatwootBotCard({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Nome do bot no Chatwoot"
-            hint={estado.camposComErro?.botName}
+            erro={estado.camposComErro?.botName}
           >
             <Input
               name="botName"
@@ -114,10 +114,8 @@ export function ChatwootBotCard({
 
           <Field
             label="Id do bot (opcional)"
-            hint={
-              estado.camposComErro?.botId ??
-              "Número do bot no Chatwoot. Ajuda a ignorar o próprio eco."
-            }
+            hint="Número do bot no Chatwoot. Ajuda a ignorar o próprio eco."
+            erro={estado.camposComErro?.botId}
           >
             <Input
               name="botId"
@@ -132,11 +130,11 @@ export function ChatwootBotCard({
         <Field
           label="Access token do bot"
           hint={
-            estado.camposComErro?.token ??
-            (resumo.hint
+            resumo.hint
               ? `Salvo: ${resumo.hint}. Preencha de novo só para rotacionar.`
-              : "Aparece ao criar o bot no Chatwoot.")
+              : "Aparece ao criar o bot no Chatwoot."
           }
+          erro={estado.camposComErro?.token}
         >
           <Input
             name="token"
@@ -149,10 +147,8 @@ export function ChatwootBotCard({
 
         <Field
           label="Secret do webhook"
-          hint={
-            estado.camposComErro?.webhookSecret ??
-            "Mostrado uma vez na criação; dá para rever no formulário de edição do bot. Sem ele, toda entrega é recusada."
-          }
+          hint="Mostrado uma vez na criação; dá para rever no formulário de edição do bot. Sem ele, toda entrega é recusada."
+          erro={estado.camposComErro?.webhookSecret}
         >
           <Input
             name="webhookSecret"

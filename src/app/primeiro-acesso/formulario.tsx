@@ -30,22 +30,24 @@ export function FormularioPrimeiroAcesso({
         </header>
 
         <form action={acao} className="space-y-4">
-          <Field label="Nome" hint={erroDe("name")}>
+          <Field label="Nome" erro={erroDe("name")}>
             <Input name="name" required autoFocus autoComplete="name" />
           </Field>
 
-          <Field label="E-mail" hint={erroDe("email")}>
+          <Field label="E-mail" erro={erroDe("email")}>
             <Input name="email" type="email" required autoComplete="email" />
           </Field>
 
           <Field
             label="Senha"
-            hint={erroDe("password") ?? "Mínimo de 10 caracteres."}
+            hint="Mínimo de 10 caracteres."
+            erro={erroDe("password")}
           >
             <Input
               name="password"
               type="password"
               required
+              minLength={10}
               autoComplete="new-password"
             />
           </Field>
@@ -53,7 +55,8 @@ export function FormularioPrimeiroAcesso({
           {exigeToken ? (
             <Field
               label="Token de instalação"
-              hint={erroDe("token") ?? "Valor de BOOTSTRAP_TOKEN."}
+              hint="Valor de BOOTSTRAP_TOKEN."
+              erro={erroDe("token")}
             >
               <Input name="token" required />
             </Field>

@@ -10,6 +10,9 @@ export default defineConfig({
   test: {
     environment: "node",
     setupFiles: ["./vitest.setup.ts"],
-    include: ["src/**/*.test.ts"],
+    // `.tsx` também: a marcação de erro nos formulários é comportamento, e o
+    // jeito de travá-la é renderizar o componente (`renderToStaticMarkup`, sem
+    // DOM nem biblioteca de teste nova).
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });
