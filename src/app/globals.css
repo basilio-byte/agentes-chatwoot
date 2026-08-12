@@ -1,20 +1,44 @@
 @import "tailwindcss";
 
+/*
+ * Paleta e superfícies do painel.
+ *
+ * Três estados de tema, e os três precisam estar cobertos: escolha explícita
+ * (`data-theme` no <html>), e o padrão "sistema", que não carimba nada e só
+ * pode ser lido por `prefers-color-scheme`. Por isso o claro é definido no
+ * `:root` puro e o escuro aparece DUAS vezes — uma na media query (com guarda
+ * para o carimbo claro vencer) e outra no seletor de atributo (para o botão
+ * vencer nos dois sentidos).
+ */
 :root {
-  --background: #f7f7f5;
+  color-scheme: light;
+
+  --background: #f6f6f3;
   --surface: #ffffff;
-  --foreground: #1a1a18;
-  --muted: #6e6e68;
-  --border: #e6e6e1;
+  /* Fundo de segundo nível: cabeçalho de tabela, bloco de código, trilho de
+     barra. Existe para separar sem gastar mais uma borda. */
+  --surface-2: #f2f2ee;
+  --foreground: #171715;
+  --muted: #6b6b64;
+  --border: #e4e4de;
   --accent: #b4541f;
   --accent-soft: #fbf1ea;
   --danger: #b3261e;
   --success: #1a7f4b;
+  --warning: #8a5a06;
+
+  /* Gráficos. A grade fica um passo acima da superfície: presente, recessiva. */
+  --chart-grid: #ebebe5;
+
+  --shadow-card: 0 1px 2px rgba(23, 23, 21, 0.04);
+  --shadow-flutuante:
+    0 10px 30px -12px rgba(23, 23, 21, 0.18), 0 2px 8px -4px rgba(23, 23, 21, 0.1);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-line: var(--border);
@@ -22,14 +46,21 @@
   --color-accent-soft: var(--accent-soft);
   --color-danger: var(--danger);
   --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-chart-grid: var(--chart-grid);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+/* Os mesmos valores escuros aparecem nos dois escopos de propósito — ver o
+   comentário lá em cima. Mexeu num, mexa no outro. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #131312;
-    --surface: #1a1a19;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --background: #0e0e0d;
+    --surface: #191918;
+    --surface-2: #212120;
     --foreground: #ededea;
     --muted: #9b9b94;
     --border: #2c2c29;
@@ -37,12 +68,45 @@
     --accent-soft: #2a1d14;
     --danger: #f0857c;
     --success: #5fc48d;
+    --warning: #e3b25c;
+
+    --chart-grid: #262624;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-flutuante:
+      0 10px 30px -12px rgba(0, 0, 0, 0.7), 0 2px 8px -4px rgba(0, 0, 0, 0.5);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: #0e0e0d;
+  --surface: #191918;
+  --surface-2: #212120;
+  --foreground: #ededea;
+  --muted: #9b9b94;
+  --border: #2c2c29;
+  --accent: #e0834a;
+  --accent-soft: #2a1d14;
+  --danger: #f0857c;
+  --success: #5fc48d;
+  --warning: #e3b25c;
+
+  --chart-grid: #262624;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-flutuante:
+    0 10px 30px -12px rgba(0, 0, 0, 0.7), 0 2px 8px -4px rgba(0, 0, 0, 0.5);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
 }
 
 /*
@@ -55,9 +119,13 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  .logo-seahub {
+  :root:not([data-theme="light"]) .logo-seahub {
     filter: none;
   }
+}
+
+:root[data-theme="dark"] .logo-seahub {
+  filter: none;
 }
 
 /* Barras de rolagem discretas nas listas longas do painel. */
@@ -75,4 +143,17 @@ body {
 
 .sem-barra::-webkit-scrollbar {
   display: none;
+}
+
+/* Quem pediu menos movimento não recebe transição nenhuma — inclusive as que
+   vierem em componente novo, por isso a regra é global e não por classe. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

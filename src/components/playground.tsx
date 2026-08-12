@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, Trash2 } from "lucide-react";
 import { Aviso, Badge, Button, Card, Input } from "@/components/ui";
-import { formatarUsd } from "@/lib/utils";
+import { cn, formatarDuracao, formatarUsd } from "@/lib/utils";
 import { estaNoFim } from "@/lib/rolagem";
 
 type Turno = {
@@ -182,24 +182,35 @@ export function Playground({
             key={indice}
             className={
               turno.role === "user"
-                ? "ml-auto max-w-[80%] rounded-lg bg-accent-soft px-3 py-2 text-sm"
+                ? "ml-auto max-w-[80%] space-y-2"
                 : "mr-auto max-w-[85%] space-y-2"
             }
           >
-            <p className="whitespace-pre-wrap rounded-lg border border-line bg-background px-3 py-2 text-sm">
+            {/* Uma caixa só por turno: a do cliente vem no tom do accent, a do
+                agente na superfície com borda. Antes o balão do cliente tinha
+                fundo próprio E um segundo bloco com borda por dentro, e a
+                mensagem aparecia dentro de uma caixa dentro de outra. */}
+            <p
+              className={cn(
+                "rounded-lg px-3 py-2 text-sm whitespace-pre-wrap",
+                turno.role === "user"
+                  ? "bg-accent-soft"
+                  : "border border-line bg-surface-2",
+              )}
+            >
               {turno.content}
             </p>
 
             {turno.meta ? (
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
-                <Badge>{turno.meta.latenciaMs} ms</Badge>
+                <Badge>{formatarDuracao(turno.meta.latenciaMs)}</Badge>
                 <Badge>{formatarUsd(turno.meta.custoUsd)}</Badge>
                 {turno.meta.iteracoes > 1 ? (
                   <Badge>{turno.meta.iteracoes} rodadas</Badge>
                 ) : null}
                 {turno.meta.tools.map((tool, i) => (
                   <Badge key={i} tone={tool.isError ? "danger" : "accent"}>
-                    {tool.nome} · {tool.durationMs}ms
+                    {tool.nome} · {formatarDuracao(tool.durationMs)}
                   </Badge>
                 ))}
               </div>

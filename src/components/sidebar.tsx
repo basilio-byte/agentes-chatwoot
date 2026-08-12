@@ -10,9 +10,11 @@ import {
   Plug,
   ScrollText,
   Users,
+  Wallet,
 } from "lucide-react";
 import type { UserRole } from "@/generated/prisma/enums";
 import { Button } from "@/components/ui";
+import { SeletorDeTema } from "@/components/tema";
 import { cn } from "@/lib/utils";
 
 const SECOES = [
@@ -22,6 +24,7 @@ const SECOES = [
       { href: "/agentes", label: "Agentes", icone: Bot },
       { href: "/conversas", label: "Conversas", icone: MessagesSquare },
       { href: "/execucoes", label: "Execuções", icone: ScrollText },
+      { href: "/consumo", label: "Consumo", icone: Wallet },
     ],
   },
   {
@@ -49,9 +52,15 @@ export function Sidebar({
   const caminho = usePathname();
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col justify-between border-r border-line bg-surface">
-      <div className="space-y-7 p-4">
-        <Link href="/agentes" className="block px-2 pt-1" aria-label="Seahub Agentes">
+    // Gruda no topo e rola por dentro: nas telas longas (um agente tem sete
+    // abas) a navegação sumia para cima junto com a página.
+    <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col justify-between border-r border-line bg-surface">
+      <div className="min-h-0 flex-1 space-y-7 overflow-y-auto p-4">
+        <Link
+          href="/agentes"
+          className="block px-2 pt-1"
+          aria-label="Seahub Agentes"
+        >
           <Image
             src="/seahub-logo.png"
             alt="Seahub"
@@ -67,8 +76,8 @@ export function Sidebar({
 
         <nav className="space-y-6">
           {SECOES.map((secao) => (
-            <div key={secao.titulo} className="space-y-1">
-              <p className="px-2 text-[11px] font-medium tracking-wide text-muted/70 uppercase">
+            <div key={secao.titulo} className="space-y-0.5">
+              <p className="px-2 pb-1 text-[11px] font-medium tracking-wide text-muted/70 uppercase">
                 {secao.titulo}
               </p>
 
@@ -80,10 +89,13 @@ export function Sidebar({
                     href={href}
                     aria-current={ativo ? "page" : undefined}
                     className={cn(
-                      "flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm transition",
+                      // A régua da esquerda é sempre desenhada, transparente
+                      // quando inativa: sem isso o item pulava 3px ao ficar
+                      // ativo.
+                      "flex items-center gap-2.5 rounded-lg border-l-2 py-1.5 pr-2 pl-1.5 text-sm transition",
                       ativo
-                        ? "bg-accent-soft font-medium text-accent"
-                        : "text-muted hover:bg-foreground/[0.04] hover:text-foreground",
+                        ? "border-accent bg-accent-soft font-medium text-accent"
+                        : "border-transparent text-muted hover:bg-foreground/[0.04] hover:text-foreground",
                     )}
                   >
                     <Icone size={16} aria-hidden />
@@ -97,6 +109,8 @@ export function Sidebar({
       </div>
 
       <div className="space-y-3 border-t border-line p-4">
+        <SeletorDeTema />
+
         <div className="flex items-center gap-2.5">
           <span
             aria-hidden

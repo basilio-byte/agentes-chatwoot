@@ -435,6 +435,19 @@ model AgentRun {
   source RunSource
   status RunStatus @default(RUNNING)
 
+  /// Slug da OpenRouter usado NESTA execução, congelado no momento em que ela
+  /// rodou. Sem isto a apuração de consumo por modelo teria de ler
+  /// `Agent.model`, que é o modelo de **agora** — trocar de modelo reescreveria
+  /// o passado inteiro da fatura.
+  ///
+  /// A migration preencheu o histórico a partir de `AgentVersion` (a versão
+  /// vigente na data da execução). Fica **nulo** só onde não havia evidência
+  /// nenhuma: agente sem histórico de versão, anterior ao versionamento. Aí a
+  /// tela de Consumo mostra "modelo não registrado" em vez de chutar o modelo
+  /// atual do agente — o custo total continua certo, e a quebra por modelo diz
+  /// a verdade sobre o que não dá para saber.
+  model String?
+
   input  String  @db.Text
   output String? @db.Text
 
@@ -461,6 +474,9 @@ model AgentRun {
 
   @@index([agentId, createdAt])
   @@index([conversationId])
+  /// A apuração de consumo varre por PERÍODO, sem agente: o índice composto
+  /// acima não serve, porque `agentId` é a primeira coluna dele.
+  @@index([createdAt])
 }
 
 model ToolCall {

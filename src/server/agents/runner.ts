@@ -165,6 +165,10 @@ export async function executarAgente(
       conversationId: entrada.conversationId,
       source: entrada.source,
       status: RunStatus.RUNNING,
+      // Congelado aqui, e não lido de `Agent.model` na hora de apurar: o
+      // agente troca de modelo, e a fatura de ontem não pode mudar por causa
+      // disso. Gravado na criação para valer também quando o turno falha.
+      model: agente.model,
       input: entrada.mensagem,
     },
   });

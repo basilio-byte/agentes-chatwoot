@@ -408,6 +408,79 @@ como sempre.
   descartada. Era por isso que a tool mandava o modelo escrever depois; agora o
   sistema garante.
 
+### Apuração de consumo (`/consumo`)
+
+Quanto se gastou, com qual modelo, por qual agente, em que dia. O valor é o
+custo **real** que a OpenRouter devolve em `usage.cost` — dá para conferir
+contra a fatura deles, e é por isso que a tela vale a pena.
+
+- **`AgentRun.model` congela o modelo no momento da execução.** Antes disso o
+  único registro era `Agent.model`, que é o modelo de **agora**: apurar por ele
+  faria trocar de modelo hoje reescrever a fatura de ontem inteira. A migration
+  `modelo_na_execucao` preencheu o histórico a partir de `AgentVersion` — a
+  versão vigente na data de cada execução. Onde não havia evidência (agente
+  anterior ao versionamento) o campo fica **nulo** e a tela mostra "sem modelo
+  registrado" em vez de chutar.
+- **Todo corte é pelo dia civil de São Paulo.** O container roda em UTC; um
+  "hoje" calculado por lá começaria às 21h de ontem, e o fechamento do dia sairia
+  errado. Ver `inicioDoDiaEmSaoPaulo` — e o fim do intervalo é **exclusivo**
+  (`< início do dia seguinte`), porque o Postgres guarda mais precisão que o
+  `Date` do JS e comparar com `<=` no último milissegundo perde execução.
+- **A agregação é pura e testada** (`agregacao.ts`), sobre uma varredura só do
+  período. Cinco `GROUP BY` em SQL seriam mais escaláveis e menos verificáveis —
+  e isto é dinheiro. O preço é o teto de `TETO_DE_LINHAS`: acima dele a tela
+  **pede um período menor** em vez de mostrar um total pela metade.
+- **Execução com erro continua no custo.** A OpenRouter cobra os tokens gastos
+  até a falha; tirá-la da conta esconderia justamente o gasto que não deu em
+  nada. A tela conta os erros à parte.
+- **Playground custa igual** e aparece na quebra por origem — separar teste de
+  produção é decisão de quem fecha o mês, não do código.
+- **Custo por atendimento conta conversa distinta**, não execução: três turnos
+  da mesma conversa são um atendimento só.
+- **O CSV usa `;` e decimal com vírgula.** O destino é o Excel em português: com
+  `,` de separador ele joga a linha toda numa célula, e com `.` de decimal lê
+  como texto e a soma dá zero. Seis casas no custo, senão um turno de US$ 0,0007
+  vira R$ 0,00.
+- **Filtro mora na URL** (`Filtros`), numa barra só acima de tudo que ele
+  recorta — dois gráficos da mesma tela com períodos diferentes seria pior que
+  não ter filtro. As opções vêm de todo o histórico, não do período aberto, para
+  o recorte não sumir da lista quando se troca a data.
+
+### Execuções: a expansão é sob demanda
+
+A lista traz só o resumo. Entrada e resposta inteiras, parâmetros e retorno de
+cada tool e a transcrição enviada ao modelo descem quando o cartão é expandido
+(`detalharExecucao`).
+
+- **`AgentRun.messages` não pode entrar na consulta da lista.** É a conversa
+  inteira mandada à OpenRouter; um turno longo passa de um megabyte, e o
+  `findMany` sem `select` trazia cinquenta deles a cada abertura da tela — para
+  não exibir nenhum. O `select` explícito ali é obrigatório, não estilo.
+- **Bloco grande é cortado, e o corte aparece** (`TETO_DE_TEXTO`). Retorno de
+  tool com dezenas de milhares de linhas trava a aba; cortar em silêncio seria
+  pior que não mostrar.
+- **A leitura da transcrição é pura e testada** (`execucoes/trace.ts`): no
+  protocolo de chat completions, `content` às vezes é string e às vezes é lista
+  de blocos, e a chamada de tool vive em `tool_calls` — mensagem de tool lida só
+  por `content` aparecia vazia no meio do trace.
+
+### Tema e tokens visuais
+
+Três estados: `data-theme="light"`, `data-theme="dark"` e o padrão "sistema",
+que **não carimba nada** e é resolvido por `prefers-color-scheme`.
+
+- **Os valores escuros aparecem duas vezes no `globals.css`** — na media query
+  (com guarda `:not([data-theme="light"])`) e no seletor de atributo. Mexeu num,
+  mexa no outro; sem os dois, ou o botão não vence o sistema, ou o sistema não
+  vence a ausência de escolha.
+- **O tema é carimbado por script inline no `<head>`.** Qualquer coisa assíncrona
+  chegaria depois do primeiro quadro e quem escolheu claro veria o painel escuro
+  piscar. O `<html>` leva `suppressHydrationWarning` por causa disso.
+- **Gráfico não inventa cor.** Série única, sempre no accent: a categoria é o
+  dia (ou o modelo), que não tem identidade para uma cor carregar, e escurecer
+  conforme o valor só repetiria em cor o que o comprimento já diz. Duas medidas
+  nunca dividem o mesmo eixo — troca-se a medida e a escala inteira troca junto.
+
 ### Regras do projeto
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`

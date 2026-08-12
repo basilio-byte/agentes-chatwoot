@@ -12,7 +12,7 @@ import {
   RunStatus,
 } from "@/generated/prisma/enums";
 import { Aviso, Badge, Card, EmptyState, PageHeader } from "@/components/ui";
-import { formatarData, formatarUsd } from "@/lib/utils";
+import { formatarData, formatarDuracao, formatarUsd } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -167,7 +167,7 @@ export default async function ConversasPage({
             </p>
             <p className="text-xs text-muted">
               última resposta em {formatarData(ultima.createdAt)} ·{" "}
-              {ultima.latencyMs ?? "—"} ms ·{" "}
+              {formatarDuracao(ultima.latencyMs)} ·{" "}
               {formatarUsd(Number(ultima.costUsd ?? 0))}
             </p>
           </div>

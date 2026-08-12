@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import Image from "next/image";
 import { entrar, type EstadoLogin } from "@/server/actions/auth";
 import { Aviso, Button, Card, Field, Input } from "@/components/ui";
 
@@ -13,11 +14,23 @@ export function FormularioLogin() {
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
       <Card className="w-full max-w-sm space-y-5">
-        <header className="space-y-1">
-          <h1 className="text-lg font-semibold">Seahub Agentes</h1>
-          <p className="text-sm text-muted">
-            Entre para gerenciar os agentes de atendimento.
-          </p>
+        <header className="space-y-3">
+          <Image
+            src="/seahub-logo.png"
+            alt="Seahub"
+            width={104}
+            height={36}
+            className="logo-seahub h-6 w-auto"
+            priority
+          />
+          <div className="space-y-1">
+            <h1 className="text-lg font-semibold tracking-tight">
+              Agentes de atendimento
+            </h1>
+            <p className="text-sm text-muted">
+              Entre para gerenciar os agentes.
+            </p>
+          </div>
         </header>
 
         <form action={acao} className="space-y-4">

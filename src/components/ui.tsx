@@ -3,6 +3,10 @@ import { cn } from "@/lib/utils";
 
 /** Primitivas de UI do painel. Conjunto pequeno de propósito — cresce sob demanda. */
 
+/** Anel de foco igual em tudo que é focável, inclusive nos links que viram botão. */
+export const FOCO =
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+
 export function Button({
   className,
   variant = "primary",
@@ -17,7 +21,7 @@ export function Button({
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition",
         "disabled:pointer-events-none disabled:opacity-50",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        FOCO,
         size === "sm" ? "h-8 px-3 text-[13px]" : "h-9 px-4 text-sm",
         variant === "primary" &&
           "bg-accent text-white shadow-sm hover:brightness-110 active:brightness-95",
@@ -86,11 +90,41 @@ export function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "rounded-xl border border-line bg-surface p-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]",
+        "rounded-xl border border-line bg-surface p-5 shadow-[var(--shadow-card)]",
         className,
       )}
       {...props}
     />
+  );
+}
+
+/** Título de bloco dentro de um Card, com ícone recessivo à esquerda. */
+export function TituloDeBloco({
+  icone,
+  children,
+  descricao,
+  acoes,
+}: {
+  icone?: React.ReactNode;
+  children: React.ReactNode;
+  descricao?: React.ReactNode;
+  acoes?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          {icone ? <span className="text-muted">{icone}</span> : null}
+          {children}
+        </h2>
+        {descricao ? (
+          <p className="mt-0.5 text-xs leading-relaxed text-muted">
+            {descricao}
+          </p>
+        ) : null}
+      </div>
+      {acoes ? <div className="flex items-center gap-2">{acoes}</div> : null}
+    </div>
   );
 }
 
@@ -99,7 +133,7 @@ export function Badge({
   tone = "neutral",
   ...props
 }: React.ComponentProps<"span"> & {
-  tone?: "neutral" | "success" | "danger" | "accent";
+  tone?: "neutral" | "success" | "danger" | "accent" | "warning";
 }) {
   return (
     <span
@@ -109,6 +143,7 @@ export function Badge({
         tone === "success" && "bg-success/12 text-success",
         tone === "danger" && "bg-danger/12 text-danger",
         tone === "accent" && "bg-accent/12 text-accent",
+        tone === "warning" && "bg-warning/15 text-warning",
         className,
       )}
       {...props}
@@ -133,7 +168,7 @@ export function Aviso({
   tone = "neutral",
   children,
 }: {
-  tone?: "neutral" | "danger" | "success";
+  tone?: "neutral" | "danger" | "success" | "warning";
   children: React.ReactNode;
 }) {
   return (
@@ -143,6 +178,7 @@ export function Aviso({
         tone === "danger" && "border-danger/25 bg-danger/[0.06] text-danger",
         tone === "success" &&
           "border-success/25 bg-success/[0.06] text-success",
+        tone === "warning" && "border-warning/30 bg-warning/[0.07] text-warning",
         tone === "neutral" && "border-line bg-foreground/[0.02] text-muted",
       )}
     >
@@ -179,7 +215,9 @@ export function PageHeader({
           </p>
         ) : null}
       </div>
-      {acoes ? <div className="flex items-center gap-2">{acoes}</div> : null}
+      {acoes ? (
+        <div className="flex flex-wrap items-center gap-2">{acoes}</div>
+      ) : null}
     </header>
   );
 }
@@ -223,5 +261,122 @@ export function Meta({
     <span className={cn("text-xs text-muted", className)} {...props}>
       {children}
     </span>
+  );
+}
+
+/**
+ * Ladrilho de número — um valor por vez, com rótulo em cima e uma linha de
+ * contexto embaixo.
+ *
+ * É a forma certa para número solto: um gráfico de barra única não diz nada
+ * além do que o número já diz, e ainda gasta espaço. O valor usa figuras
+ * proporcionais de propósito — `tabular-nums` só vale em coluna que precisa
+ * alinhar na vertical, e em tamanho grande deixa o número frouxo.
+ */
+export function Stat({
+  rotulo,
+  valor,
+  detalhe,
+  destaque = false,
+  className,
+}: {
+  rotulo: string;
+  valor: React.ReactNode;
+  detalhe?: React.ReactNode;
+  /** O número que a tela lidera. Um por vista. */
+  destaque?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border border-line bg-surface p-4 shadow-[var(--shadow-card)]",
+        className,
+      )}
+    >
+      <p className="text-xs text-muted">{rotulo}</p>
+      <p
+        className={cn(
+          "mt-1 font-semibold tracking-tight",
+          destaque ? "text-[30px] leading-9" : "text-[19px] leading-7",
+        )}
+      >
+        {valor}
+      </p>
+      {detalhe ? (
+        <p className="mt-1 text-xs leading-relaxed text-muted">{detalhe}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Barra de proporção para linha de tabela.
+ *
+ * Uma cor só para todas as linhas: a categoria aqui é nominal (modelo, agente),
+ * e escurecer conforme o valor cresce só repetiria em cor o que o comprimento
+ * já diz. O trilho é um passo da mesma superfície, não uma borda.
+ */
+export function Barra({
+  fracao,
+  titulo,
+  className,
+}: {
+  /** 0 a 1. */
+  fracao: number;
+  titulo?: string;
+  className?: string;
+}) {
+  const pct = Math.max(0, Math.min(1, Number.isFinite(fracao) ? fracao : 0));
+  return (
+    <span
+      className={cn(
+        "block h-1.5 w-full overflow-hidden rounded-full bg-surface-2",
+        className,
+      )}
+      title={titulo}
+      aria-hidden
+    >
+      {/* Largura mínima visível: 0,3% de um total grande sumiria por completo e
+          a linha pareceria sem barra, e não com barra pequena. */}
+      <span
+        className="block h-full rounded-full bg-accent"
+        style={{ width: pct > 0 ? `max(3px, ${(pct * 100).toFixed(2)}%)` : 0 }}
+      />
+    </span>
+  );
+}
+
+/**
+ * Tabela do painel. O `overflow-x` fica no invólucro: tabela larga rola dentro
+ * do próprio cartão em vez de empurrar a página inteira na horizontal.
+ */
+export function Tabela({
+  cabecalho,
+  children,
+  className,
+}: {
+  cabecalho: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "overflow-x-auto rounded-lg border border-line",
+        className,
+      )}
+    >
+      <table className="w-full border-collapse text-sm">
+        <thead className="bg-surface-2 text-left">
+          <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-xs [&>th]:font-medium [&>th]:whitespace-nowrap [&>th]:text-muted">
+            {cabecalho}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line [&>tr>td]:px-3 [&>tr>td]:py-2">
+          {children}
+        </tbody>
+      </table>
+    </div>
   );
 }

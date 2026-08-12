@@ -110,10 +110,14 @@ docker/Dockerfile
 | `IntegrationCredential` | segredos cifrados, separados da config visível |
 | `AgentIntegration` | join agente↔integração com `enabled` + **allowlist de tools** |
 | `Conversation` | mapeia conversa do Chatwoot → agente, status, se foi para humano |
-| `AgentRun` | uma execução: input, output, tokens, custo, latência, erro |
+| `AgentRun` | uma execução: input, output, **modelo usado**, tokens, custo, latência, erro |
 | `ToolCall` | cada chamada de tool dentro de um run: nome, input, output, duração |
 
 `AgentRun` + `ToolCall` são o que permite responder "por que o bot respondeu isso?" — sem eles, depurar atendimento vira adivinhação.
+
+`AgentRun.model` guarda o slug da OpenRouter **daquela** execução, e não o modelo
+atual do agente: é o que permite apurar consumo por modelo sem que uma troca de
+modelo hoje reescreva o gasto do mês passado. Ver `/consumo`.
 
 ---
 
@@ -223,7 +227,7 @@ Detalhes que valem dinheiro e qualidade:
 | **1 — Fundação** | Scaffold Next.js + Prisma + Docker, deploy no Easypanel, auth, CRUD de agentes com playground de teste (conversa direto com o agente, sem Chatwoot) |
 | **2 — Chatwoot** | Agent Bot, webhook, fila, loop de resposta, handoff para humano, tela de conversas com trace |
 | **3 — Integrações** | Registry + toggles, ClickUp e Conexa (após as docs de API), tela de conexões com "Testar conexão" |
-| **4 — Operação** | Base de conhecimento (pgvector), dashboard de custo/token por agente, métricas de resolução e taxa de handoff |
+| **4 — Operação** | Base de conhecimento (pgvector), ~~dashboard de custo/token por agente~~ (entregue em 11/08/2026 na tela `/consumo`, com quebra por modelo, agente, origem e dia, e exportação CSV), métricas de resolução e taxa de handoff |
 
 O playground na Fase 1 é proposital: dá para validar prompt e comportamento antes de qualquer coisa tocar o Chatwoot de produção.
 
