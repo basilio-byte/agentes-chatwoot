@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { IntegrationProvider } from "@/generated/prisma/enums";
 import { lerConfigOpenAI, type OpenAIConfig } from "./config";
 import { criarClienteOpenAI } from "./client";
+import { limparCacheDeModelos } from "./catalogo";
 import type { ContextoDaAnalise } from "./analise";
 
 /**
@@ -124,7 +125,16 @@ export async function contextoDeMidia(args: {
   };
 }
 
+/**
+ * Guarda a chave e **esvazia o cache de modelos**.
+ *
+ * A chave nova pode ser de outra conta, e oferecer no seletor os modelos da
+ * conta anterior é pior do que não oferecer nenhum: o operador escolheria um id
+ * que não existe e só descobriria no primeiro áudio de cliente.
+ */
 export async function salvarChaveOpenAI(apiKey: string) {
+  limparCacheDeModelos();
+
   const integracao = await db.integration.upsert({
     where: { provider: IntegrationProvider.OPENAI },
     update: {},

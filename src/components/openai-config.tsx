@@ -3,17 +3,86 @@
 import { useActionState, useState, useTransition } from "react";
 import { FileAudio, Plug, Search } from "lucide-react";
 import {
-  descobrirModelosOpenAI,
+  recarregarModelosOpenAI,
   salvarChaveDaOpenAI,
   salvarConfigOpenAI,
   testarArquivoOpenAI,
   testarConexaoOpenAI,
   type EstadoOpenAI,
+  type ModelosParaEscolher,
 } from "@/server/actions/openai";
-import { Aviso, Button, Field, Input, Textarea } from "@/components/ui";
+import type { GrupoDeModelos } from "@/server/integrations/openai/catalogo";
+import { Aviso, Button, Field, Input, Select, Textarea } from "@/components/ui";
 
-/** Id do `datalist` que autocompleta os três campos de modelo. */
-const LISTA_DE_MODELOS = "modelos-da-openai";
+/**
+ * Escolha de um modelo.
+ *
+ * Vira `<select>` assim que a conta lista modelos, e cai para campo de texto
+ * quando não lista — chave restrita não tem permissão de ler `/models` e ainda
+ * assim transcreve, então travar o campo num seletor vazio impediria de
+ * configurar uma instalação que funcionaria.
+ *
+ * ⚠ O valor gravado sempre tem opção correspondente (garantido no servidor, em
+ * `comSelecionado`): `<select>` com valor fora da lista exibe a primeira opção e
+ * **envia ela**, trocando o modelo sem ninguém pedir.
+ */
+function CampoDeModelo({
+  name,
+  label,
+  hint,
+  valor,
+  grupos,
+  erro,
+  somenteLeitura,
+  placeholder,
+}: {
+  name: string;
+  label: string;
+  hint: string;
+  valor: string;
+  grupos: GrupoDeModelos[];
+  erro?: string;
+  somenteLeitura: boolean;
+  placeholder?: string;
+}) {
+  const [escolhido, setEscolhido] = useState(valor);
+
+  if (grupos.length === 0) {
+    return (
+      <Field label={label} hint={hint} erro={erro}>
+        <Input
+          name={name}
+          defaultValue={valor}
+          placeholder={placeholder}
+          disabled={somenteLeitura}
+        />
+      </Field>
+    );
+  }
+
+  return (
+    <Field label={label} hint={hint} erro={erro}>
+      <Select
+        name={name}
+        value={escolhido}
+        onChange={(e) => setEscolhido(e.target.value)}
+        disabled={somenteLeitura}
+      >
+        {/* Só o campo de documento aceita vazio — ele cai para o de imagem. */}
+        {placeholder ? <option value="">{placeholder}</option> : null}
+        {grupos.map((grupo) => (
+          <optgroup key={grupo.rotulo} label={grupo.rotulo}>
+            {grupo.ids.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </Select>
+    </Field>
+  );
+}
 
 type Props = {
   baseUrl: string;
@@ -33,6 +102,8 @@ type Props = {
   hintChave: string | null;
   somenteLeitura: boolean;
   podeEditarCredencial: boolean;
+  /** Modelos da conta, já agrupados. Vazio = campos de texto livre. */
+  modelos: ModelosParaEscolher;
 };
 
 export function OpenAIConfigForm(props: Props) {
@@ -50,7 +121,6 @@ export function OpenAIConfigForm(props: Props) {
   >(testarArquivoOpenAI, {});
 
   const [teste, setTeste] = useState<EstadoOpenAI | null>(null);
-  const [modelos, setModelos] = useState<string[] | null>(null);
   const [ocupado, iniciar] = useTransition();
   const erro = (campo: string) => estadoConfig.camposComErro?.[campo];
 
@@ -132,77 +202,72 @@ export function OpenAIConfigForm(props: Props) {
         <div className="space-y-3 border-t border-line pt-4">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-medium">Modelos</h3>
-            {!props.somenteLeitura ? (
+            {props.modelos.total > 0 ? (
+              <span className="text-xs text-muted">
+                {props.modelos.total} na conta
+              </span>
+            ) : null}
+            {!props.somenteLeitura && props.temChave ? (
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
-                disabled={ocupado || !props.temChave}
+                disabled={ocupado}
                 onClick={() =>
-                  iniciar(async () => {
-                    const r = await descobrirModelosOpenAI();
-                    setTeste(r);
-                    setModelos(r.modelos ?? null);
-                  })
+                  iniciar(async () => setTeste(await recarregarModelosOpenAI()))
                 }
               >
                 <Search size={14} aria-hidden />
-                {ocupado ? "Buscando…" : "Buscar modelos da conta"}
+                {ocupado ? "Buscando…" : "Recarregar lista"}
               </Button>
             ) : null}
           </div>
 
-          {/* A lista vem da conta e serve de autocomplete: a OpenAI não diz
-              quem enxerga imagem ou transcreve, então a escolha continua de
-              quem configura — isto só evita erro de digitação. */}
-          {modelos?.length ? (
-            <datalist id={LISTA_DE_MODELOS}>
-              {modelos.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          ) : null}
+          {/* A OpenAI não publica quem enxerga imagem nem quem transcreve: o
+              agrupamento abaixo é palpite, e por isso nada é escondido — o que
+              não reconhecemos cai em "outros modelos da conta". */}
+          {props.modelos.erro ? (
+            <Aviso>{props.modelos.erro}</Aviso>
+          ) : (
+            <p className="text-xs text-muted">
+              A lista vem da sua conta. A OpenAI não diz qual modelo enxerga
+              imagem ou transcreve áudio, então o agrupamento é uma sugestão —
+              nada fica escondido, e o <strong>teste com arquivo</strong> abaixo
+              é o que prova de verdade.
+            </p>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field
+            <CampoDeModelo
+              name="modeloAudio"
               label="Modelo de áudio"
-              hint="Transcrição. Ex.: gpt-4o-mini-transcribe, whisper-1."
+              hint="Transcrição — outro endpoint, com outra lista de modelos."
+              valor={props.modeloAudio}
+              grupos={props.modelos.audio}
               erro={erro("modeloAudio")}
-            >
-              <Input
-                name="modeloAudio"
-                defaultValue={props.modeloAudio}
-                list={LISTA_DE_MODELOS}
-                disabled={props.somenteLeitura}
-              />
-            </Field>
+              somenteLeitura={props.somenteLeitura}
+            />
 
-            <Field
+            <CampoDeModelo
+              name="modeloVisao"
               label="Modelo de imagem"
               hint="Precisa enxergar imagem (visão)."
+              valor={props.modeloVisao}
+              grupos={props.modelos.visao}
               erro={erro("modeloVisao")}
-            >
-              <Input
-                name="modeloVisao"
-                defaultValue={props.modeloVisao}
-                list={LISTA_DE_MODELOS}
-                disabled={props.somenteLeitura}
-              />
-            </Field>
+              somenteLeitura={props.somenteLeitura}
+            />
 
-            <Field
+            <CampoDeModelo
+              name="modeloDocumento"
               label="Modelo de documento"
               hint="Em branco, usa o mesmo da imagem."
+              valor={props.modeloDocumento}
+              grupos={props.modelos.documento}
               erro={erro("modeloDocumento")}
-            >
-              <Input
-                name="modeloDocumento"
-                defaultValue={props.modeloDocumento}
-                list={LISTA_DE_MODELOS}
-                placeholder="mesmo da imagem"
-                disabled={props.somenteLeitura}
-              />
-            </Field>
+              somenteLeitura={props.somenteLeitura}
+              placeholder="mesmo da imagem"
+            />
 
             <Field
               label="Idioma do áudio"

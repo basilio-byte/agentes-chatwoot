@@ -168,6 +168,22 @@ Módulo em `src/server/integrations/openai/`.
   `.amr` para a transcrição é 400 **pago**. Melhor recusar de graça e dizer ao
   agente o que chegou. `mp4`/`webm` são de áudio E de vídeo — o ramo do vídeo vem
   primeiro, senão mandaríamos 40 MB para transcrever.
+- **O seletor de modelo vem da conta ao vivo** (`catalogo.ts`, cache de 1h como
+  o da OpenRouter, esvaziado ao trocar a chave). A diferença para o catálogo da
+  OpenRouter é o que a API **não** diz: `GET /models` devolve só
+  `{ id, created, owned_by }` — nada sobre enxergar imagem ou transcrever. Por
+  isso o agrupamento é **palpite declarado**, feito por **exclusão** (fora
+  embedding, TTS, geração de imagem, moderação, realtime, legado), e **nunca
+  esconde**: o que não reconhecemos cai em "outros modelos da conta", senão
+  usar um lançamento novo exigiria deploy. `*-audio-preview` fica fora dos
+  prováveis de propósito — parece de áudio pelo nome, mas é chat, e
+  `/audio/transcriptions` o recusa.
+- **`comSelecionado` não é detalhe de UI.** É a trava do defeito já documentado
+  neste arquivo: `<select>` com valor sem opção correspondente exibe a primeira
+  e **envia ela**. Bastaria a chave perder acesso a um modelo para o painel
+  trocar o modelo de todo mundo em silêncio, na primeira vez que alguém
+  salvasse a tela. Sem lista (chave restrita, 403), o campo **cai para texto
+  livre** em vez de virar um seletor vazio que impediria de configurar.
 
 ### Gatilho HTTP: aciona um agente sem Chatwoot nenhum
 

@@ -8,7 +8,7 @@ import { clickupConfigSchema } from "@/server/integrations/clickup/config";
 import { conexaConfigSchema } from "@/server/integrations/conexa/config";
 import { lerConfigZapSign } from "@/server/integrations/zapsign/config";
 import { lerConfigOpenAI } from "@/server/integrations/openai/config";
-import { leiturasRecentes } from "@/server/actions/openai";
+import { leiturasRecentes, modelosParaEscolher } from "@/server/actions/openai";
 import {
   IntegrationProvider,
   IntegrationStatus,
@@ -72,6 +72,13 @@ export default async function IntegracoesPage({
   );
   const configOpenAI = lerConfigOpenAI(openai?.config);
   const leituras = await leiturasRecentes();
+  // Lista viva da conta, com cache de 1h — assim que a chave existe, os campos
+  // de modelo já vêm como seletor, sem ninguém precisar clicar em "buscar".
+  const modelosOpenAI = await modelosParaEscolher({
+    modeloAudio: configOpenAI.modeloAudio,
+    modeloVisao: configOpenAI.modeloVisao,
+    modeloDocumento: configOpenAI.modeloDocumento,
+  });
   // Quantos agentes já têm a leitura ligada. Zero com a integração ligada é o
   // estado que engana: parece funcionando e nenhum atendimento lê nada.
   const agentesComMidia = openai
@@ -430,6 +437,7 @@ export default async function IntegracoesPage({
                     hintChave={openai?.credential?.hint ?? null}
                     somenteLeitura={!editavel}
                     podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                    modelos={modelosOpenAI}
                   />
 
                   {openai?.lastError ? (

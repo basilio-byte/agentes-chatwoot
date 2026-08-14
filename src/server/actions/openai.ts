@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { decifrar } from "@/lib/crypto";
-import { exigirPapel } from "@/server/auth-guard";
+import { exigirPapel, exigirSessao } from "@/server/auth-guard";
 import {
   IntegrationProvider,
   IntegrationStatus,
@@ -19,9 +19,15 @@ import {
   criarClienteOpenAI,
   descreverImagem,
   lerDocumento,
-  listarModelosDaConta,
   transcreverAudio,
 } from "@/server/integrations/openai/client";
+import {
+  comSelecionado,
+  gruposParaAudio,
+  gruposParaTexto,
+  modelosDaConta,
+  type GrupoDeModelos,
+} from "@/server/integrations/openai/catalogo";
 import { salvarChaveOpenAI } from "@/server/integrations/openai/credenciais";
 import { openaiIntegration } from "@/server/integrations/openai";
 import {
@@ -166,37 +172,95 @@ export async function testarConexaoOpenAI(): Promise<EstadoOpenAI> {
   return resultado.ok ? { ok: resultado.mensagem } : { erro: resultado.mensagem };
 }
 
+export type ModelosParaEscolher = {
+  /** Um conjunto por campo: cada um garante o SEU valor gravado como opção. */
+  audio: GrupoDeModelos[];
+  visao: GrupoDeModelos[];
+  documento: GrupoDeModelos[];
+  /** Quantos modelos a conta listou. Zero = seletor cai para texto livre. */
+  total: number;
+  /** Por que a lista veio vazia, em texto para humano. */
+  erro?: string;
+};
+
+const SEM_MODELOS: ModelosParaEscolher = {
+  audio: [],
+  visao: [],
+  documento: [],
+  total: 0,
+};
+
 /**
- * Modelos que existem na conta, para o operador cadastrar o id certo.
+ * Os modelos da conta, já agrupados para os seletores.
  *
- * A OpenAI não publica qual modelo enxerga imagem ou transcreve — então o que
- * dá para afirmar é "este id existe aqui". A escolha continua sendo de quem
- * configura; a lista só evita erro de digitação.
+ * Chamado na renderização da tela de Integrações: assim que a chave existe, os
+ * campos de modelo viram lista — sem ninguém precisar clicar em "buscar". O
+ * cache de 1h evita uma chamada à OpenAI a cada abertura da página, e ele é
+ * esvaziado quando a chave é trocada.
+ *
+ * ⚠ Os grupos já vêm com o valor **gravado** garantido como opção. Um `<select>`
+ * cujo valor não tem opção correspondente exibe e envia a primeira — trocaria o
+ * modelo de todo mundo em silêncio.
  */
-export async function descobrirModelosOpenAI(): Promise<
-  EstadoOpenAI & { modelos?: string[] }
-> {
+export async function modelosParaEscolher(args: {
+  modeloAudio: string;
+  modeloVisao: string;
+  modeloDocumento: string;
+  forcar?: boolean;
+}): Promise<ModelosParaEscolher> {
+  // Num arquivo "use server" toda função exportada vira endpoint chamável, e
+  // esta dispara uma requisição à OpenAI e devolve a lista de modelos da conta.
+  // A tela já exige sessão; aqui é a garantia de que a função exige também.
+  await exigirSessao();
+
+  const atual = await registro();
+  if (!atual?.credential) {
+    return { ...SEM_MODELOS, erro: "Salve a chave da OpenAI para ver a lista de modelos da conta." };
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = decifrar(atual.credential);
+  } catch {
+    return { ...SEM_MODELOS, erro: "Chave ilegível — recadastre." };
+  }
+
+  const config = lerConfigOpenAI(atual.config);
+  const { ids, erro } = await modelosDaConta(config, apiKey, {
+    forcar: args.forcar,
+  });
+
+  if (ids.length === 0) return { ...SEM_MODELOS, erro };
+
+  const texto = gruposParaTexto(ids);
+
+  return {
+    audio: comSelecionado(gruposParaAudio(ids), args.modeloAudio),
+    // Imagem e documento saem do mesmo conjunto, mas cada um garante o SEU
+    // valor gravado: são campos independentes, e um deles pode estar num
+    // modelo que o outro não usa.
+    visao: comSelecionado(texto, args.modeloVisao),
+    documento: comSelecionado(texto, args.modeloDocumento),
+    total: ids.length,
+  };
+}
+
+/** Recarrega a lista furando o cache — para quando a conta ganhou modelo novo. */
+export async function recarregarModelosOpenAI(): Promise<EstadoOpenAI> {
   await exigirPapel(UserRole.ADMIN);
 
   const atual = await registro();
   if (!atual?.credential) return { erro: "Salve a chave antes de buscar." };
 
-  try {
-    const config = lerConfigOpenAI(atual.config);
-    const cliente = criarClienteOpenAI(config, decifrar(atual.credential));
-    const modelos = await listarModelosDaConta(cliente);
+  const config = lerConfigOpenAI(atual.config);
+  const { ids, erro } = await modelosDaConta(config, decifrar(atual.credential), {
+    forcar: true,
+  });
 
-    return modelos.length
-      ? { ok: `${modelos.length} modelo(s) nesta conta.`, modelos }
-      : { erro: "A conta respondeu, mas não listou nenhum modelo." };
-  } catch (erro) {
-    return {
-      erro:
-        erro instanceof Error
-          ? `Não consegui listar os modelos: ${erro.message}`
-          : "Falha ao buscar modelos.",
-    };
-  }
+  revalidatePath("/integracoes");
+  return ids.length
+    ? { ok: `${ids.length} modelo(s) nesta conta.` }
+    : { erro: erro ?? "A conta respondeu, mas não listou nenhum modelo." };
 }
 
 /**
@@ -360,6 +424,11 @@ export type LeituraRecente = {
  * conteúdo inteiro aparece na entrada da execução, em Execuções.
  */
 export async function leiturasRecentes(limite = 25): Promise<LeituraRecente[]> {
+  // Sessão obrigatória: o `texto` daqui é conteúdo de conversa — o que o
+  // cliente falou no áudio dele. Exportada de um arquivo "use server", ela é
+  // um endpoint, e endpoint que devolve conversa não pode ficar aberto.
+  await exigirSessao();
+
   const linhas = await db.mediaAnalysis.findMany({
     orderBy: { createdAt: "desc" },
     take: limite,

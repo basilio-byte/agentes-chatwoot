@@ -3,10 +3,11 @@ import { z } from "zod";
 /**
  * Configuração da leitura de mídia.
  *
- * Os modelos são campo de texto, e não uma lista fixa no código: a OpenAI lança
- * modelo novo mais rápido do que este repositório recebe deploy, e uma lista
- * fechada obrigaria a mexer em código para usar o que já existe na conta. Quem
- * confere se o id existe é o botão de testar, contra `GET /models` ao vivo.
+ * Os modelos são texto livre no schema, e **não** um enum: a lista de opções da
+ * tela vem da própria conta, ao vivo (`catalogo.ts`), e uma lista fechada aqui
+ * obrigaria a mexer em código para usar um modelo que a OpenAI acabou de
+ * lançar. Validar contra o catálogo no `safeParse` teria o mesmo defeito —
+ * quem confere é o botão de testar e o teste com arquivo.
  */
 
 /** Endpoint padrão. Aqui é a OpenAI de verdade — não a OpenRouter. */

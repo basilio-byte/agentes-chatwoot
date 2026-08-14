@@ -213,11 +213,19 @@ worker lê o histórico no Chatwoot
 | **Desligada = comportamento anterior** | Estava em produção. Sem a leitura ligada, mensagem só com anexo continua não virando atendimento — só que agora fica escrito por quê em Entregas recebidas. |
 | **Sem custo em `/consumo`** | A OpenAI não devolve custo por requisição. Estimar quebraria a única promessa daquela tela: conferir contra a fatura. Ficam tokens e segundos de áudio. |
 
-Configuração em **Integrações → Leitura de mídia**: chave, modelos (com
-autocomplete vindo de `GET /models` da conta), idioma do áudio, o que pedir ao
-modelo em imagem e documento, teto de tamanho e de anexos por turno — e um
-**teste com arquivo** que mostra exatamente o texto que o agente receberia, para
-ninguém precisar mandar áudio no WhatsApp de produção para saber se funciona.
+Configuração em **Integrações → Leitura de mídia**: chave, modelos, idioma do
+áudio, o que pedir ao modelo em imagem e documento, teto de tamanho e de anexos
+por turno — e um **teste com arquivo** que mostra exatamente o texto que o
+agente receberia, para ninguém precisar mandar áudio no WhatsApp de produção
+para saber se funciona.
+
+Assim que a chave é salva, os três campos de modelo viram **seletor** com a
+lista da própria conta (`GET /models`, cache de 1h). Como a OpenAI não declara
+capacidade — a resposta é só `{ id, created, owned_by }` — o agrupamento
+("Transcrição", "Prováveis", "Outros modelos da conta") é palpite feito por
+exclusão, e **nada fica escondido**: modelo novo aparece sozinho, sem deploy. Se
+a chave for restrita e não puder listar (`403`), o campo volta a ser texto
+livre em vez de virar um seletor vazio.
 
 ---
 
