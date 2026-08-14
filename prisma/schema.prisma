@@ -265,6 +265,11 @@ enum IntegrationProvider {
   CLICKUP
   CONEXA
   ZAPSIGN
+  /// Leitura de mídia (áudio, imagem, documento). Não expõe tool nenhuma: é um
+  /// passo de preparo do contexto, antes de o agente pensar. Está aqui, e não
+  /// numa tabela própria, para reusar credencial cifrada, toggle global e
+  /// toggle por agente — capacidade duplicada é a que diverge.
+  OPENAI
 }
 
 enum IntegrationStatus {
@@ -528,6 +533,84 @@ model WebhookEvent {
   @@unique([provider, externalId])
   @@index([processedAt])
   @@index([agentId])
+  @@index([agentId, createdAt(sort: Desc)])
+}
+
+/// O que o anexo é, do ponto de vista de quem vai lê-lo.
+enum MediaKind {
+  IMAGE
+  AUDIO
+  DOCUMENT
+  /// Reconhecido, mas sem leitura possível aqui (vídeo, localização, contato).
+  /// Ainda vira texto para o agente — "o cliente mandou um vídeo" é contexto.
+  UNSUPPORTED
+}
+
+enum MediaStatus {
+  OK
+  /// Falhou e vale tentar de novo: rede, 429, 5xx, timeout.
+  ERROR
+  /// Falhou de vez: formato sem leitor, arquivo grande demais, tentativas
+  /// esgotadas. Não tenta mais — e o agente recebe o texto explicando.
+  SKIPPED
+}
+
+/// Leitura de um anexo, guardada para não pagar duas vezes pelo mesmo arquivo.
+///
+/// O worker relê o histórico INTEIRO do Chatwoot a cada turno. Sem este cache,
+/// um áudio de dez minutos seria transcrito de novo a cada mensagem seguinte da
+/// mesma conversa, e a conta da OpenAI cresceria com o tamanho da conversa em
+/// vez de com a quantidade de mídia.
+///
+/// A chave identifica o ARQUIVO, não a mensagem: o mesmo anexo reencaminhado
+/// numa segunda conversa reaproveita a leitura.
+///
+/// Sem chave estrangeira para `Agent`/`Conversation` de propósito: excluir um
+/// agente cascatearia e apagaria o cache de arquivos que continuam existindo.
+/// `agentId` e `conversationId` aqui são procedência, não vínculo — mesmo
+/// padrão de `WebhookEvent.agentId`.
+model MediaAnalysis {
+  id String @id @default(cuid())
+
+  /// `chatwoot:<id do anexo>` quando o Chatwoot dá um id; senão o hash da URL.
+  chave String @unique
+
+  kind   MediaKind
+  status MediaStatus
+
+  nomeArquivo  String?
+  mimeType     String?
+  tamanhoBytes Int?
+
+  /// O texto que entra no lugar do anexo na mensagem enviada ao modelo.
+  /// Preenchido também em `SKIPPED` — dizer "não consegui ler este áudio" é
+  /// melhor do que o agente responder como se nada tivesse chegado.
+  texto String? @db.Text
+  erro  String?
+
+  /// Quantas vezes já falhou. Passou do teto, vira `SKIPPED` e para de tentar —
+  /// senão um arquivo quebrado seria reprocessado a cada turno para sempre.
+  tentativas Int @default(0)
+
+  /// Modelo da OpenAI usado nesta leitura, congelado como em `AgentRun.model`.
+  model        String?
+  inputTokens  Int     @default(0)
+  outputTokens Int     @default(0)
+  /// Segundos de áudio, quando a API informa. É por aqui que se estima o custo
+  /// de transcrição, que é cobrado por duração e não por token.
+  segundosDeAudio Int?
+  duracaoMs       Int?
+
+  /// Procedência, para a tela responder "de onde veio esta leitura?".
+  agentId           String?
+  conversationId    String?
+  chatwootMessageId Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
   @@index([agentId, createdAt(sort: Desc)])
 }
 

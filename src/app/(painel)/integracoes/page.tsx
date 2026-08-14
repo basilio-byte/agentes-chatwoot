@@ -7,6 +7,8 @@ import { obterSegredosDaConta } from "@/server/integrations/chatwoot/credenciais
 import { clickupConfigSchema } from "@/server/integrations/clickup/config";
 import { conexaConfigSchema } from "@/server/integrations/conexa/config";
 import { lerConfigZapSign } from "@/server/integrations/zapsign/config";
+import { lerConfigOpenAI } from "@/server/integrations/openai/config";
+import { leiturasRecentes } from "@/server/actions/openai";
 import {
   IntegrationProvider,
   IntegrationStatus,
@@ -16,8 +18,11 @@ import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
 import { ConexaConfigForm } from "@/components/conexa-config";
 import { ZapSignConfigForm } from "@/components/zapsign-config";
+import { OpenAIConfigForm } from "@/components/openai-config";
+import { LeiturasDeMidia } from "@/components/leituras-de-midia";
 import {
   Building2,
+  Ear,
   FileSignature,
   ListChecks,
   MessagesSquare,
@@ -62,6 +67,18 @@ export default async function IntegracoesPage({
     obterIntegracao(IntegrationProvider.ZAPSIGN)?.tools.length ?? 0;
   const toolsClickUp =
     obterIntegracao(IntegrationProvider.CLICKUP)?.tools.length ?? 0;
+  const openai = registros.find(
+    (i) => i.provider === IntegrationProvider.OPENAI,
+  );
+  const configOpenAI = lerConfigOpenAI(openai?.config);
+  const leituras = await leiturasRecentes();
+  // Quantos agentes já têm a leitura ligada. Zero com a integração ligada é o
+  // estado que engana: parece funcionando e nenhum atendimento lê nada.
+  const agentesComMidia = openai
+    ? await db.agentIntegration.count({
+        where: { integrationId: openai.id, enabled: true },
+      })
+    : 0;
 
   const comBot = await db.agentChatwootBot.count();
   const segredosDaConta = await obterSegredosDaConta();
@@ -352,6 +369,92 @@ export default async function IntegracoesPage({
                   </Aviso>
                 ) : null}
               </Card>
+            ),
+          },
+          {
+            id: "midia",
+            rotulo: "Leitura de mídia",
+            icone: <Ear size={14} aria-hidden />,
+            // Ligada globalmente e nenhum agente ligado é o estado que engana:
+            // parece funcionando e nenhum atendimento lê nada.
+            alerta: Boolean(openai?.enabled) && agentesComMidia === 0,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">OpenAI — leitura de mídia</h2>
+                    {openai?.enabled ? (
+                      <Badge tone="success">ligada</Badge>
+                    ) : (
+                      <Badge>desligada</Badge>
+                    )}
+                    {openai?.status === IntegrationStatus.OK ? (
+                      <Badge tone="success">conexão ok</Badge>
+                    ) : openai?.status === IntegrationStatus.ERROR ? (
+                      <Badge tone="danger">falha na conexão</Badge>
+                    ) : null}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    Áudio, foto e documento que o cliente manda viram texto{" "}
+                    <strong>antes</strong> de o agente responder. Não é uma
+                    ferramenta que ele escolhe usar: o anexo simplesmente passa a
+                    aparecer na mensagem. É a única integração que{" "}
+                    <strong>não usa a OpenRouter</strong> — a transcrição é
+                    endpoint da OpenAI, e a conta vem separada.
+                  </p>
+
+                  {openai?.enabled && agentesComMidia === 0 ? (
+                    <Aviso tone="danger">
+                      Ligada aqui, mas <strong>nenhum agente</strong> tem a
+                      leitura ligada — nenhum anexo será lido. Abra a tela do
+                      agente que é dono do bot e ligue em Integrações.
+                    </Aviso>
+                  ) : null}
+
+                  <OpenAIConfigForm
+                    baseUrl={configOpenAI.baseUrl}
+                    modeloVisao={configOpenAI.modeloVisao}
+                    modeloAudio={configOpenAI.modeloAudio}
+                    modeloDocumento={configOpenAI.modeloDocumento}
+                    idiomaAudio={configOpenAI.idiomaAudio}
+                    lerImagem={configOpenAI.lerImagem}
+                    lerAudio={configOpenAI.lerAudio}
+                    lerDocumento={configOpenAI.lerDocumento}
+                    instrucaoImagem={configOpenAI.instrucaoImagem}
+                    instrucaoDocumento={configOpenAI.instrucaoDocumento}
+                    tamanhoMaximoMb={configOpenAI.tamanhoMaximoMb}
+                    maxAnexosPorTurno={configOpenAI.maxAnexosPorTurno}
+                    habilitada={openai?.enabled ?? false}
+                    temChave={Boolean(openai?.credential)}
+                    hintChave={openai?.credential?.hint ?? null}
+                    somenteLeitura={!editavel}
+                    podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                  />
+
+                  {openai?.lastError ? (
+                    <Aviso tone="danger">
+                      Último teste falhou: {openai.lastError}
+                      {openai.lastCheckedAt
+                        ? ` (${formatarData(openai.lastCheckedAt)})`
+                        : ""}
+                    </Aviso>
+                  ) : null}
+                </Card>
+
+                <Card className="space-y-3">
+                  <div>
+                    <h2 className="text-sm font-semibold">Últimas leituras</h2>
+                    <p className="text-xs text-muted">
+                      Cada arquivo é lido <strong>uma vez</strong> e reaproveitado
+                      nos turnos seguintes — o worker relê a conversa inteira a
+                      cada mensagem, e sem esse reaproveitamento o mesmo áudio
+                      seria transcrito de novo toda vez.
+                    </p>
+                  </div>
+                  <LeiturasDeMidia leituras={leituras} />
+                </Card>
+              </div>
             ),
           },
         ]}

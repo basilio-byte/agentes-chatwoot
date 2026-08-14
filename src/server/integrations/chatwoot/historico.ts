@@ -11,6 +11,37 @@ export type ContextoConversa = {
 };
 
 /**
+ * As mensagens que podem virar contexto: fora nota interna, atividade e o que
+ * ficou antes do corte do histórico.
+ *
+ * Separado de `montarContexto` porque a leitura de mídia precisa rodar **entre**
+ * os dois passos: ela preenche o `content` de uma mensagem que só tem anexo, e
+ * o filtro de conteúdo vazio (lá embaixo) precisa acontecer depois disso. Sem
+ * essa separação, um áudio puro era descartado antes de alguém tentar ouvi-lo.
+ *
+ * Não filtra conteúdo vazio de propósito — esse é o passo seguinte.
+ */
+export function mensagensCandidatas(
+  mensagens: MensagemChatwoot[],
+  historicoDesde?: Date | null,
+): MensagemChatwoot[] {
+  const corteEmSegundos = historicoDesde
+    ? Math.floor(historicoDesde.getTime() / 1000)
+    : null;
+
+  return mensagens
+    .filter((m) => !m.private) // nota interna não é conversa com o cliente
+    .filter((m) => m.message_type === 0 || m.message_type === 1) // fora atividade/template
+    .filter((m) => {
+      if (corteEmSegundos == null) return true;
+      // `created_at` do Chatwoot vem em segundos. Sem data, mantém a mensagem:
+      // perder contexto é pior que carregar uma linha a mais.
+      if (typeof m.created_at !== "number") return true;
+      return m.created_at >= corteEmSegundos;
+    });
+}
+
+/**
  * Transforma as mensagens do Chatwoot no contexto do agente.
  *
  * As mensagens de entrada do fim da lista são o que o cliente acabou de mandar —
@@ -25,21 +56,9 @@ export function montarContexto(
    */
   historicoDesde?: Date | null,
 ): ContextoConversa | null {
-  const corteEmSegundos = historicoDesde
-    ? Math.floor(historicoDesde.getTime() / 1000)
-    : null;
-
-  const uteis = mensagens
-    .filter((m) => !m.private) // nota interna não é conversa com o cliente
-    .filter((m) => m.message_type === 0 || m.message_type === 1) // fora atividade/template
-    .filter((m) => (m.content ?? "").trim().length > 0)
-    .filter((m) => {
-      if (corteEmSegundos == null) return true;
-      // `created_at` do Chatwoot vem em segundos. Sem data, mantém a mensagem:
-      // perder contexto é pior que carregar uma linha a mais.
-      if (typeof m.created_at !== "number") return true;
-      return m.created_at >= corteEmSegundos;
-    });
+  const uteis = mensagensCandidatas(mensagens, historicoDesde).filter(
+    (m) => (m.content ?? "").trim().length > 0,
+  );
 
   if (uteis.length === 0) return null;
 

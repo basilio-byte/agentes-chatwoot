@@ -3,6 +3,7 @@ import type { IntegrationDefinition } from "./types";
 import { chatwootIntegration } from "./chatwoot";
 import { clickupIntegration } from "./clickup";
 import { conexaIntegration } from "./conexa";
+import { openaiIntegration } from "./openai";
 import { zapsignIntegration } from "./zapsign";
 
 /**
@@ -22,6 +23,9 @@ const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = 
   [clickupIntegration.provider]: clickupIntegration,
   [conexaIntegration.provider]: conexaIntegration,
   [zapsignIntegration.provider]: zapsignIntegration,
+  // Zero tools de propósito: prepara o contexto (áudio/imagem/documento viram
+  // texto) em vez de dar uma ferramenta ao modelo. Ver `openai/index.ts`.
+  [openaiIntegration.provider]: openaiIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {

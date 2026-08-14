@@ -6,6 +6,7 @@ import { logger } from "@/lib/logger";
 import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
 import { obterSegredosDoBot } from "@/server/integrations/chatwoot/credenciais";
 import { decidirSeResponde } from "@/server/integrations/chatwoot/eventos";
+import { leituraDeMidiaLigada } from "@/server/integrations/openai/credenciais";
 import { agendarAtendimento } from "@/server/queue/atendimento";
 import { lerConversa, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 
@@ -141,6 +142,32 @@ export async function POST(
     logger.info({ agentId }, "agente desligado — mensagem não será respondida");
     await marcarEntrega(entrega, "ignorado", "o agente está desligado no painel");
     return NextResponse.json({ ok: true, respondera: false });
+  }
+
+  // Mensagem que é SÓ anexo depende da leitura de mídia estar ligada para este
+  // bot. Sem ela, o comportamento continua exatamente o de antes — o anexo não
+  // vira atendimento. A diferença é que agora fica escrito por quê, em vez de o
+  // operador só ver silêncio.
+  //
+  // A consulta só acontece neste caso, e depois da checagem de agente ligado:
+  // o webhook recebe muito evento por conversa, e uma query a mais em todos
+  // eles seria carga sem motivo.
+  if (decisao.soAnexo) {
+    const midia = await leituraDeMidiaLigada(agentId);
+    if (!midia.ligada) {
+      logger.info(
+        { agentId, anexos: decisao.anexos, motivo: midia.motivo },
+        "mensagem só com anexo e sem leitura de mídia — não será respondida",
+      );
+      await marcarEntrega(
+        entrega,
+        "ignorado",
+        `mensagem só com anexo (${decisao.anexos.join(", ") || "tipo desconhecido"}) · ${
+          midia.motivo ?? "leitura de mídia indisponível"
+        }`,
+      );
+      return NextResponse.json({ ok: true, respondera: false });
+    }
   }
 
   const conversaExistente = await db.conversation.findUnique({

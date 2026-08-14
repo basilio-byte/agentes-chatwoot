@@ -308,6 +308,14 @@ export type MensagemChatwoot = {
   message_type: number;
   private?: boolean;
   created_at?: number;
+  /**
+   * Anexos da mensagem: áudio, imagem, documento, localização.
+   *
+   * Tipado como `unknown[]` aqui de propósito — quem entende o formato é
+   * `integrations/openai/classificar.ts`, e ele é tolerante porque o shape varia
+   * por versão do Chatwoot e por canal (WhatsApp, Instagram, widget).
+   */
+  attachments?: unknown[] | null;
 };
 
 export class ChatwootApiError extends Error {

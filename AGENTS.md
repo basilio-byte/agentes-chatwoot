@@ -48,6 +48,11 @@ modelos `anthropic/*` como padrão.
   `usage.cost`. É ele que vai para `AgentRun.costUsd`.
 - `reasoning: { effort }` só é enviado se o modelo declarar suporte e o effort não
   for `none`.
+- **Exceção única: mídia.** Transcrição de áudio e leitura de imagem/documento
+  falam com a **OpenAI direta** (`src/server/integrations/openai/`), porque
+  `/audio/transcriptions` não existe na OpenRouter. Mesmo SDK, outra `baseURL`,
+  outra chave, outra fatura. A conversa continua 100% na OpenRouter — não use um
+  cliente pelo outro.
 
 ### Chatwoot: um bot por agente
 
@@ -101,6 +106,68 @@ modelos `anthropic/*` como padrão.
   `ChatwootClient` recebe dois tokens: o do bot para agir e um **token de
   usuário** para ler estado e histórico (global, em Integrações). Sem o de
   leitura o atendimento morre antes de chamar o modelo.
+
+### Leitura de mídia: áudio, imagem e documento viram contexto
+
+O cliente que manda áudio em vez de digitar era **silêncio**: `content` vazio, o
+webhook recusava com "mensagem sem texto (anexo?)", nenhum job era criado e nada
+ficava registrado. Agora o anexo vira texto **antes** de o agente pensar.
+
+Módulo em `src/server/integrations/openai/`.
+
+- **É a OpenAI direta, não a OpenRouter — e isso não contradiz a decisão de
+  2026-07-28.** A conversa continua inteira na OpenRouter; aqui é só mídia,
+  porque `/audio/transcriptions` não existe lá. Mesmo SDK (`openai`, já era
+  dependência), duas `baseURL`. Trocar um cliente pelo outro é erro silencioso.
+- **Passo de preparo, não tool.** Zero tools no registry, de propósito: o agente
+  não escolhe se vai ouvir o cliente. Sistema garante, prompt decora.
+- **Está no registry mesmo sem tool** porque precisa exatamente do que o registry
+  já resolve — credencial cifrada, toggle global, toggle por agente, um lugar
+  conhecido no painel. Tabela paralela seria capacidade duplicada.
+- **Quem decide é a PORTA**, não quem pensa. O webhook precisa decidir se agenda
+  uma mensagem só-com-anexo e lá ainda não se sabe quem vai pensar; e a
+  transcrição é da CONVERSA — o colega que assume por transferência lê a mesma,
+  sem precisar ter nada ligado. Porta e pensador discordando viraria mensagem
+  agendada e nunca respondida.
+- **Desligada, o comportamento é exatamente o de antes**: mensagem só com anexo
+  não vira atendimento. A diferença é que agora fica escrito por quê em Entregas
+  recebidas, em vez de silêncio. Estava em produção quando isto foi escrito —
+  ligar é decisão consciente, agente a agente.
+- **O cache não é otimização, é o que segura a conta.** O worker relê o histórico
+  INTEIRO do Chatwoot a cada turno: sem `MediaAnalysis`, o mesmo áudio seria
+  transcrito de novo a cada mensagem seguinte, e o gasto cresceria com o tamanho
+  da conversa em vez de com a quantidade de mídia. A chave identifica o
+  **arquivo** (`chatwoot:<id>`, ou hash da URL **sem a query** — assinatura de
+  ActiveStorage expira e mudaria a chave do mesmo arquivo).
+- **`OK` e `SKIPPED` são definitivos; só `ERROR` volta.** E com teto de 3
+  tentativas, senão um arquivo corrompido seria reprocessado — e cobrado — a
+  cada turno para sempre. Arquivo grande demais e 4xx nem chegam a ser `ERROR`.
+- **Tipo desligado na configuração NÃO vai para o cache.** Religar tem de voltar
+  a ler sem ninguém precisar limpar tabela.
+- **Falha de leitura vira texto, nunca silêncio.** `[áudio transcrito — a.ogg]`,
+  `[anexo não lido — v.mp4] o cliente enviou um vídeo…`. O colchete é o que
+  separa "o cliente escreveu" de "o sistema leu para você" — sem ele o modelo
+  responde "conforme você escreveu" sobre algo que foi falado.
+- **Só anexo de ENTRADA é lido.** Descrever o PDF que nós mesmos mandamos é
+  pagar para ler o que já sabemos.
+- **Vídeo, localização e contato viram texto sem chamar modelo nenhum** — "o
+  cliente enviou uma localização (-23.5, -46.6)" é contexto, não é nada. E
+  `.txt`/`.csv` são lidos direto, sem modelo e sem custo.
+- **O token do Chatwoot só vai para a origem do Chatwoot.** O `data_url` vem de
+  dentro de um payload; mandar a credencial de atendimento para um host
+  arbitrário porque ele apareceu num JSON é vazamento. O arquivo sobe para a
+  OpenAI como data URI, e não como link — a instância pode ser privada.
+- **O download é lido em pedaços com teto**, e não `arrayBuffer()` direto: o
+  `content-length` é opcional, e um arquivo enorme derrubaria o worker, que
+  atende 4 conversas ao mesmo tempo.
+- **O custo NÃO aparece em `/consumo`.** A OpenAI não devolve custo por
+  requisição — inventar estimativa quebraria a única coisa que aquela tela
+  promete (conferir contra a fatura). Ficam gravados tokens e segundos de áudio,
+  e a tela diz em letras claras que a mídia é fatura separada.
+- **Formato é lista fechada** (`classificar.ts`): mandar `.heic` para a visão ou
+  `.amr` para a transcrição é 400 **pago**. Melhor recusar de graça e dizer ao
+  agente o que chegou. `mp4`/`webm` são de áudio E de vídeo — o ramo do vídeo vem
+  primeiro, senão mandaríamos 40 MB para transcrever.
 
 ### Gatilho HTTP: aciona um agente sem Chatwoot nenhum
 

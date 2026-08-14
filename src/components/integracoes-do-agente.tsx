@@ -170,6 +170,29 @@ export function IntegracoesDoAgente({
                   </Aviso>
                 ) : null}
 
+                {/* A única integração sem ferramenta: ela não dá um botão ao
+                    modelo, muda o que chega até ele. E o toggle vale pela
+                    PORTA — quem assume por transferência lê a mesma
+                    transcrição, o que não é adivinhável pelo nome. */}
+                {i.provider === "OPENAI" ? (
+                  <Aviso>
+                    {i.ligadaNoAgente ? (
+                      <>
+                        Vale para as conversas que entram pelo{" "}
+                        <strong>bot deste agente</strong>. Um colega que assumir
+                        por transferência lê a mesma transcrição — ele não
+                        precisa ter isto ligado.
+                      </>
+                    ) : (
+                      <>
+                        Desligada: áudio, foto e documento que chegarem pelo bot
+                        deste agente <strong>não serão lidos</strong>. Uma
+                        mensagem que só tem anexo nem chega a virar atendimento.
+                      </>
+                    )}
+                  </Aviso>
+                ) : null}
+
                 {aberta === i.provider ? (
                   <SelecaoDeTools
                     agentId={agentId}

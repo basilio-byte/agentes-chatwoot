@@ -41,6 +41,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Criar, editar, arquivar e excluir agentes",
       "Ligar/desligar agente e definir quem é o de entrada",
       "Configurar integrações, testar conexão e escolher as tools de cada agente",
+      "Configurar e ligar a leitura de mídia (áudio, imagem, documento)",
       "Ligar e desligar o gatilho HTTP de um agente",
       "Testar no playground",
     ],
@@ -56,7 +57,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
     resumo: "Faz tudo, inclusive credenciais e contas.",
     pode: [
       "Tudo o que o Administrador faz",
-      "Trocar as credenciais de Chatwoot, ClickUp, Conexa e ZapSign",
+      "Trocar as credenciais de Chatwoot, ClickUp, Conexa, ZapSign e OpenAI",
       "Gerar e rotacionar o token do gatilho HTTP",
       "Criar contas, mudar papéis, redefinir senha e desativar pessoas",
     ],

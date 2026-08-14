@@ -14,9 +14,24 @@ import { iniciarVigia } from "./vigia";
 import { FILA_GATILHO, type JobGatilho } from "./gatilho";
 import { processarGatilho } from "./gatilho-worker";
 import { executarAgente } from "@/server/agents/runner";
-import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
-import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
-import { montarContexto } from "@/server/integrations/chatwoot/historico";
+import {
+  clienteDoAgente,
+  obterConfigChatwoot,
+  obterSegredosDoBot,
+} from "@/server/integrations/chatwoot/credenciais";
+import type {
+  ChatwootClient,
+  MensagemChatwoot,
+} from "@/server/integrations/chatwoot/client";
+import {
+  mensagensCandidatas,
+  montarContexto,
+} from "@/server/integrations/chatwoot/historico";
+import { contextoDeMidia } from "@/server/integrations/openai/credenciais";
+import {
+  enriquecerComMidia,
+  marcarAnexosSemLeitura,
+} from "@/server/integrations/openai/enriquecer";
 import { ehResolvida, podeAgir, precisaAbrir } from "@/server/integrations/chatwoot/regras";
 import { entregarAoHumano, marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import {
@@ -203,7 +218,20 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
   }
 
   const mensagens = await cliente.listarMensagens(chatwootConversationId);
-  const contexto = montarContexto(mensagens, conversa?.historicoDesde);
+
+  // Áudio, imagem e documento viram texto ANTES de o contexto ser montado: uma
+  // mensagem que só tem anexo chega aqui com `content` vazio e seria descartada
+  // por `montarContexto`. Passo de preparo, não tool — o agente não escolhe se
+  // vai ouvir o cliente.
+  const comMidia = await lerMidiaDaConversa({
+    mensagens,
+    portaId,
+    conversaId: conversa?.id,
+    historicoDesde: conversa?.historicoDesde,
+    log,
+  });
+
+  const contexto = montarContexto(comMidia, conversa?.historicoDesde);
 
   if (!contexto) {
     log.info("nada novo do cliente para responder");
@@ -391,6 +419,78 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
     if (!turno.clienteRecebeuResposta) {
       await garantirRespostaAoCliente({ cliente, chatwootConversationId, log });
     }
+  }
+}
+
+/**
+ * Troca os anexos da conversa pelo texto que o modelo consegue ler.
+ *
+ * Melhor esforço, e por isso engole a própria falha: a leitura de mídia é um
+ * enfeite comparada a responder o cliente. Se a OpenAI estiver fora do ar, o
+ * turno continua — com a marcação de "anexo não lido" na mensagem, que é
+ * infinitamente melhor do que a mensagem chegar vazia e o agente responder
+ * "não entendi" sem saber que existia um áudio.
+ *
+ * A capacidade é resolvida pela **porta** (o agente dono do bot), e não por quem
+ * vai pensar: é a mesma decisão que o webhook tomou para agendar este job, e
+ * porta e pensador discordarem viraria mensagem agendada e nunca respondida.
+ */
+async function lerMidiaDaConversa(args: {
+  mensagens: MensagemChatwoot[];
+  portaId: string;
+  conversaId?: string;
+  historicoDesde?: Date | null;
+  log: Registro;
+}): Promise<MensagemChatwoot[]> {
+  const { mensagens, portaId, conversaId, historicoDesde, log } = args;
+
+  // Só as que chegariam ao modelo: ler anexo de mensagem que o corte de
+  // histórico vai descartar é dinheiro jogado fora. E só anexo de ENTRADA — o
+  // que a equipe enviou não é lido (ver `enriquecerComMidia`), então nem vale
+  // resolver credencial por causa dele.
+  const candidatas = mensagensCandidatas(mensagens, historicoDesde);
+  const temAnexoDoCliente = candidatas.some(
+    (m) => m.message_type === 0 && (m.attachments?.length ?? 0) > 0,
+  );
+  if (!temAnexoDoCliente) return mensagens;
+
+  try {
+    const { config: configChatwoot } = await obterConfigChatwoot();
+    const segredos = await obterSegredosDoBot(portaId);
+
+    const ctx = await contextoDeMidia({
+      agentId: portaId,
+      conversationId: conversaId,
+      chatwootBaseUrl: configChatwoot?.baseUrl,
+      chatwootToken: segredos?.token,
+    });
+
+    if (!ctx) {
+      // Desligada: a mensagem não pode continuar vazia, ou o agente responde
+      // como se nada tivesse chegado.
+      log.info({}, "conversa tem anexo e a leitura de mídia está desligada");
+      return marcarAnexosSemLeitura(mensagens);
+    }
+
+    const { mensagens: enriquecidas, resumo } = await enriquecerComMidia(
+      candidatas,
+      ctx,
+    );
+
+    log.info(
+      {
+        lidos: resumo.lidos,
+        processados: resumo.processados,
+        falhas: resumo.falhas,
+        adiados: resumo.adiados,
+      },
+      "anexos lidos",
+    );
+
+    return enriquecidas;
+  } catch (erro) {
+    log.error({ erro }, "leitura de mídia falhou — seguindo com o anexo marcado");
+    return marcarAnexosSemLeitura(mensagens);
   }
 }
 

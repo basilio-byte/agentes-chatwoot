@@ -58,10 +58,40 @@ export const eventoChatwootSchema = z
       .passthrough()
       .optional(),
     inbox: z.object({ id: z.number(), name: z.string().optional() }).optional(),
+    /**
+     * Áudio, imagem, documento, localização.
+     *
+     * `unknown` de propósito, e não um objeto validado: um item malformado no
+     * meio da lista invalidaria o payload INTEIRO, e uma mensagem com texto
+     * perfeitamente respondível viraria "formato inesperado". Só o `file_type`
+     * é lido aqui; quem entende o resto do shape é
+     * `integrations/openai/classificar.ts`.
+     */
+    attachments: z.array(z.unknown()).nullish(),
   })
   .passthrough();
 
 export type EventoChatwoot = z.infer<typeof eventoChatwootSchema>;
+
+/**
+ * `file_type` de cada anexo, ignorando item malformado.
+ *
+ * Um anexo sem tipo ainda conta como anexo — ele existe, e é isso que decide se
+ * a mensagem tem conteúdo. Só que aparece na lista como `"desconhecido"`, para
+ * o rastro no painel não mentir dizendo que não havia nada.
+ */
+function tiposDosAnexos(brutos: unknown): string[] {
+  if (!Array.isArray(brutos)) return [];
+
+  return brutos
+    .filter((a) => typeof a === "object" && a !== null)
+    .map((a) => {
+      const tipo = (a as { file_type?: unknown }).file_type;
+      return typeof tipo === "string" && tipo.trim()
+        ? tipo.toLowerCase().trim()
+        : "desconhecido";
+    });
+}
 
 export type Decisao =
   | {
@@ -69,6 +99,19 @@ export type Decisao =
       conversationId: number;
       inboxId: number;
       texto: string;
+      /**
+       * `file_type` de cada anexo, como veio do Chatwoot. Vazio na esmagadora
+       * maioria das mensagens.
+       */
+      anexos: string[];
+      /**
+       * A mensagem é SÓ anexo — sem uma palavra digitada. É o áudio de
+       * WhatsApp, o caso mais comum de todos.
+       *
+       * A rota usa isto para decidir se agenda: sem leitura de mídia ligada,
+       * este atendimento continua sendo recusado exatamente como antes.
+       */
+      soAnexo: boolean;
       contato: { nome?: string; identificador?: string };
     }
   | { responder: false; motivo: string };
@@ -133,8 +176,13 @@ export function decidirSeResponde(bruto: unknown): Decisao {
   }
 
   const texto = (evento.content ?? "").trim();
-  if (!texto) {
-    return { responder: false, motivo: "mensagem sem texto (anexo?)" };
+  const anexos = tiposDosAnexos(evento.attachments);
+
+  // Mensagem sem texto E sem anexo não existe para o atendimento. Com anexo,
+  // existe: é o áudio de WhatsApp, e recusá-lo aqui era o que fazia o bot ficar
+  // mudo para quem prefere falar a digitar.
+  if (!texto && anexos.length === 0) {
+    return { responder: false, motivo: "mensagem sem texto nem anexo" };
   }
 
   // A caixa vem no topo em `message_created`, mas o Chatwoot também a repete
@@ -155,6 +203,8 @@ export function decidirSeResponde(bruto: unknown): Decisao {
     conversationId: conversa.id,
     inboxId,
     texto,
+    anexos,
+    soAnexo: !texto && anexos.length > 0,
     contato: {
       nome: conversa.meta?.sender?.name,
       identificador:

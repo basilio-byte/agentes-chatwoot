@@ -46,6 +46,14 @@ let quebrarUpdateMany: boolean;
 /** Simula falha ANTES de qualquer contato com o cliente. */
 let quebrarObterConversa: boolean;
 let bastoesRecebidos: (string | null | undefined)[];
+/** O que o Chatwoot devolve como histórico. Mutável para o caso do anexo. */
+let mensagensDoChatwoot: Array<Record<string, unknown>>;
+/** A mensagem que o agente de fato recebeu — é onde a transcrição aparece. */
+let mensagensRecebidasPeloAgente: string[];
+/** Leitura de mídia ligada para a porta? */
+let midiaLigada: boolean;
+let anexosLidos: string[];
+let transcricao: string;
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -72,14 +80,17 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
+  obterConfigChatwoot: async () => ({
+    config: { baseUrl: "https://chatwoot.seahub", accountId: 1 },
+    habilitada: true,
+  }),
+  obterSegredosDoBot: async () => ({ token: "tok", webhookSecret: "s" }),
   clienteDoAgente: async () => ({
     obterConversa: async () => {
       if (quebrarObterConversa) throw new Error("Chatwoot fora do ar");
       return statusChatwoot;
     },
-    listarMensagens: async () => [
-      { id: 1, message_type: 0, content: "quero alugar uma sala", private: false },
-    ],
+    listarMensagens: async () => mensagensDoChatwoot,
     enviarMensagem: async (
       _c: number,
       texto: string,
@@ -94,10 +105,42 @@ vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
   }),
 }));
 
+/**
+ * Leitura de mídia dublada: `null` significa "capacidade desligada", que é o
+ * estado de toda instalação que não ligou a integração — e portanto o caminho
+ * que o resto desta suíte exercita.
+ */
+vi.mock("@/server/integrations/openai/credenciais", () => ({
+  contextoDeMidia: async () =>
+    midiaLigada
+      ? { cliente: {}, config: { maxAnexosPorTurno: 8, lerAudio: true, lerImagem: true, lerDocumento: true } }
+      : null,
+}));
+
+vi.mock("@/server/integrations/openai/analise", () => ({
+  MAX_TENTATIVAS: 3,
+  analisarAnexo: async (anexo: { chave: string; kind: string; nome: string }) => {
+    anexosLidos.push(anexo.chave);
+    return {
+      chave: anexo.chave,
+      kind: anexo.kind,
+      status: "OK",
+      texto: transcricao,
+      erro: null,
+      doCache: false,
+    };
+  },
+}));
+
 vi.mock("@/server/agents/runner", () => ({
-  executarAgente: async (entrada: { agentId: string; bastao?: string | null }) => {
+  executarAgente: async (entrada: {
+    agentId: string;
+    bastao?: string | null;
+    mensagem: string;
+  }) => {
     agentesQueRodaram.push(entrada.agentId);
     bastoesRecebidos.push(entrada.bastao);
+    mensagensRecebidasPeloAgente.push(entrada.mensagem);
 
     const proxima = respostasDoModelo.shift() ?? { resposta: "pronto" };
     // Simula um humano resolvendo a conversa enquanto o agente pensava.
@@ -162,6 +205,13 @@ beforeEach(() => {
   bastoesRecebidos = [];
   quebrarUpdateMany = false;
   quebrarObterConversa = false;
+  mensagensDoChatwoot = [
+    { id: 1, message_type: 0, content: "quero alugar uma sala", private: false },
+  ];
+  mensagensRecebidasPeloAgente = [];
+  midiaLigada = false;
+  anexosLidos = [];
+  transcricao = "oi, queria uma sala para amanhã de manhã";
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -499,5 +549,80 @@ describe("retry não pode duplicar o que já saiu", () => {
     await expect(processarAtendimento(job())).rejects.toThrow();
 
     expect(publicas()).toEqual([]);
+  });
+});
+
+/**
+ * O cliente que manda áudio em vez de digitar.
+ *
+ * Antes da leitura de mídia, a mensagem chegava com `content` vazio,
+ * `montarContexto` a descartava e o turno acabava em "nada novo do cliente" —
+ * silêncio sem erro nenhum, o pior modo de falha deste sistema.
+ */
+describe("cliente que manda anexo", () => {
+  const audio = {
+    id: 9,
+    message_type: 0,
+    content: null,
+    private: false,
+    attachments: [{ id: 77, file_type: "audio", data_url: "https://cw/n.ogg" }],
+  };
+
+  it("com a leitura ligada, o áudio vira a mensagem e o agente responde", async () => {
+    midiaLigada = true;
+    mensagensDoChatwoot = [audio];
+    respostasDoModelo = [{ resposta: "Claro! Para amanhã de manhã eu tenho sim." }];
+
+    await processarAtendimento(job());
+
+    expect(anexosLidos).toEqual(["chatwoot:77"]);
+    expect(mensagensRecebidasPeloAgente[0]).toContain("áudio transcrito");
+    expect(mensagensRecebidasPeloAgente[0]).toContain("sala para amanhã");
+    expect(publicas()).toEqual(["Claro! Para amanhã de manhã eu tenho sim."]);
+  });
+
+  it("com a leitura desligada, o agente sabe que chegou anexo — e responde", async () => {
+    // Não é o desfecho ideal, mas é infinitamente melhor que o anterior: em vez
+    // de a conversa morrer calada, o agente pode pedir que a pessoa escreva.
+    midiaLigada = false;
+    mensagensDoChatwoot = [audio];
+    respostasDoModelo = [{ resposta: "Pode me escrever o que precisa?" }];
+
+    await processarAtendimento(job());
+
+    expect(anexosLidos).toEqual([]);
+    expect(mensagensRecebidasPeloAgente[0]).toContain("leitura de mídia está desligada");
+    expect(publicas()).toEqual(["Pode me escrever o que precisa?"]);
+  });
+
+  it("texto e anexo juntos: o texto do cliente vem primeiro", async () => {
+    midiaLigada = true;
+    transcricao = "PIX de R$ 350,00 para Seahub em 12/08";
+    mensagensDoChatwoot = [
+      {
+        id: 10,
+        message_type: 0,
+        content: "segue o comprovante",
+        private: false,
+        attachments: [{ id: 78, file_type: "image", data_url: "https://cw/p.png" }],
+      },
+    ];
+    respostasDoModelo = [{ resposta: "Recebi, obrigado!" }];
+
+    await processarAtendimento(job());
+
+    expect(mensagensRecebidasPeloAgente[0]).toBe(
+      "segue o comprovante\n[imagem — p.png] PIX de R$ 350,00 para Seahub em 12/08",
+    );
+  });
+
+  it("conversa sem anexo nenhum não paga o custo de conferir mídia", async () => {
+    midiaLigada = true;
+    respostasDoModelo = [{ resposta: "Olá!" }];
+
+    await processarAtendimento(job());
+
+    expect(anexosLidos).toEqual([]);
+    expect(publicas()).toEqual(["Olá!"]);
   });
 });

@@ -112,11 +112,59 @@ describe("decisão de responder", () => {
     ).toEqual({ responder: false, motivo: "evento conversation_typing_on não responde" });
   });
 
-  it("ignora mensagem sem texto (anexo puro)", () => {
+  it("ignora mensagem sem texto e sem anexo", () => {
     expect(decidirSeResponde(evento({ content: "   " }))).toEqual({
       responder: false,
-      motivo: "mensagem sem texto (anexo?)",
+      motivo: "mensagem sem texto nem anexo",
     });
+  });
+
+  it("aceita mensagem que só tem anexo — é o áudio de WhatsApp", () => {
+    // Recusar aqui era o que fazia o bot ficar mudo para quem prefere falar a
+    // digitar. Quem decide se responde de fato é a rota, conferindo se a
+    // leitura de mídia está ligada para este bot.
+    const d = decidirSeResponde(
+      evento({
+        content: null,
+        attachments: [{ id: 77, file_type: "audio", data_url: "https://cw/x.ogg" }],
+      }),
+    );
+
+    expect(d.responder).toBe(true);
+    if (!d.responder) return;
+    expect(d.soAnexo).toBe(true);
+    expect(d.anexos).toEqual(["audio"]);
+    expect(d.texto).toBe("");
+  });
+
+  it("mensagem com texto E anexo não é 'só anexo'", () => {
+    // Esta já era respondida antes da leitura de mídia, e tem de continuar
+    // sendo mesmo com a capacidade desligada.
+    const d = decidirSeResponde(
+      evento({
+        content: "olha o comprovante",
+        attachments: [{ id: 78, file_type: "image", data_url: "https://cw/p.png" }],
+      }),
+    );
+
+    expect(d.responder).toBe(true);
+    if (!d.responder) return;
+    expect(d.soAnexo).toBe(false);
+    expect(d.anexos).toEqual(["image"]);
+  });
+
+  it("anexo malformado não invalida o payload inteiro", () => {
+    // Um item estranho na lista de anexos não pode transformar uma mensagem
+    // perfeitamente respondível em "formato inesperado".
+    const d = decidirSeResponde(
+      evento({ content: "oi", attachments: [{ sem_tipo: true }, null, "lixo"] }),
+    );
+
+    expect(d.responder).toBe(true);
+    if (!d.responder) return;
+    expect(d.soAnexo).toBe(false);
+    // O item sem tipo continua contando como anexo: ele existe.
+    expect(d.anexos).toEqual(["desconhecido"]);
   });
 
   it("não estoura com payload fora do formato", () => {

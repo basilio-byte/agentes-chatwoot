@@ -170,7 +170,19 @@ export default async function ConsumoPage({
   const cabecalho = (
     <PageHeader
       titulo="Consumo"
-      descricao="Quanto os agentes custaram no período, por modelo, por agente e por origem. O valor é o custo real cobrado pela OpenRouter em cada chamada, não uma estimativa — dá para conferir contra a fatura."
+      descricao={
+        <>
+          Quanto os agentes custaram no período, por modelo, por agente e por
+          origem. O valor é o custo real cobrado pela OpenRouter em cada chamada,
+          não uma estimativa — dá para conferir contra a fatura.{" "}
+          {/* Dizer isto aqui é o que impede a tela de mentir por omissão: a
+              leitura de mídia gasta na OpenAI, que é outra conta e outra
+              fatura, e a OpenAI não devolve custo por requisição. */}
+          <strong>Não inclui a leitura de mídia</strong> (áudio, imagem e
+          documento), que é cobrada pela OpenAI numa fatura separada — o que foi
+          lido aparece em Integrações → Leitura de mídia.
+        </>
+      }
     />
   );
 

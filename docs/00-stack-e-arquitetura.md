@@ -187,6 +187,38 @@ Cuidados que já estão previstos no desenho:
 
 > Os endpoints e nomes de eventos devem ser conferidos contra a versão exata do Chatwoot da Seahub antes de implementar — a API de Agent Bots mudou entre versões.
 
+### 6.1 Leitura de mídia (acrescentado em 14/08/2026)
+
+Cliente que manda **áudio, foto ou documento** em vez de digitar. Antes disso a
+mensagem chegava com `content` vazio, era recusada no webhook e o atendimento
+morria calado — sem erro, sem registro, sem ninguém saber.
+
+O anexo vira texto **entre** a leitura do histórico e a montagem do contexto:
+
+```text
+worker lê o histórico no Chatwoot
+   → mensagensCandidatas()            (tira nota interna, atividade, corte de histórico)
+   → enriquecerComMidia()             ← áudio/imagem/documento viram texto aqui
+   → montarContexto()                 (agrupa mensagens picotadas; descarta vazias)
+   → executarAgente()
+```
+
+| Decisão | Por quê |
+| --- | --- |
+| **OpenAI direta, não OpenRouter** | `/audio/transcriptions` não existe na OpenRouter. Mesmo SDK `openai`, outra `baseURL`, outra chave, **outra fatura**. A conversa continua toda na OpenRouter. |
+| **Passo de preparo, não tool** | O agente não escolhe se vai ouvir o cliente. Uma tool que ele esquecesse de chamar deixaria a pessoa sem resposta sobre o que acabou de mandar. |
+| **`IntegrationProvider.OPENAI` com zero tools** | Reusa credencial cifrada, toggle global, toggle por agente e o lugar conhecido no painel. Tabela paralela seria capacidade duplicada. |
+| **Cache em `MediaAnalysis`** | O worker relê o histórico inteiro a cada turno. Sem cache, o mesmo áudio seria transcrito de novo a cada mensagem — o gasto cresceria com o tamanho da conversa. |
+| **Quem decide é a porta** | O webhook precisa decidir se agenda uma mensagem só-com-anexo antes de saber quem vai pensar; e a transcrição é da conversa, não do pensador. |
+| **Desligada = comportamento anterior** | Estava em produção. Sem a leitura ligada, mensagem só com anexo continua não virando atendimento — só que agora fica escrito por quê em Entregas recebidas. |
+| **Sem custo em `/consumo`** | A OpenAI não devolve custo por requisição. Estimar quebraria a única promessa daquela tela: conferir contra a fatura. Ficam tokens e segundos de áudio. |
+
+Configuração em **Integrações → Leitura de mídia**: chave, modelos (com
+autocomplete vindo de `GET /models` da conta), idioma do áudio, o que pedir ao
+modelo em imagem e documento, teto de tamanho e de anexos por turno — e um
+**teste com arquivo** que mostra exatamente o texto que o agente receberia, para
+ninguém precisar mandar áudio no WhatsApp de produção para saber se funciona.
+
 ---
 
 ## 7. Loop de agente (tool use)
