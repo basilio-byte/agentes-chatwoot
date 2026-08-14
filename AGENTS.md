@@ -589,6 +589,13 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`
   de propósito: um redirect devolveria HTML onde o cliente espera JSON.
+- **Num arquivo `"use server"`, TODA função exportada é um endpoint** — inclusive
+  a que existe só para a página chamar na renderização. O `proxy.ts` não protege
+  isso: quem chama monta a requisição direto. Então função de leitura exportada
+  de `src/server/actions/*` precisa de `exigirSessao()` na primeira linha, mesmo
+  que a tela que a usa já exija sessão. ⚠ `resumoDoBot` e `resumoDoGatilho` são
+  anteriores a esta regra e continuam sem guarda — devolvem pouco (booleanos e
+  máscara de token), mas não são exemplo a seguir.
 - **O `proxy.ts` também não pode cobrir arquivos estáticos.** O otimizador de
   imagem do Next busca a origem **server-side, sem o cookie do usuário**: se o
   proxy interceptar `/algo.png`, ele recebe o HTML do login e a imagem quebra.
