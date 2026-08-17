@@ -54,6 +54,17 @@ let mensagensRecebidasPeloAgente: string[];
 let midiaLigada: boolean;
 let anexosLidos: string[];
 let transcricao: string;
+/**
+ * Ids que NÃO são gente — na prática, o próprio Agent Bot.
+ *
+ * Invertido de propósito: quase todo responsável é uma pessoa, e um dublê que
+ * exigisse cadastrar cada humano faria os testes mentirem sobre o caso comum.
+ */
+let botsDaConta: Set<number>;
+/** A lista de agentes não carregou: ninguém sabe quem é gente. */
+let naoSeiQuemEhGente: boolean;
+/** Quantas vezes o worker soltou a conversa. */
+let desatribuicoes: number;
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -102,7 +113,22 @@ vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
     alternarStatus: async (_c: number, status: string) => {
       statusChatwoot = { ...statusChatwoot, status };
     },
+    desatribuir: async () => {
+      desatribuicoes++;
+      statusChatwoot = { ...statusChatwoot, assigneeId: null };
+    },
   }),
+}));
+
+/**
+ * Quem é gente na conta. `undefined` significa "não deu para saber" — e aí a
+ * regra global mantém o comportamento conservador de calar.
+ */
+vi.mock("@/server/integrations/chatwoot/humanos", () => ({
+  donoEhHumano: async (_c: unknown, id: number | null) => {
+    if (id == null || naoSeiQuemEhGente) return undefined;
+    return !botsDaConta.has(id);
+  },
 }));
 
 /**
@@ -212,6 +238,9 @@ beforeEach(() => {
   midiaLigada = false;
   anexosLidos = [];
   transcricao = "oi, queria uma sala para amanhã de manhã";
+  botsDaConta = new Set([777]);
+  naoSeiQuemEhGente = false;
+  desatribuicoes = 0;
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -624,5 +653,72 @@ describe("cliente que manda anexo", () => {
 
     expect(anexosLidos).toEqual([]);
     expect(publicas()).toEqual(["Olá!"]);
+  });
+});
+
+/**
+ * O caso de 17/08/2026: o Chatwoot atribui o PRÓPRIO Agent Bot à conversa em
+ * algumas caixas. A regra global lia isso como "um humano assumiu" e o bot
+ * calava para sempre — e a conversa resolvida nem reabria, porque reabrir
+ * exige não ter dono. Silêncio permanente, sem erro nenhum, e a conversa ainda
+ * sumia do painel: o bot não aparece no filtro de "Agente atribuído".
+ */
+describe("conversa atribuída ao próprio bot", () => {
+  /** Um id que não está na lista de agentes da conta. */
+  const BOT = 777;
+
+  it("responde normalmente, em vez de calar", async () => {
+    statusChatwoot = { status: "open", assigneeId: BOT };
+    respostasDoModelo = [{ resposta: "Claro, posso ajudar!" }];
+
+    await processarAtendimento(job());
+
+    expect(publicas()).toEqual(["Claro, posso ajudar!"]);
+  });
+
+  it("solta a conversa, para ela voltar a aparecer no painel", async () => {
+    statusChatwoot = { status: "open", assigneeId: BOT };
+    respostasDoModelo = [{ resposta: "oi" }];
+
+    await processarAtendimento(job());
+
+    expect(desatribuicoes).toBe(1);
+    expect(statusChatwoot.assigneeId).toBeNull();
+  });
+
+  it("resolvida E atribuída ao bot volta a viver — o nó completo", async () => {
+    // Era daqui que não saía: `podeAgir` calava pelo dono, e `reabrirSeResolvida`
+    // recusava reabrir por causa do mesmo dono. Nada mais mudaria esse estado.
+    statusChatwoot = { status: "resolved", assigneeId: BOT };
+    respostasDoModelo = [{ resposta: "Oi de novo!" }];
+
+    await processarAtendimento(job());
+
+    expect(statusChatwoot.status).toBe("open");
+    expect(publicas()).toEqual(["Oi de novo!"]);
+  });
+
+  it("não solta conversa que está com uma PESSOA", async () => {
+    // A regra que não pode quebrar: humano assumiu, o bot cala e não encosta.
+    statusChatwoot = { status: "open", assigneeId: 100 };
+
+    await processarAtendimento(job());
+
+    expect(desatribuicoes).toBe(0);
+    expect(statusChatwoot.assigneeId).toBe(100);
+    expect(publicas()).toEqual([]);
+    expect(agentesQueRodaram).toEqual([]);
+  });
+
+  it("na dúvida sobre quem é o dono, cala", async () => {
+    // A lista de agentes não carregou. Falar por cima de um atendente de
+    // verdade é pior que ficar quieto, então a incerteza pende para o silêncio.
+    naoSeiQuemEhGente = true;
+    statusChatwoot = { status: "open", assigneeId: BOT };
+
+    await processarAtendimento(job());
+
+    expect(publicas()).toEqual([]);
+    expect(desatribuicoes).toBe(0);
   });
 });

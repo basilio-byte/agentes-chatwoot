@@ -62,6 +62,8 @@ describe("decisão de responder", () => {
     expect(d).toEqual({
       responder: false,
       motivo: "conversa atribuída a um humano",
+      // Vai junto para a rota poder conferir se o dono é o nosso próprio bot.
+      donoId: 4,
     });
   });
 
@@ -103,6 +105,49 @@ describe("decisão de responder", () => {
     expect(d).toEqual({
       responder: false,
       motivo: "conversa atribuída a um humano",
+      donoId: 4,
+    });
+  });
+
+  /**
+   * O caso de 17/08/2026: o Chatwoot atribui o PRÓPRIO Agent Bot à conversa em
+   * algumas caixas. A regra lia isso como "um humano assumiu", a mensagem era
+   * recusada aqui e nunca virava job — o bot calava para sempre, e a conversa
+   * ainda sumia do painel, porque o bot não aparece no filtro de responsável.
+   */
+  describe("quando o responsável é o próprio bot", () => {
+    const comBotDeDono = {
+      conversation: { id: 55, status: "open", assignee_id: 4 },
+    };
+
+    it("sem saber quem é o dono, cala — a suposição segura é que é gente", () => {
+      const d = decidirSeResponde(evento(comBotDeDono));
+
+      expect(d.responder).toBe(false);
+      if (d.responder) return;
+      expect(d.donoId).toBe(4);
+    });
+
+    it("sabendo que não é gente, o atendimento segue", () => {
+      const d = decidirSeResponde(evento(comBotDeDono), { donoEhHumano: false });
+
+      expect(d.responder).toBe(true);
+    });
+
+    it("conversa resolvida e atribuída ao bot volta a ser respondida", () => {
+      // O nó completo: resolvida + com dono não reabria nem respondia.
+      const d = decidirSeResponde(
+        evento({ conversation: { id: 55, status: "resolved", assignee_id: 4 } }),
+        { donoEhHumano: false },
+      );
+
+      expect(d.responder).toBe(true);
+    });
+
+    it("dizer que É gente não muda nada — continua calando", () => {
+      const d = decidirSeResponde(evento(comBotDeDono), { donoEhHumano: true });
+
+      expect(d.responder).toBe(false);
     });
   });
 

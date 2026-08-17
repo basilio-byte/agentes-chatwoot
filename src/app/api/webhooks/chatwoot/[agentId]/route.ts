@@ -4,7 +4,11 @@ import { ConversationStatus } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
-import { obterSegredosDoBot } from "@/server/integrations/chatwoot/credenciais";
+import {
+  clienteDoAgente,
+  obterSegredosDoBot,
+} from "@/server/integrations/chatwoot/credenciais";
+import { ehHumano } from "@/server/integrations/chatwoot/humanos";
 import { decidirSeResponde } from "@/server/integrations/chatwoot/eventos";
 import { leituraDeMidiaLigada } from "@/server/integrations/openai/credenciais";
 import { agendarAtendimento } from "@/server/queue/atendimento";
@@ -111,7 +115,27 @@ export async function POST(
 
   // Decisão barata aqui para não encher a fila de ruído (typing, eco, nota
   // privada). O worker ainda reconfere o estado no banco depois do debounce.
-  const decisao = decidirSeResponde(payload);
+  let decisao = decidirSeResponde(payload);
+  /** O responsável de agora é o nosso próprio bot. */
+  let donoEhOBot = false;
+
+  // Recusou por causa do dono? Pode ser o NOSSO próprio Agent Bot: o Chatwoot o
+  // atribui sozinho em algumas caixas, e a regra global lia isso como "um
+  // humano assumiu". Descartar aqui era o que fechava o ciclo — sem job, o
+  // worker nunca via a conversa, nunca desatribuía, e ela ficava muda para
+  // sempre. A consulta só acontece quando há dono, e a lista fica em cache.
+  if (!decisao.responder && decisao.donoId != null) {
+    const humano = await donoEhPessoa(agentId, decisao.donoId);
+    if (humano === false) {
+      logger.info(
+        { agentId, dono: decisao.donoId },
+        "conversa atribuída ao próprio bot — seguindo o atendimento",
+      );
+      donoEhOBot = true;
+      decisao = decidirSeResponde(payload, { donoEhHumano: false });
+    }
+  }
+
   if (!decisao.responder) {
     // Registra o status que veio no evento de conversa: sem isso, descobrir por
     // que uma resolução não foi detectada vira adivinhação sobre o payload.
@@ -206,10 +230,20 @@ export async function POST(
   //
   // Só sai de CLOSED. HUMAN continua HUMAN: quem assumiu não perde a conversa
   // porque o cliente escreveu de novo.
+  //
+  // A exceção é o dono ser o PRÓPRIO BOT. Aí o `HUMAN` no nosso banco não
+  // registra pessoa nenhuma: foi esta rota (ou a de conta) que o gravou lendo a
+  // atribuição do bot como "assumida por humano". Sem tirar dessas conversas o
+  // `HUMAN`, elas continuariam mudas mesmo com o resto corrigido — o worker
+  // recusa tudo que não é BOT, e nada mais mudaria aquele estado.
+  const voltamParaOBot: ConversationStatus[] = donoEhOBot
+    ? [ConversationStatus.CLOSED, ConversationStatus.HUMAN]
+    : [ConversationStatus.CLOSED];
+
   await db.conversation.updateMany({
     where: {
       chatwootConversationId: decisao.conversationId,
-      status: ConversationStatus.CLOSED,
+      status: { in: voltamParaOBot },
     },
     data: { status: ConversationStatus.BOT },
   });
@@ -259,6 +293,27 @@ export async function GET(
       ? "Endpoint pronto. O Chatwoot deve enviar POST assinado para esta URL."
       : "Cadastre o token e o secret do bot no painel, na tela do agente.",
   });
+}
+
+/**
+ * O responsável desta conversa é gente?
+ *
+ * `null` quando não deu para conferir — e aí a recusa original vale, porque a
+ * suposição segura é que existe uma pessoa do outro lado. Melhor esforço: falha
+ * aqui não pode derrubar a entrega do webhook.
+ */
+async function donoEhPessoa(
+  agentId: string,
+  donoId: number,
+): Promise<boolean | null> {
+  try {
+    const cliente = await clienteDoAgente(agentId);
+    if (!cliente) return null;
+    return await ehHumano(cliente, donoId);
+  } catch (erro) {
+    logger.warn({ agentId, erro }, "não consegui conferir quem é o dono da conversa");
+    return null;
+  }
 }
 
 /** Marca o desfecho de uma entrega já registrada. Melhor esforço. */

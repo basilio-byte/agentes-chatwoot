@@ -114,7 +114,18 @@ export type Decisao =
       soAnexo: boolean;
       contato: { nome?: string; identificador?: string };
     }
-  | { responder: false; motivo: string };
+  | {
+      responder: false;
+      motivo: string;
+      /**
+       * Id do responsável, quando foi ele o motivo da recusa.
+       *
+       * A rota usa isto para reconferir: o Chatwoot atribui o próprio Agent Bot
+       * em algumas caixas, e recusar aqui deixava a mensagem morrer antes de
+       * virar job — nada chegava ao worker, que é quem sabe desatribuir.
+       */
+      donoId?: number;
+    };
 
 /**
  * Decide se este evento merece uma resposta do agente.
@@ -124,7 +135,14 @@ export type Decisao =
  *  - nota privada, que é conversa interna da equipe;
  *  - conversa já assumida por um humano.
  */
-export function decidirSeResponde(bruto: unknown): Decisao {
+export function decidirSeResponde(
+  bruto: unknown,
+  /**
+   * O que já se sabe sobre o responsável. A rota reconfere e chama de novo
+   * quando descobre que o dono é o nosso próprio bot.
+   */
+  contexto: { donoEhHumano?: boolean } = {},
+): Decisao {
   const parsed = eventoChatwootSchema.safeParse(bruto);
   if (!parsed.success) {
     return { responder: false, motivo: "payload em formato inesperado" };
@@ -159,9 +177,11 @@ export function decidirSeResponde(bruto: unknown): Decisao {
   }
 
   // Regras globais — mesmas usadas no worker e na checagem ao vivo.
+  const donoId = conversa.assignee_id ?? conversa.meta?.assignee?.id ?? null;
   const veredito = podeAgir({
     status: conversa.status,
-    assigneeId: conversa.assignee_id ?? conversa.meta?.assignee?.id ?? null,
+    assigneeId: donoId,
+    donoEhHumano: contexto.donoEhHumano,
   });
 
   // "Resolvida" NÃO cala uma mensagem nova do cliente: ela é justamente o sinal
@@ -172,7 +192,13 @@ export function decidirSeResponde(bruto: unknown): Decisao {
   //
   // As outras recusas continuam valendo, inclusive dono humano.
   if (!veredito.pode && !veredito.resolvida) {
-    return { responder: false, motivo: veredito.motivo };
+    // Carrega o dono quando foi ele quem barrou: a rota precisa dele para
+    // descobrir se é o nosso próprio bot antes de descartar a mensagem.
+    return {
+      responder: false,
+      motivo: veredito.motivo,
+      ...(donoId != null ? { donoId } : {}),
+    };
   }
 
   const texto = (evento.content ?? "").trim();

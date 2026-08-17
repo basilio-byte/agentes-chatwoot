@@ -13,17 +13,46 @@ export const STATUS_PERMITIDOS = ["open", "pending"] as const;
 
 export type EstadoDaConversa = {
   status?: string | null;
-  /** Id do agente humano responsável, se houver. */
+  /** Id do responsável pela conversa, se houver. */
   assigneeId?: number | null;
+  /**
+   * O responsável é uma **pessoa**?
+   *
+   * `undefined` = não se sabe, e aí vale a suposição segura: trate como pessoa e
+   * cale. Falar por cima de um atendente de verdade é pior que ficar quieto, e a
+   * incerteza sempre pende para o silêncio.
+   *
+   * `false` = o responsável não está na lista de agentes da conta. Na prática é
+   * o **nosso próprio Agent Bot**, que o Chatwoot atribui sozinho em algumas
+   * caixas. Sem esta distinção, o bot lia a si mesmo como "humano assumiu" e
+   * calava para sempre — e a conversa resolvida nem reabria, porque reabrir
+   * exige não ter dono. Silêncio permanente, sem erro nenhum.
+   */
+  donoEhHumano?: boolean;
 };
 
+/**
+ * `donoNaoHumano` viaja nos dois lados do veredito de propósito: quem recebe
+ * "não pode" por estar resolvida ainda precisa saber que o dono é o bot, para
+ * poder reabrir e se desatribuir.
+ */
 export type Veredito =
-  | { pode: true }
-  | { pode: false; motivo: string; resolvida?: boolean };
+  | { pode: true; donoNaoHumano?: boolean }
+  | { pode: false; motivo: string; resolvida?: boolean; donoNaoHumano?: boolean };
+
+/** O responsável existe e comprovadamente não é gente. */
+export function donoNaoEhHumano(estado: EstadoDaConversa): boolean {
+  return estado.assigneeId != null && estado.donoEhHumano === false;
+}
 
 export function podeAgir(estado: EstadoDaConversa): Veredito {
+  const donoNaoHumano = donoNaoEhHumano(estado);
+
   // Regra 1: humano assumiu, o bot cala. Vale mesmo em conversa aberta.
-  if (estado.assigneeId != null) {
+  //
+  // Dono que NÃO é gente não conta: é o próprio bot, e um bot não "assume"
+  // conversa de ninguém — muito menos da gente.
+  if (estado.assigneeId != null && !donoNaoHumano) {
     return { pode: false, motivo: "conversa atribuída a um humano" };
   }
 
@@ -31,14 +60,14 @@ export function podeAgir(estado: EstadoDaConversa): Veredito {
 
   // Regra 2: conversa resolvida não recebe interação nenhuma.
   if (status === "resolved") {
-    return { pode: false, motivo: "conversa resolvida", resolvida: true };
+    return { pode: false, motivo: "conversa resolvida", resolvida: true, donoNaoHumano };
   }
 
   if (status && !STATUS_PERMITIDOS.includes(status as "open" | "pending")) {
-    return { pode: false, motivo: `conversa em status ${status}` };
+    return { pode: false, motivo: `conversa em status ${status}`, donoNaoHumano };
   }
 
-  return { pode: true };
+  return { pode: true, donoNaoHumano };
 }
 
 export function ehResolvida(status?: string | null) {

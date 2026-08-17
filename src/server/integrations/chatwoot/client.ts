@@ -27,6 +27,11 @@ export class ChatwootClient {
     return `${this.config.baseUrl}/api/v1/accounts/${this.config.accountId}${caminho}`;
   }
 
+  /** Conta em que este cliente age. Chave do cache de quem é gente. */
+  get contaId(): number {
+    return this.config.accountId;
+  }
+
   private async requisitar<T>(
     caminho: string,
     init: RequestInit = {},
@@ -249,6 +254,25 @@ export class ChatwootClient {
         ...(destino.assigneeId ? { assignee_id: destino.assigneeId } : {}),
         ...(destino.teamId ? { team_id: destino.teamId } : {}),
       }),
+    });
+  }
+
+  /**
+   * Tira o responsável da conversa, devolvendo-a para "Não atribuídas".
+   *
+   * Serve para um caso só: o Chatwoot atribuiu o **próprio Agent Bot**, e uma
+   * conversa com dono que não é gente some do painel — o bot não aparece no
+   * filtro de "Agente atribuído", então não há como listá-la.
+   *
+   * ⚠ `assignee_id: 0` é o que desatribui nesta API: o controller procura o
+   * usuário por id, não acha nenhum com 0, e grava `nil`. Não dá para usar
+   * `atribuir()` para isso — lá o `0` cai no `if` de truthiness e o campo nem
+   * seria enviado, o que faria a chamada não mexer em nada.
+   */
+  async desatribuir(conversationId: number) {
+    return this.requisitar(`/conversations/${conversationId}/assignments`, {
+      method: "POST",
+      body: JSON.stringify({ assignee_id: 0 }),
     });
   }
 

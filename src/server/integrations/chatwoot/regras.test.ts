@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ehResolvida, podeAgir, precisaAbrir } from "./regras";
+import { donoNaoEhHumano, ehResolvida, podeAgir, precisaAbrir } from "./regras";
 
 describe("regra 1 — não interferir em conversa de humano", () => {
   it("cala quando existe responsável humano, mesmo com a conversa aberta", () => {
@@ -16,6 +16,65 @@ describe("regra 1 — não interferir em conversa de humano", () => {
   it("age quando o responsável foi removido", () => {
     expect(podeAgir({ status: "open", assigneeId: null }).pode).toBe(true);
     expect(podeAgir({ status: "pending" }).pode).toBe(true);
+  });
+});
+
+/**
+ * O caso de 17/08/2026: o Chatwoot atribui o PRÓPRIO Agent Bot à conversa em
+ * algumas caixas. A regra lia isso como "um humano assumiu" e o bot calava para
+ * sempre — a conversa resolvida nem reabria, porque reabrir exige não ter dono.
+ * Silêncio permanente, sem erro nenhum, e invisível: o bot também não aparece
+ * no filtro de "Agente atribuído" do Chatwoot.
+ */
+describe("regra 1b — dono que não é gente não cala o bot", () => {
+  it("segue atendendo quando o dono é o próprio bot", () => {
+    const r = podeAgir({ status: "open", assigneeId: 9, donoEhHumano: false });
+
+    expect(r.pode).toBe(true);
+    expect(r.donoNaoHumano).toBe(true);
+  });
+
+  it("na dúvida, cala — falar por cima de um atendente é pior", () => {
+    // `donoEhHumano` ausente é o caso de a lista de agentes não ter carregado.
+    // A incerteza sempre pende para o silêncio.
+    expect(podeAgir({ status: "open", assigneeId: 9 }).pode).toBe(false);
+    expect(
+      podeAgir({ status: "open", assigneeId: 9, donoEhHumano: true }).pode,
+    ).toBe(false);
+  });
+
+  it("resolvida continua resolvida, mas avisa que o dono é o bot", () => {
+    // Quem reabre precisa dos dois sinais: que está resolvida e que o dono não
+    // é gente — senão a reabertura continuaria travada pelo responsável.
+    const r = podeAgir({
+      status: "resolved",
+      assigneeId: 9,
+      donoEhHumano: false,
+    });
+
+    expect(r.pode).toBe(false);
+    if (r.pode) return;
+    expect(r.resolvida).toBe(true);
+    expect(r.donoNaoHumano).toBe(true);
+  });
+
+  it("sem dono nenhum, não há dono não-humano", () => {
+    expect(podeAgir({ status: "open" }).donoNaoHumano).toBe(false);
+    // Nem quando alguém passa `donoEhHumano: false` sem dono — não há a quem
+    // se referir, e concluir "é o bot" a partir do nada seria invenção.
+    expect(
+      podeAgir({ status: "open", assigneeId: null, donoEhHumano: false })
+        .donoNaoHumano,
+    ).toBe(false);
+  });
+});
+
+describe("donoNaoEhHumano", () => {
+  it("exige dono E prova de que não é gente", () => {
+    expect(donoNaoEhHumano({ assigneeId: 9, donoEhHumano: false })).toBe(true);
+    expect(donoNaoEhHumano({ assigneeId: 9, donoEhHumano: true })).toBe(false);
+    expect(donoNaoEhHumano({ assigneeId: 9 })).toBe(false);
+    expect(donoNaoEhHumano({ assigneeId: null, donoEhHumano: false })).toBe(false);
   });
 });
 

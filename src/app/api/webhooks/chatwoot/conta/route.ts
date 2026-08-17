@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { verificarAssinatura } from "@/server/integrations/chatwoot/assinatura";
-import { obterSecretDaConta } from "@/server/integrations/chatwoot/credenciais";
+import {
+  clienteDoAgente,
+  obterSecretDaConta,
+} from "@/server/integrations/chatwoot/credenciais";
 import { podeAgir } from "@/server/integrations/chatwoot/regras";
+import { donoEhHumano } from "@/server/integrations/chatwoot/humanos";
 import { eventoChatwootSchema } from "@/server/integrations/chatwoot/eventos";
 import { entregarAoHumano, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 import { ConversationStatus } from "@/generated/prisma/enums";
@@ -69,7 +73,7 @@ export async function POST(req: Request) {
 
   const conhecida = await db.conversation.findUnique({
     where: { chatwootConversationId: conversationId },
-    select: { id: true },
+    select: { id: true, portaAgentId: true },
   });
   if (!conhecida) {
     // Conversa que nunca passou por um agente nosso — nada a sincronizar.
@@ -79,9 +83,16 @@ export async function POST(req: Request) {
   const { resolvida } = await sincronizarResolucao(evento);
   if (resolvida) return NextResponse.json({ ok: true, resolvida: true });
 
+  const donoId = conversa?.assignee_id ?? conversa?.meta?.assignee?.id ?? null;
+
+  // Sem esta conferência, o Chatwoot atribuindo o próprio bot fazia esta rota
+  // gravar `HUMAN` no nosso banco — e `HUMAN` é grudento: o worker recusa a
+  // conversa, o vigia não olha para ela, e a mensagem nova do cliente só a tira
+  // de `CLOSED`, nunca de `HUMAN`. A conversa morria aqui, não no Chatwoot.
   const veredito = podeAgir({
     status: conversa?.status,
-    assigneeId: conversa?.assignee_id ?? conversa?.meta?.assignee?.id ?? null,
+    assigneeId: donoId,
+    donoEhHumano: await donoEhPessoa(conhecida.portaAgentId, donoId),
   });
 
   if (veredito.pode) {
@@ -99,6 +110,29 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({ ok: true, podeResponder: veredito.pode });
+}
+
+/**
+ * O responsável da conversa é gente?
+ *
+ * `undefined` quando não há dono ou não deu para conferir — é o valor que faz a
+ * regra global manter o comportamento conservador (trata como pessoa e cala).
+ * Melhor esforço: falha aqui não pode derrubar a entrega do webhook.
+ */
+async function donoEhPessoa(
+  portaAgentId: string | null,
+  donoId: number | null,
+): Promise<boolean | undefined> {
+  if (donoId == null || !portaAgentId) return undefined;
+
+  try {
+    const cliente = await clienteDoAgente(portaAgentId);
+    if (!cliente) return undefined;
+    return await donoEhHumano(cliente, donoId);
+  } catch (erro) {
+    logger.warn({ portaAgentId, erro }, "não consegui conferir o dono da conversa");
+    return undefined;
+  }
 }
 
 /** Conferência de setup: confirma a URL e se o secret já foi cadastrado. */

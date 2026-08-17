@@ -32,7 +32,13 @@ import {
   enriquecerComMidia,
   marcarAnexosSemLeitura,
 } from "@/server/integrations/openai/enriquecer";
-import { ehResolvida, podeAgir, precisaAbrir } from "@/server/integrations/chatwoot/regras";
+import {
+  donoNaoEhHumano,
+  ehResolvida,
+  podeAgir,
+  precisaAbrir,
+} from "@/server/integrations/chatwoot/regras";
+import { donoEhHumano } from "@/server/integrations/chatwoot/humanos";
 import { entregarAoHumano, marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import {
   mensagemDeBastao,
@@ -140,8 +146,13 @@ async function avisarFalhaDefinitiva(
     const cliente = await clienteDoAgente(portaId);
     if (!cliente) return;
 
-    const aoVivo = await cliente.obterConversa(chatwootConversationId);
-    if (aoVivo.assigneeId != null) return; // humano já assumiu
+    const aoVivo = await comDonoIdentificado(
+      cliente,
+      await cliente.obterConversa(chatwootConversationId),
+    );
+    // Só uma PESSOA cala este aviso. O próprio bot como responsável não conta —
+    // era assim que o cliente ficava sem nem o pedido de desculpas.
+    if (aoVivo.assigneeId != null && !donoNaoEhHumano(aoVivo)) return;
 
     await cliente.enviarMensagem(
       chatwootConversationId,
@@ -198,10 +209,23 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
   const aoVivo = await reabrirSeResolvida(
     cliente,
     chatwootConversationId,
-    await cliente.obterConversa(chatwootConversationId),
+    // O dono precisa ser identificado ANTES de qualquer decisão: o Chatwoot
+    // atribui o próprio bot em algumas caixas, e sem esta conferência ele lia a
+    // si mesmo como "humano assumiu" e calava a conversa para sempre.
+    await comDonoIdentificado(
+      cliente,
+      await cliente.obterConversa(chatwootConversationId),
+    ),
     log,
   );
   const veredito = podeAgir(aoVivo);
+
+  // Achou a si mesmo como responsável: solta a conversa. Sem isso ela some do
+  // painel — o bot não aparece no filtro de "Agente atribuído", então não há
+  // como listá-la nem descobrir que existe.
+  if (veredito.donoNaoHumano) {
+    await soltarConversa(cliente, chatwootConversationId, log);
+  }
 
   if (!veredito.pode) {
     log.info({ motivo: veredito.motivo }, "regra global impede resposta");
@@ -319,7 +343,10 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
         // Segunda checagem, agora depois da chamada ao modelo: o humano pode ter
         // assumido justamente enquanto o agente pensava. Uma requisição a mais é
         // barata perto de o bot atropelar um atendimento.
-        const antesDeEnviar = await cliente.obterConversa(chatwootConversationId);
+        const antesDeEnviar = await comDonoIdentificado(
+          cliente,
+          await cliente.obterConversa(chatwootConversationId),
+        );
         const aindaPode = podeAgir(antesDeEnviar);
         if (!aindaPode.pode) {
           log.info(
@@ -494,6 +521,49 @@ async function lerMidiaDaConversa(args: {
   }
 }
 
+/** Estado ao vivo da conversa, já com a identidade do dono resolvida. */
+type EstadoAoVivo = {
+  status: string | null;
+  assigneeId: number | null;
+  inboxId: number | null;
+  labels: string[];
+  donoEhHumano?: boolean;
+};
+
+/**
+ * Descobre se o responsável é uma pessoa, antes de qualquer decisão.
+ *
+ * Sem dono, nada a fazer — e é o caso da esmagadora maioria das conversas que o
+ * bot atende, então isto quase nunca custa uma requisição.
+ */
+async function comDonoIdentificado(
+  cliente: ChatwootClient,
+  aoVivo: Omit<EstadoAoVivo, "donoEhHumano">,
+): Promise<EstadoAoVivo> {
+  if (aoVivo.assigneeId == null) return aoVivo;
+  return { ...aoVivo, donoEhHumano: await donoEhHumano(cliente, aoVivo.assigneeId) };
+}
+
+/**
+ * Tira o próprio bot de responsável pela conversa.
+ *
+ * Melhor esforço: falhar aqui não pode impedir o atendimento. O que resolve o
+ * silêncio é a regra ter parado de tratar o bot como humano; desatribuir é o
+ * que devolve a conversa para "Não atribuídas" e a torna visível de novo.
+ */
+async function soltarConversa(
+  cliente: ChatwootClient,
+  chatwootConversationId: number,
+  log: Registro,
+) {
+  try {
+    await cliente.desatribuir(chatwootConversationId);
+    log.info({}, "conversa estava atribuída ao próprio bot — responsável liberado");
+  } catch (erro) {
+    log.warn({ erro }, "não consegui tirar o bot de responsável pela conversa");
+  }
+}
+
 /**
  * Reabre no Chatwoot a conversa resolvida em que o cliente acabou de escrever.
  *
@@ -514,10 +584,14 @@ async function lerMidiaDaConversa(args: {
 async function reabrirSeResolvida(
   cliente: ChatwootClient,
   chatwootConversationId: number,
-  aoVivo: { status: string | null; assigneeId: number | null; inboxId: number | null; labels: string[] },
+  aoVivo: EstadoAoVivo,
   log: Registro,
 ) {
-  if (!ehResolvida(aoVivo.status) || aoVivo.assigneeId != null) return aoVivo;
+  // Dono que não é gente não segura a reabertura: era exatamente esse o nó —
+  // conversa resolvida e atribuída ao próprio bot nunca reabria, porque reabrir
+  // exigia não ter dono, e nada mais mudaria aquele status.
+  const temDonoDeVerdade = aoVivo.assigneeId != null && !donoNaoEhHumano(aoVivo);
+  if (!ehResolvida(aoVivo.status) || temDonoDeVerdade) return aoVivo;
 
   try {
     await cliente.alternarStatus(chatwootConversationId, "open");
@@ -652,8 +726,12 @@ async function garantirRespostaAoCliente(args: {
 
   try {
     // Se um humano assumiu no meio, o silêncio do bot é o comportamento certo.
-    const aoVivo = await cliente.obterConversa(chatwootConversationId);
-    if (aoVivo.assigneeId != null) return;
+    // O próprio bot como responsável não é um humano assumindo.
+    const aoVivo = await comDonoIdentificado(
+      cliente,
+      await cliente.obterConversa(chatwootConversationId),
+    );
+    if (aoVivo.assigneeId != null && !donoNaoEhHumano(aoVivo)) return;
 
     // Idem se resolveram a conversa enquanto o agente pensava. A regra de ouro
     // — conversa resolvida não recebe interação — vale também para a rede de
