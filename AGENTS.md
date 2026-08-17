@@ -334,26 +334,33 @@ três pontos, e o terceiro é o que as torna absolutas:
 
 As regras:
 
-- **Conversa atribuída a humano: o agente cala.** Vale mesmo com a conversa
-  aberta. ⚠ **"Humano" é quem está em `GET /agents`** — e essa distinção não é
-  detalhe. O Chatwoot atribui o **próprio Agent Bot** à conversa em algumas
-  caixas, e ler isso como "um humano assumiu" calava o bot para sempre: a
-  conversa resolvida nem reabria, porque reabrir exige não ter dono, e nada
-  mais mudaria aquele estado. Pior, ela sumia do painel — o bot não aparece no
-  filtro de "Agente atribuído", então não havia como listá-la. Ver
-  `humanos.ts`; ao encontrar a si mesmo como responsável, o worker
-  **desatribui** (`assignee_id: 0`) e segue atendendo.
-- **Na dúvida sobre quem é o dono, cale.** `donoEhHumano` ausente (a lista de
-  agentes não carregou) mantém o comportamento antigo. Falar por cima de um
-  atendente de verdade é pior que ficar quieto — a incerteza sempre pende para
-  o silêncio. E um "não é gente" **nunca** sai do cache sozinho: a lista é
-  relida ao vivo antes de concluir, senão um atendente contratado hoje seria
-  atropelado por até cinco minutos.
+- **Conversa atribuída a humano: o agente cala.** Vale mesmo com a conversa aberta.
+- ⚠ **O Chatwoot atribui o PRÓPRIO Agent Bot à conversa, e isso é normal.** Não
+  é automação nem auto-assignment mal configurado: numa caixa com robô, a
+  conversa nasce `pending` com o bot como responsável. Ler isso como "um humano
+  assumiu" calava o bot para sempre — a conversa resolvida nem reabria, porque
+  reabrir exige não ter dono, e nada mais mudaria aquele estado. Pior: `pending`
+  não aparece na visualização padrão, então ela ficava **invisível** para a
+  equipe inteira. Ninguém descobria.
+- **Quem separa pessoa de robô é `meta.assignee_type`** (`User` · `AgentBot`),
+  em `humanidadeDoDono`. **Não dá para comparar o id**: as tabelas de usuário e
+  de AgentBot do Chatwoot têm sequências independentes e **colidem** — na conta
+  da Seahub o bot "Seahub Coworking" e a agente Maria Eduarda são ambos o id 4.
+  Uma primeira versão desta correção comparava contra `GET /agents` e não
+  funcionava por causa exatamente disso.
+- ⚠ **`assignee_id` não existe na resposta desta API.** `GET /conversations/{id}`
+  devolve o responsável só em `meta.assignee`. O `??` para `assignee_id` continua
+  no código por segurança, mas quem manda é o meta.
+- **Na dúvida sobre o tipo do dono, cale.** `assignee_type` ausente devolve
+  `undefined` e mantém o comportamento antigo. Falar por cima de um atendente de
+  verdade é pior que ficar quieto — a incerteza sempre pende para o silêncio.
+- **Ao encontrar a si mesmo como responsável, o worker desatribui**
+  (`assignee_id: 0`) e **abre a conversa ao assumir**, não só depois de
+  responder: se o turno falhar, ela precisa estar visível justamente aí.
 - **Nós nunca atribuímos o bot.** Os quatro caminhos que atribuem
   (`atribuir_para_atendente`, `atribuir_por_rodizio`, `transferir_para_humano`
   e o vigia) resolvem o nome contra `GET /agents`, então só chegam a pessoas.
-  Quem atribui o bot é o Chatwoot — vale caçar a automação ou o
-  auto-assignment da caixa, mas o sistema já se defende sozinho.
+  Não procure a automação culpada: não existe.
 - **Conversa resolvida: nenhuma interação.** Vale para a rede de segurança
   também: se resolverem no meio do turno, o contorno **não** sai — reabriria a
   discussão numa conversa que alguém acabou de encerrar. O que **não** é

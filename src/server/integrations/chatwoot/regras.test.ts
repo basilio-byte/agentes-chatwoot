@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { donoNaoEhHumano, ehResolvida, podeAgir, precisaAbrir } from "./regras";
+import {
+  donoNaoEhHumano,
+  ehResolvida,
+  humanidadeDoDono,
+  podeAgir,
+  precisaAbrir,
+} from "./regras";
 
 describe("regra 1 — não interferir em conversa de humano", () => {
   it("cala quando existe responsável humano, mesmo com a conversa aberta", () => {
@@ -155,5 +161,59 @@ describe("o bot nunca deixa a conversa pendente", () => {
     expect(podeAgir({ status: "pending" }).pode).toBe(true);
     // ...e tem de deixá-la aberta ao terminar.
     expect(precisaAbrir("pending")).toBe(true);
+  });
+});
+
+/**
+ * O campo que separa uma pessoa do nosso Agent Bot.
+ *
+ * Descoberto em 17/08/2026 lendo a API em produção. A tentativa anterior —
+ * comparar o id do responsável com a lista de `GET /agents` — **não funcionava**:
+ * as tabelas de usuário e de AgentBot do Chatwoot têm sequências de id
+ * independentes e colidem. Naquela conta, o bot "Seahub Coworking" e a agente
+ * Maria Eduarda são ambos o id 4.
+ */
+describe("humanidadeDoDono", () => {
+  it("User é gente", () => {
+    expect(humanidadeDoDono("User")).toBe(true);
+    expect(humanidadeDoDono("user")).toBe(true);
+    expect(humanidadeDoDono(" User ")).toBe(true);
+  });
+
+  it("AgentBot não é gente", () => {
+    expect(humanidadeDoDono("AgentBot")).toBe(false);
+  });
+
+  it("qualquer tipo desconhecido também não é gente", () => {
+    // Só `User` é pessoa. Um tipo novo que apareça não deve virar "humano" por
+    // omissão — senão o bot voltaria a calar sozinho.
+    expect(humanidadeDoDono("Team")).toBe(false);
+    expect(humanidadeDoDono("Whatever")).toBe(false);
+  });
+
+  it("ausente é `undefined`, e não `false`", () => {
+    // Instância que não mande o campo volta ao comportamento conservador. Se
+    // isto devolvesse `false`, o bot passaria a falar por cima de atendentes.
+    expect(humanidadeDoDono(undefined)).toBeUndefined();
+    expect(humanidadeDoDono(null)).toBeUndefined();
+    expect(humanidadeDoDono("")).toBeUndefined();
+    expect(humanidadeDoDono("   ")).toBeUndefined();
+  });
+
+  it("encaixa direto no veredito", () => {
+    const comoBot = podeAgir({
+      status: "pending",
+      assigneeId: 4,
+      donoEhHumano: humanidadeDoDono("AgentBot"),
+    });
+    expect(comoBot.pode).toBe(true);
+
+    // Mesmo id, tipo diferente: agora é a Maria Eduarda, e o bot cala.
+    const comoPessoa = podeAgir({
+      status: "pending",
+      assigneeId: 4,
+      donoEhHumano: humanidadeDoDono("User"),
+    });
+    expect(comoPessoa.pode).toBe(false);
   });
 });

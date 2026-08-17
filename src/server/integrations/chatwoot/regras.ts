@@ -45,6 +45,28 @@ export function donoNaoEhHumano(estado: EstadoDaConversa): boolean {
   return estado.assigneeId != null && estado.donoEhHumano === false;
 }
 
+/**
+ * Traduz o `meta.assignee_type` do Chatwoot para `donoEhHumano`.
+ *
+ * É a **única** forma correta de separar uma pessoa do nosso Agent Bot.
+ * Comparar o id do responsável com a lista de `GET /agents` não funciona: as
+ * duas tabelas do Chatwoot têm sequências de id independentes e colidem — nesta
+ * conta o AgentBot "Seahub Coworking" é o id 4, e a agente Maria Eduarda também
+ * é o id 4. A comparação por id dizia "é gente" e o bot seguia mudo.
+ *
+ * Ausente devolve `undefined`, e não `false`: instância que não mande o campo
+ * volta ao comportamento conservador de tratar todo dono como pessoa. Concluir
+ * "não é gente" a partir da ausência de informação faria o bot falar por cima
+ * de um atendente de verdade.
+ */
+export function humanidadeDoDono(
+  assigneeTipo: string | null | undefined,
+): boolean | undefined {
+  const tipo = assigneeTipo?.trim().toLowerCase();
+  if (!tipo) return undefined;
+  return tipo === "user";
+}
+
 export function podeAgir(estado: EstadoDaConversa): Veredito {
   const donoNaoHumano = donoNaoEhHumano(estado);
 

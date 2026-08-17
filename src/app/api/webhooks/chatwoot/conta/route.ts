@@ -6,8 +6,7 @@ import {
   clienteDoAgente,
   obterSecretDaConta,
 } from "@/server/integrations/chatwoot/credenciais";
-import { podeAgir } from "@/server/integrations/chatwoot/regras";
-import { donoEhHumano } from "@/server/integrations/chatwoot/humanos";
+import { humanidadeDoDono, podeAgir } from "@/server/integrations/chatwoot/regras";
 import { eventoChatwootSchema } from "@/server/integrations/chatwoot/eventos";
 import { entregarAoHumano, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 import { ConversationStatus } from "@/generated/prisma/enums";
@@ -92,7 +91,9 @@ export async function POST(req: Request) {
   const veredito = podeAgir({
     status: conversa?.status,
     assigneeId: donoId,
-    donoEhHumano: await donoEhPessoa(conhecida.portaAgentId, donoId),
+    donoEhHumano:
+      humanidadeDoDono(conversa?.meta?.assignee_type) ??
+      (await donoEhPessoa(conhecida.portaAgentId, conversationId, donoId)),
   });
 
   if (veredito.pode) {
@@ -121,6 +122,7 @@ export async function POST(req: Request) {
  */
 async function donoEhPessoa(
   portaAgentId: string | null,
+  conversaId: number,
   donoId: number | null,
 ): Promise<boolean | undefined> {
   if (donoId == null || !portaAgentId) return undefined;
@@ -128,7 +130,10 @@ async function donoEhPessoa(
   try {
     const cliente = await clienteDoAgente(portaAgentId);
     if (!cliente) return undefined;
-    return await donoEhHumano(cliente, donoId);
+
+    // O payload não trouxe o tipo: lê ao vivo, que é onde ele sempre está.
+    const { assigneeTipo } = await cliente.obterConversa(conversaId);
+    return humanidadeDoDono(assigneeTipo);
   } catch (erro) {
     logger.warn({ portaAgentId, erro }, "não consegui conferir o dono da conversa");
     return undefined;

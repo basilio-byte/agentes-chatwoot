@@ -8,7 +8,7 @@ import {
   clienteDoAgente,
   obterSegredosDoBot,
 } from "@/server/integrations/chatwoot/credenciais";
-import { ehHumano } from "@/server/integrations/chatwoot/humanos";
+import { humanidadeDoDono } from "@/server/integrations/chatwoot/regras";
 import { decidirSeResponde } from "@/server/integrations/chatwoot/eventos";
 import { leituraDeMidiaLigada } from "@/server/integrations/openai/credenciais";
 import { agendarAtendimento } from "@/server/queue/atendimento";
@@ -120,12 +120,18 @@ export async function POST(
   let donoEhOBot = false;
 
   // Recusou por causa do dono? Pode ser o NOSSO próprio Agent Bot: o Chatwoot o
-  // atribui sozinho em algumas caixas, e a regra global lia isso como "um
+  // atribui sozinho na caixa que tem robô, e a regra global lia isso como "um
   // humano assumiu". Descartar aqui era o que fechava o ciclo — sem job, o
   // worker nunca via a conversa, nunca desatribuía, e ela ficava muda para
-  // sempre. A consulta só acontece quando há dono, e a lista fica em cache.
+  // sempre.
+  //
+  // Só chega aqui quando o payload NÃO trouxe `meta.assignee_type` (com ele, a
+  // decisão já sai resolvida sem requisição nenhuma) e quando existe dono.
   if (!decisao.responder && decisao.donoId != null) {
-    const humano = await donoEhPessoa(agentId, decisao.donoId);
+    const humano = await donoEhPessoa(
+      agentId,
+      lerConversa(payload as Parameters<typeof lerConversa>[0]).conversationId,
+    );
     if (humano === false) {
       logger.info(
         { agentId, dono: decisao.donoId },
@@ -304,12 +310,18 @@ export async function GET(
  */
 async function donoEhPessoa(
   agentId: string,
-  donoId: number,
+  conversaId: number | undefined,
 ): Promise<boolean | null> {
+  if (!conversaId) return null;
+
   try {
     const cliente = await clienteDoAgente(agentId);
     if (!cliente) return null;
-    return await ehHumano(cliente, donoId);
+
+    // Lê a conversa ao vivo: é de lá que vem `meta.assignee_type`, e o payload
+    // do webhook nem sempre o traz.
+    const { assigneeTipo } = await cliente.obterConversa(conversaId);
+    return humanidadeDoDono(assigneeTipo) ?? null;
   } catch (erro) {
     logger.warn({ agentId, erro }, "não consegui conferir quem é o dono da conversa");
     return null;

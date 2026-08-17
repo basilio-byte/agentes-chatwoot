@@ -32,7 +32,12 @@ let conversa: Record<string, unknown>;
 let handoffsGravados: Record<string, unknown>[];
 /** Mensagens enviadas ao Chatwoot: {texto, privado}. */
 let enviadas: { texto: string; privado: boolean }[];
-let statusChatwoot: { status: string; assigneeId: number | null };
+let statusChatwoot: {
+  status: string;
+  assigneeId: number | null;
+  /** `User` ou `AgentBot` — é o que separa uma pessoa do nosso robô. */
+  assigneeTipo?: string | null;
+};
 /** Fila de respostas do "modelo", consumida a cada chamada de executarAgente. */
 let respostasDoModelo: Array<{
   resposta?: string;
@@ -54,15 +59,6 @@ let mensagensRecebidasPeloAgente: string[];
 let midiaLigada: boolean;
 let anexosLidos: string[];
 let transcricao: string;
-/**
- * Ids que NÃO são gente — na prática, o próprio Agent Bot.
- *
- * Invertido de propósito: quase todo responsável é uma pessoa, e um dublê que
- * exigisse cadastrar cada humano faria os testes mentirem sobre o caso comum.
- */
-let botsDaConta: Set<number>;
-/** A lista de agentes não carregou: ninguém sabe quem é gente. */
-let naoSeiQuemEhGente: boolean;
 /** Quantas vezes o worker soltou a conversa. */
 let desatribuicoes: number;
 
@@ -118,17 +114,6 @@ vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
       statusChatwoot = { ...statusChatwoot, assigneeId: null };
     },
   }),
-}));
-
-/**
- * Quem é gente na conta. `undefined` significa "não deu para saber" — e aí a
- * regra global mantém o comportamento conservador de calar.
- */
-vi.mock("@/server/integrations/chatwoot/humanos", () => ({
-  donoEhHumano: async (_c: unknown, id: number | null) => {
-    if (id == null || naoSeiQuemEhGente) return undefined;
-    return !botsDaConta.has(id);
-  },
 }));
 
 /**
@@ -238,8 +223,6 @@ beforeEach(() => {
   midiaLigada = false;
   anexosLidos = [];
   transcricao = "oi, queria uma sala para amanhã de manhã";
-  botsDaConta = new Set([777]);
-  naoSeiQuemEhGente = false;
   desatribuicoes = 0;
 });
 
@@ -664,11 +647,15 @@ describe("cliente que manda anexo", () => {
  * sumia do painel: o bot não aparece no filtro de "Agente atribuído".
  */
 describe("conversa atribuída ao próprio bot", () => {
-  /** Um id que não está na lista de agentes da conta. */
-  const BOT = 777;
+  /**
+   * O id NÃO distingue: as tabelas de usuário e de AgentBot do Chatwoot têm
+   * sequências independentes e colidem. Em produção, o bot "Seahub Coworking" e
+   * a agente Maria Eduarda são ambos o id 4. Quem separa é o `assignee_type`.
+   */
+  const COMO_BOT = { status: "open", assigneeId: 4, assigneeTipo: "AgentBot" };
 
   it("responde normalmente, em vez de calar", async () => {
-    statusChatwoot = { status: "open", assigneeId: BOT };
+    statusChatwoot = { ...COMO_BOT };
     respostasDoModelo = [{ resposta: "Claro, posso ajudar!" }];
 
     await processarAtendimento(job());
@@ -677,7 +664,7 @@ describe("conversa atribuída ao próprio bot", () => {
   });
 
   it("solta a conversa, para ela voltar a aparecer no painel", async () => {
-    statusChatwoot = { status: "open", assigneeId: BOT };
+    statusChatwoot = { ...COMO_BOT };
     respostasDoModelo = [{ resposta: "oi" }];
 
     await processarAtendimento(job());
@@ -689,7 +676,7 @@ describe("conversa atribuída ao próprio bot", () => {
   it("resolvida E atribuída ao bot volta a viver — o nó completo", async () => {
     // Era daqui que não saía: `podeAgir` calava pelo dono, e `reabrirSeResolvida`
     // recusava reabrir por causa do mesmo dono. Nada mais mudaria esse estado.
-    statusChatwoot = { status: "resolved", assigneeId: BOT };
+    statusChatwoot = { ...COMO_BOT, status: "resolved" };
     respostasDoModelo = [{ resposta: "Oi de novo!" }];
 
     await processarAtendimento(job());
@@ -698,23 +685,47 @@ describe("conversa atribuída ao próprio bot", () => {
     expect(publicas()).toEqual(["Oi de novo!"]);
   });
 
+  /**
+   * `pending` não aparece na visualização padrão do Chatwoot. Uma conversa
+   * presa com o bot E pendente ficava invisível para a equipe inteira — foi
+   * assim que ninguém percebeu o problema por semanas.
+   */
+  it("tira de pendente ao assumir, não só depois de responder", async () => {
+    statusChatwoot = { ...COMO_BOT, status: "pending" };
+    respostasDoModelo = [{ resposta: "oi" }];
+
+    await processarAtendimento(job());
+
+    expect(statusChatwoot.status).toBe("open");
+  });
+
+  it("abre mesmo quando o turno não produz resposta", async () => {
+    // O caso que mais importa: se o agente falha, a conversa PRECISA estar
+    // visível — é justamente aí que alguém tem de assumir.
+    statusChatwoot = { ...COMO_BOT, status: "pending" };
+    respostasDoModelo = [{ resposta: "" }];
+
+    await processarAtendimento(job());
+
+    expect(statusChatwoot.status).toBe("open");
+  });
+
   it("não solta conversa que está com uma PESSOA", async () => {
     // A regra que não pode quebrar: humano assumiu, o bot cala e não encosta.
-    statusChatwoot = { status: "open", assigneeId: 100 };
+    // Repare no MESMO id do bot — só o tipo muda.
+    statusChatwoot = { status: "open", assigneeId: 4, assigneeTipo: "User" };
 
     await processarAtendimento(job());
 
     expect(desatribuicoes).toBe(0);
-    expect(statusChatwoot.assigneeId).toBe(100);
+    expect(statusChatwoot.assigneeId).toBe(4);
     expect(publicas()).toEqual([]);
     expect(agentesQueRodaram).toEqual([]);
   });
 
-  it("na dúvida sobre quem é o dono, cala", async () => {
-    // A lista de agentes não carregou. Falar por cima de um atendente de
-    // verdade é pior que ficar quieto, então a incerteza pende para o silêncio.
-    naoSeiQuemEhGente = true;
-    statusChatwoot = { status: "open", assigneeId: BOT };
+  it("sem o tipo informado, cala — a suposição segura é que é gente", async () => {
+    // Instância que não mande `assignee_type` volta ao comportamento antigo.
+    statusChatwoot = { status: "open", assigneeId: 4 };
 
     await processarAtendimento(job());
 

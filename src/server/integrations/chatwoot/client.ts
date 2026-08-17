@@ -170,13 +170,29 @@ export class ChatwootClient {
       status?: string;
       inbox_id?: number | null;
       labels?: string[] | null;
-      meta?: { assignee?: { id?: number } | null };
+      meta?: {
+        assignee?: { id?: number } | null;
+        /** `User` ou `AgentBot`. Ver `assigneeTipo` abaixo. */
+        assignee_type?: string | null;
+      };
       assignee_id?: number | null;
     }>(`/conversations/${conversationId}`, {}, true);
 
     return {
       status: bruta.status ?? null,
+      // ⚠ `assignee_id` **não existe** na resposta desta API (confirmado em
+      // produção, 17/08/2026): o responsável vem só em `meta.assignee`. O
+      // fallback fica por segurança, mas quem manda é o meta.
       assigneeId: bruta.assignee_id ?? bruta.meta?.assignee?.id ?? null,
+      /**
+       * Que TIPO de responsável é esse — `User` ou `AgentBot`.
+       *
+       * É o campo que separa uma pessoa do nosso próprio robô, e não dá para
+       * trocá-lo por uma comparação de id: as duas tabelas do Chatwoot têm
+       * sequências independentes e **colidem**. Nesta conta, o AgentBot é o id
+       * 4 e a agente Maria Eduarda também é o id 4.
+       */
+      assigneeTipo: bruta.meta?.assignee_type ?? null,
       inboxId: bruta.inbox_id ?? null,
       // Quem decide se outro bot é o dono da conversa. Vem vazio se a instância
       // não devolver o campo — nesse caso a regra de label simplesmente não casa.

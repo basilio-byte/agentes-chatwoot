@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { podeAgir } from "./regras";
+import { humanidadeDoDono, podeAgir } from "./regras";
 
 /**
  * Leitura do payload de webhook do Chatwoot.
@@ -51,6 +51,12 @@ export const eventoChatwootSchema = z
               .passthrough()
               .nullable()
               .optional(),
+            /**
+             * `User` ou `AgentBot`. É o que separa uma pessoa do nosso próprio
+             * robô — comparar o id não serve, porque as duas tabelas do
+             * Chatwoot têm sequências independentes e colidem.
+             */
+            assignee_type: z.string().nullish(),
           })
           .passthrough()
           .optional(),
@@ -181,7 +187,10 @@ export function decidirSeResponde(
   const veredito = podeAgir({
     status: conversa.status,
     assigneeId: donoId,
-    donoEhHumano: contexto.donoEhHumano,
+    // O tipo vindo no próprio payload resolve sem nenhuma requisição extra.
+    // Quem chama pode sobrescrever quando já apurou por outro caminho.
+    donoEhHumano:
+      contexto.donoEhHumano ?? humanidadeDoDono(conversa.meta?.assignee_type),
   });
 
   // "Resolvida" NÃO cala uma mensagem nova do cliente: ela é justamente o sinal

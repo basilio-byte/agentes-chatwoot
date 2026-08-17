@@ -35,10 +35,10 @@ import {
 import {
   donoNaoEhHumano,
   ehResolvida,
+  humanidadeDoDono,
   podeAgir,
   precisaAbrir,
 } from "@/server/integrations/chatwoot/regras";
-import { donoEhHumano } from "@/server/integrations/chatwoot/humanos";
 import { entregarAoHumano, marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import {
   mensagemDeBastao,
@@ -146,8 +146,7 @@ async function avisarFalhaDefinitiva(
     const cliente = await clienteDoAgente(portaId);
     if (!cliente) return;
 
-    const aoVivo = await comDonoIdentificado(
-      cliente,
+    const aoVivo = comDonoIdentificado(
       await cliente.obterConversa(chatwootConversationId),
     );
     // Só uma PESSOA cala este aviso. O próprio bot como responsável não conta —
@@ -212,10 +211,7 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
     // O dono precisa ser identificado ANTES de qualquer decisão: o Chatwoot
     // atribui o próprio bot em algumas caixas, e sem esta conferência ele lia a
     // si mesmo como "humano assumiu" e calava a conversa para sempre.
-    await comDonoIdentificado(
-      cliente,
-      await cliente.obterConversa(chatwootConversationId),
-    ),
+    comDonoIdentificado(await cliente.obterConversa(chatwootConversationId)),
     log,
   );
   const veredito = podeAgir(aoVivo);
@@ -240,6 +236,15 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
     }
     return;
   }
+
+  // A conversa é nossa a partir daqui — então ela precisa estar VISÍVEL a
+  // partir daqui, não só depois de uma resposta bem-sucedida.
+  //
+  // `pending` não aparece na visualização padrão do Chatwoot. Abrir só no fim
+  // do turno deixava justamente o caso ruim invisível: quando o agente não
+  // conseguia responder, a conversa ficava pendente e fora da fila de todo
+  // mundo. Ninguém descobria que ela existia.
+  await abrirSePendente(cliente, chatwootConversationId, aoVivo.status, log);
 
   const mensagens = await cliente.listarMensagens(chatwootConversationId);
 
@@ -343,8 +348,7 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
         // Segunda checagem, agora depois da chamada ao modelo: o humano pode ter
         // assumido justamente enquanto o agente pensava. Uma requisição a mais é
         // barata perto de o bot atropelar um atendimento.
-        const antesDeEnviar = await comDonoIdentificado(
-          cliente,
+        const antesDeEnviar = comDonoIdentificado(
           await cliente.obterConversa(chatwootConversationId),
         );
         const aindaPode = podeAgir(antesDeEnviar);
@@ -525,23 +529,24 @@ async function lerMidiaDaConversa(args: {
 type EstadoAoVivo = {
   status: string | null;
   assigneeId: number | null;
+  assigneeTipo?: string | null;
   inboxId: number | null;
   labels: string[];
   donoEhHumano?: boolean;
 };
 
 /**
- * Descobre se o responsável é uma pessoa, antes de qualquer decisão.
+ * Marca se o responsável é uma pessoa, a partir do tipo que o Chatwoot informa.
  *
- * Sem dono, nada a fazer — e é o caso da esmagadora maioria das conversas que o
- * bot atende, então isto quase nunca custa uma requisição.
+ * Puro e sem requisição nenhuma: o próprio `obterConversa` já traz
+ * `meta.assignee_type`. A versão anterior disto conferia o id contra
+ * `GET /agents` e **não funcionava** — as duas tabelas do Chatwoot têm
+ * sequências de id independentes, e nesta conta o AgentBot e uma agente
+ * humana são ambos o id 4.
  */
-async function comDonoIdentificado(
-  cliente: ChatwootClient,
-  aoVivo: Omit<EstadoAoVivo, "donoEhHumano">,
-): Promise<EstadoAoVivo> {
+function comDonoIdentificado(aoVivo: EstadoAoVivo): EstadoAoVivo {
   if (aoVivo.assigneeId == null) return aoVivo;
-  return { ...aoVivo, donoEhHumano: await donoEhHumano(cliente, aoVivo.assigneeId) };
+  return { ...aoVivo, donoEhHumano: humanidadeDoDono(aoVivo.assigneeTipo) };
 }
 
 /**
@@ -727,8 +732,7 @@ async function garantirRespostaAoCliente(args: {
   try {
     // Se um humano assumiu no meio, o silêncio do bot é o comportamento certo.
     // O próprio bot como responsável não é um humano assumindo.
-    const aoVivo = await comDonoIdentificado(
-      cliente,
+    const aoVivo = comDonoIdentificado(
       await cliente.obterConversa(chatwootConversationId),
     );
     if (aoVivo.assigneeId != null && !donoNaoEhHumano(aoVivo)) return;
