@@ -517,6 +517,43 @@ como sempre.
   descartada. Era por isso que a tool mandava o modelo escrever depois; agora o
   sistema garante.
 
+### Parar uma execução em andamento
+
+Botão em Execuções, no cartão de quem está `RUNNING`. Exige `ADMIN` — parar
+interrompe um atendimento com cliente do outro lado.
+
+- **O canal é o Redis, não o banco.** O painel roda em outro processo que não o
+  worker, então não há memória compartilhada para tocar. Coluna no Postgres
+  funcionaria e custaria uma consulta por iteração de tool, no caminho mais
+  quente do sistema. Mesmo padrão do batimento do worker.
+- **Quem para é o próprio turno.** O botão deixa um recado
+  (`seahub:run:cancelar:<runId>`, TTL 1h) e responde; o runner o encontra num
+  ponto em que sabe o que está a meio caminho. Ninguém mata processo de fora.
+- **A chamada ao modelo é abortada de verdade** (`comParadaVigiada`). Parar só
+  entre iterações não alcançaria um turno pendurado — que é justamente o que
+  alguém quer matar, e é onde o tempo é gasto.
+- **`AbortError` só vira interrupção se fomos NÓS que abortamos.** Timeout do
+  SDK e queda de rede chegam do mesmo jeito; confundi-los faria o worker
+  desistir de tentar de novo uma falha real.
+- ⚠ **O BullMQ reexecuta o job inteiro quando o handler lança.** Se a
+  interrupção subisse como erro comum, o agente voltaria a rodar segundos
+  depois e o cliente receberia justamente a resposta que alguém tentou impedir.
+  Os dois workers tratam `ehInterrupcao` **antes** de relançar.
+- **`CANCELED` é estado próprio, não `ERROR`.** A apuração conta erros para
+  dizer "quanto se gastou sem resultado"; parada deliberada nessa conta mandaria
+  o operador caçar um defeito que ele mesmo causou. O custo até o corte continua
+  gravado — a OpenRouter cobra pelo que rodou.
+- **A rede de segurança não dispara.** Mandar "tive uma instabilidade" seria o
+  sistema contradizendo quem acabou de decidir calar o agente — e a pessoa pode
+  estar parando porque ele falava errado. O cliente não fica órfão:
+  `aguardandoDesde` segue correndo e o vigia escala como escala qualquer turno
+  sem resposta. Fica uma **nota interna** nomeando quem parou, senão o agente
+  emudecer no meio do atendimento seria indistinguível de travamento.
+- **Execução órfã é encerrada na hora.** `RUNNING` com mais de 10 min, ou com o
+  worker morto, não tem ninguém para receber o recado — ficaria "rodando" para
+  sempre. Redis indeterminado **não** conta como worker morto: não se fecha o
+  que pode estar vivo.
+
 ### Apuração de consumo (`/consumo`)
 
 Quanto se gastou, com qual modelo, por qual agente, em que dia. O valor é o

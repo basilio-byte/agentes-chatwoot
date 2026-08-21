@@ -19,6 +19,12 @@ import type {
   SinalDeHandoff,
 } from "@/server/integrations/types";
 import { blocoDeRoster, montarRoster } from "./equipe";
+import {
+  comParadaVigiada,
+  conferirParada,
+  ehInterrupcao,
+  limparPedido,
+} from "./cancelamento";
 import { RunSource, RunStatus } from "@/generated/prisma/enums";
 
 export type MensagemHistorico = {
@@ -184,6 +190,9 @@ export async function executarAgente(
     const cliente = getOpenRouter();
 
     while (true) {
+      // Ponto de parada entre etapas: pega quem mandou parar durante uma tool.
+      await conferirParada(run.id);
+
       if (iteracoes >= agente.maxToolIterations) {
         atingiuLimite = true;
         logger.warn(
@@ -219,7 +228,12 @@ export async function executarAgente(
           : {}),
       };
 
-      const retorno = await cliente.chat.completions.create(parametros);
+      // Vigiada porque é aqui que o turno passa quase todo o tempo: parar só
+      // entre iterações nunca alcançaria um turno pendurado, que é justamente o
+      // que alguém quer matar.
+      const retorno = await comParadaVigiada(run.id, (signal) =>
+        cliente.chat.completions.create(parametros, { signal }),
+      );
 
       const usoRetorno = retorno.usage as UsoOpenRouter | undefined;
       acumularUso(uso, usoRetorno);
@@ -292,6 +306,9 @@ export async function executarAgente(
       },
     });
 
+    // Pedido que chegou tarde demais não pode ficar valendo para nada.
+    await limparPedido(run.id);
+
     return {
       runId: run.id,
       resposta,
@@ -306,12 +323,25 @@ export async function executarAgente(
     };
   } catch (erro) {
     const mensagem = erro instanceof Error ? erro.message : String(erro);
-    logger.error({ runId: run.id, erro: mensagem }, "falha ao executar agente");
+    const interrompida = ehInterrupcao(erro);
+
+    // Parada deliberada não é falha, e registrar como falha faria o operador
+    // caçar um defeito que ele mesmo causou. O que foi gasto até aqui continua
+    // gravado: a OpenRouter cobra pelo que rodou antes do corte.
+    if (interrompida) {
+      logger.warn(
+        { runId: run.id, porQuem: erro.porQuem },
+        "execução interrompida no painel",
+      );
+      await limparPedido(run.id);
+    } else {
+      logger.error({ runId: run.id, erro: mensagem }, "falha ao executar agente");
+    }
 
     await db.agentRun.update({
       where: { id: run.id },
       data: {
-        status: RunStatus.ERROR,
+        status: interrompida ? RunStatus.CANCELED : RunStatus.ERROR,
         error: mensagem,
         messages: JSON.parse(JSON.stringify(messages)),
         ...uso,

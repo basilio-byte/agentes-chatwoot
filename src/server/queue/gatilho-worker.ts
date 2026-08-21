@@ -2,6 +2,7 @@ import type { Job } from "bullmq";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { executarAgente } from "@/server/agents/runner";
+import { ehInterrupcao } from "@/server/agents/cancelamento";
 import { RunSource } from "@/generated/prisma/enums";
 import { montarMensagemDoGatilho } from "@/server/gatilho/payload";
 import type { JobGatilho } from "./gatilho";
@@ -52,6 +53,13 @@ export async function processarGatilho(job: Job<JobGatilho>) {
       `run ${resultado.runId} · ${resultado.toolCalls.length} tool(s) · ${resultado.iteracoes} iteração(ões)`,
     );
   } catch (erro) {
+    // Parada pedida no painel encerra aqui: relançar faria o BullMQ rodar o
+    // turno inteiro de novo, tools e tudo.
+    if (ehInterrupcao(erro)) {
+      await marcarEntregaGatilho(webhookEventId, "interrompido", erro.message);
+      return;
+    }
+
     const mensagem = erro instanceof Error ? erro.message : String(erro);
     await marcarEntregaGatilho(webhookEventId, "falhou", mensagem);
 

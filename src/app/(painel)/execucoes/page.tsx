@@ -1,6 +1,6 @@
 import { ScrollText } from "lucide-react";
 import { db } from "@/lib/db";
-import { exigirSessao } from "@/server/auth-guard";
+import { exigirSessao, podeEditar } from "@/server/auth-guard";
 import { IntegrationProvider, RunStatus } from "@/generated/prisma/enums";
 import { chatwootConfigSchema } from "@/server/integrations/chatwoot/config";
 import {
@@ -40,7 +40,8 @@ export default async function ExecucoesPage({
   searchParams: Promise<Busca>;
 }) {
   const busca = await searchParams;
-  await exigirSessao();
+  const sessao = await exigirSessao();
+  const editavel = podeEditar(sessao.user.role);
 
   // Sem período escolhido, mostra o histórico inteiro: aqui a pergunta costuma
   // ser "o que aconteceu agora há pouco", e um recorte de data por padrão
@@ -163,6 +164,7 @@ export default async function ExecucoesPage({
         { valor: RunStatus.SUCCESS, rotulo: "Sucesso" },
         { valor: RunStatus.ERROR, rotulo: "Erro" },
         { valor: RunStatus.RUNNING, rotulo: "Rodando" },
+        { valor: RunStatus.CANCELED, rotulo: "Interrompida" },
       ],
     },
     {
@@ -203,6 +205,7 @@ export default async function ExecucoesPage({
           {execucoes.map((e) => (
             <Execucao
               key={e.id}
+              editavel={editavel}
               linkDaConversa={linkDaConversa(
                 e.conversation?.chatwootConversationId,
               )}

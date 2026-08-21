@@ -428,6 +428,13 @@ enum RunStatus {
   RUNNING
   SUCCESS
   ERROR
+  /// Interrompida de propósito por alguém no painel.
+  ///
+  /// Separado de `ERROR` porque não é falha: a apuração de consumo conta erros
+  /// para dizer "quanto se gastou sem resultado", e uma parada deliberada
+  /// entrando nessa conta faria o operador caçar um defeito que ele mesmo
+  /// causou. O custo até o ponto da parada continua sendo cobrado e contado.
+  CANCELED
 }
 
 /// Uma execução completa do agente (do input até a resposta final).

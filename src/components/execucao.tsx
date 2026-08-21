@@ -2,13 +2,15 @@
 
 import { useId, useState, useTransition } from "react";
 import Link from "next/link";
-import { ChevronDown, Copy, ExternalLink } from "lucide-react";
+import { ChevronDown, Copy, ExternalLink, Square } from "lucide-react";
 import {
   detalharExecucao,
+  pararExecucao,
   type DetalheDaExecucao,
+  type EstadoDaParada,
   type ToolCallDetalhada,
 } from "@/server/actions/execucoes";
-import { Aviso, Badge, Card, Meta } from "@/components/ui";
+import { Aviso, Badge, Button, Card, Meta } from "@/components/ui";
 import {
   cn,
   formatarData,
@@ -311,10 +313,13 @@ function Detalhe({
 export function Execucao({
   resumo,
   linkDaConversa,
+  editavel,
 }: {
   resumo: ResumoDaExecucao;
   /** Montado no servidor, que é quem conhece a URL da instância do Chatwoot. */
   linkDaConversa: string | null;
+  /** Parar interrompe um atendimento com cliente do outro lado: só quem edita. */
+  editavel: boolean;
 }) {
   const painelId = useId();
   const [aberto, setAberto] = useState(false);
@@ -344,14 +349,25 @@ export function Execucao({
     });
   }
 
+  const [parada, setParada] = useState<EstadoDaParada | null>(null);
+  const [parando, pararTransicao] = useTransition();
+
   const erroDeExecucao = resumo.status === "ERROR";
+  const rodando = resumo.status === "RUNNING";
+  // Interrompida não é erro nem sucesso: foi decisão de alguém, e pintar de
+  // vermelho mandaria procurar defeito onde não há.
+  const tomDoStatus = erroDeExecucao
+    ? ("danger" as const)
+    : rodando
+      ? ("accent" as const)
+      : resumo.status === "CANCELED"
+        ? ("neutral" as const)
+        : ("success" as const);
 
   return (
     <Card className="space-y-2 p-4">
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <Badge tone={erroDeExecucao ? "danger" : "success"}>
-          {resumo.status}
-        </Badge>
+        <Badge tone={tomDoStatus}>{resumo.status}</Badge>
         <Badge>{ROTULO_DA_FONTE[resumo.source] ?? resumo.source}</Badge>
         <Link
           href={`/agentes/${resumo.agente.id}`}
@@ -370,12 +386,30 @@ export function Execucao({
           </Meta>
         ) : null}
 
+        {rodando && editavel ? (
+          <Button
+            variant="danger"
+            size="sm"
+            className="ml-auto"
+            disabled={parando}
+            onClick={() =>
+              pararTransicao(async () => setParada(await pararExecucao(resumo.id)))
+            }
+          >
+            <Square size={12} aria-hidden />
+            {parando ? "Parando…" : "Parar"}
+          </Button>
+        ) : null}
+
         <button
           type="button"
           onClick={alternar}
           aria-expanded={aberto}
           aria-controls={painelId}
-          className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-foreground/[0.04] hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className={cn(
+            !(rodando && editavel) && "ml-auto",
+            "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-foreground/[0.04] hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+          )}
         >
           {aberto ? "Fechar" : "Ver tudo"}
           <ChevronDown
@@ -385,6 +419,9 @@ export function Execucao({
           />
         </button>
       </div>
+
+      {parada?.ok ? <Aviso tone="success">{parada.ok}</Aviso> : null}
+      {parada?.erro ? <Aviso tone="danger">{parada.erro}</Aviso> : null}
 
       {/* Fechado, o cartão continua sendo a lista que já existia: duas linhas
           de entrada, duas de resposta e as tools em etiqueta. */}

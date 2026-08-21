@@ -27,6 +27,7 @@ import {
   mensagensCandidatas,
   montarContexto,
 } from "@/server/integrations/chatwoot/historico";
+import { ehInterrupcao } from "@/server/agents/cancelamento";
 import { contextoDeMidia } from "@/server/integrations/openai/credenciais";
 import {
   enriquecerComMidia,
@@ -66,7 +67,11 @@ type Registro = {
 };
 
 /** O que o turno já fez, para quem está fora dele poder decidir. */
-type EstadoDoTurno = { clienteRecebeuResposta: boolean };
+type EstadoDoTurno = {
+  clienteRecebeuResposta: boolean;
+  /** Alguém mandou parar pelo painel. Não é falha, e não se tenta de novo. */
+  interrompido: boolean;
+};
 
 /**
  * Processa um atendimento: relê a conversa no Chatwoot, roda o agente
@@ -80,7 +85,10 @@ type EstadoDoTurno = { clienteRecebeuResposta: boolean };
  */
 export async function processarAtendimento(job: Job<JobAtendimento>) {
   const { chatwootConversationId } = job.data;
-  const turno: EstadoDoTurno = { clienteRecebeuResposta: false };
+  const turno: EstadoDoTurno = {
+    clienteRecebeuResposta: false,
+    interrompido: false,
+  };
 
   try {
     await atender(job, turno);
@@ -92,6 +100,14 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     // resposta" para sempre.
     const motivo = erro instanceof Error ? erro.message : String(erro);
     await registrarFalha(chatwootConversationId, motivo);
+
+    // Parada pedida no painel encerra aqui. Relançar devolveria o job ao
+    // BullMQ, que roda o turno INTEIRO de novo — o agente voltaria a falar e a
+    // parada não teria valido de nada.
+    if (ehInterrupcao(erro)) {
+      await avisarInterrupcao(job.data.agentId, chatwootConversationId, erro.porQuem);
+      return;
+    }
 
     // O BullMQ reexecuta o turno INTEIRO, e o turno não é idempotente: o
     // modelo roda de novo, o cliente recebe a mesma resposta (ou o mesmo "vou
@@ -161,6 +177,41 @@ async function avisarFalhaDefinitiva(
     logger.error(
       { conversa: chatwootConversationId, erro },
       "não consegui avisar o cliente da falha definitiva",
+    );
+  }
+}
+
+/**
+ * Deixa na conversa o rastro de que a parada foi decisão de alguém.
+ *
+ * Sem isto, quem abrisse a conversa veria o agente simplesmente emudecer no
+ * meio do atendimento — indistinguível de um travamento. Nota interna, então o
+ * cliente não lê nada disso.
+ */
+async function avisarInterrupcao(
+  portaId: string,
+  chatwootConversationId: number,
+  porQuem: string,
+) {
+  logger.warn(
+    { conversa: chatwootConversationId, porQuem },
+    "atendimento interrompido no painel — sem nova tentativa",
+  );
+
+  try {
+    const cliente = await clienteDoAgente(portaId);
+    if (!cliente) return;
+
+    await cliente.enviarMensagem(
+      chatwootConversationId,
+      `⚠️ A execução do agente foi interrompida no painel por ${porQuem}. ` +
+        "O cliente continua esperando: alguém precisa assumir daqui.",
+      { privado: true },
+    );
+  } catch (erro) {
+    logger.error(
+      { conversa: chatwootConversationId, erro },
+      "não consegui registrar a interrupção na conversa",
     );
   }
 }
@@ -443,11 +494,21 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
       });
       ativo = destino;
     }
+  } catch (erro) {
+    // Marcado ANTES do `finally`, que é quem decide sobre a rede de segurança.
+    if (ehInterrupcao(erro)) turno.interrompido = true;
+    throw erro;
   } finally {
     // INVARIANTE: o turno nunca termina com o cliente sem nada. Vale para
     // exceção no meio do laço, para agente que não produziu texto e para
     // destino que sumiu — todos os caminhos que, sem isto, viram silêncio.
-    if (!turno.clienteRecebeuResposta) {
+    //
+    // A exceção é a parada pedida no painel: mandar "tive uma instabilidade"
+    // seria o sistema contradizendo a pessoa que acabou de decidir calar o
+    // agente — e ela pode estar parando justamente porque ele falava errado.
+    // O cliente não fica desamparado: `aguardandoDesde` continua correndo e o
+    // vigia escala para uma pessoa como escala qualquer turno sem resposta.
+    if (!turno.clienteRecebeuResposta && !turno.interrompido) {
       await garantirRespostaAoCliente({ cliente, chatwootConversationId, log });
     }
   }

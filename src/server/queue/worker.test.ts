@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Job } from "bullmq";
 import type { JobAtendimento } from "./atendimento";
+import { ExecucaoInterrompida } from "@/server/agents/cancelamento";
 
 /**
  * O laço de transferência é o caminho crítico do atendimento: ele fica entre a
@@ -44,6 +45,8 @@ let respostasDoModelo: Array<{
   handoff?: unknown;
   /** Um humano resolve a conversa enquanto o agente pensa. */
   resolveNoMeio?: boolean;
+  /** Alguém apertou "Parar" no painel durante o turno. */
+  interrompidaPor?: string;
 }>;
 let agentesQueRodaram: string[];
 /** Simula falha DEPOIS de a resposta já ter saído para o cliente. */
@@ -154,6 +157,9 @@ vi.mock("@/server/agents/runner", () => ({
     mensagensRecebidasPeloAgente.push(entrada.mensagem);
 
     const proxima = respostasDoModelo.shift() ?? { resposta: "pronto" };
+    if (proxima.interrompidaPor) {
+      throw new ExecucaoInterrompida("run-x", proxima.interrompidaPor);
+    }
     // Simula um humano resolvendo a conversa enquanto o agente pensava.
     if (proxima.resolveNoMeio) statusChatwoot = { ...statusChatwoot, status: "resolved" };
     return {
@@ -731,5 +737,65 @@ describe("conversa atribuída ao próprio bot", () => {
 
     expect(publicas()).toEqual([]);
     expect(desatribuicoes).toBe(0);
+  });
+});
+
+/**
+ * Parar uma execução pelo painel.
+ *
+ * O risco central é o BullMQ: ele reexecuta o job INTEIRO quando o handler
+ * lança. Se a interrupção subisse como erro comum, o agente voltaria a rodar
+ * poucos segundos depois e a parada não teria valido de nada — pior, o cliente
+ * receberia a resposta que alguém acabou de tentar impedir.
+ */
+describe("execução interrompida no painel", () => {
+  it("não relança — o BullMQ não pode repetir o turno", async () => {
+    respostasDoModelo = [{ interrompidaPor: "Basílio" }];
+
+    await expect(processarAtendimento(job())).resolves.toBeUndefined();
+  });
+
+  it("não manda 'tive uma instabilidade' ao cliente", async () => {
+    // Seria o sistema contradizendo quem acabou de decidir calar o agente — e
+    // a pessoa pode estar parando justamente porque ele falava errado.
+    respostasDoModelo = [{ interrompidaPor: "Basílio" }];
+
+    await processarAtendimento(job());
+
+    expect(publicas()).toEqual([]);
+  });
+
+  it("deixa nota interna nomeando quem parou", async () => {
+    // Sem isso, quem abrisse a conversa veria o agente emudecer no meio do
+    // atendimento — indistinguível de um travamento.
+    respostasDoModelo = [{ interrompidaPor: "Basílio" }];
+
+    await processarAtendimento(job());
+
+    const notas = enviadas.filter((m) => m.privado).map((m) => m.texto);
+    expect(notas.some((t) => t.includes("Basílio"))).toBe(true);
+    expect(notas.some((t) => t.includes("interrompida"))).toBe(true);
+  });
+
+  it("o relógio do vigia continua correndo — o cliente não fica órfão", async () => {
+    // O agente calou, mas ninguém respondeu ao cliente. Zerar `aguardandoDesde`
+    // aqui tiraria a conversa do radar do vigia e ela ficaria parada para
+    // sempre. É o vigia que entrega a uma pessoa em seguida.
+    respostasDoModelo = [{ interrompidaPor: "Basílio" }];
+
+    await processarAtendimento(job());
+
+    expect(conversa.aguardandoDesde).not.toBeNull();
+  });
+
+  it("falha de verdade continua relançando, para tentar de novo", async () => {
+    // A regressão que este teste protege: tratar todo erro como interrupção
+    // acabaria com o retry de instabilidade real.
+    const runner = await import("@/server/agents/runner");
+    vi.spyOn(runner, "executarAgente").mockRejectedValueOnce(
+      new Error("provedor fora do ar"),
+    );
+
+    await expect(processarAtendimento(job())).rejects.toThrow("provedor fora do ar");
   });
 });
