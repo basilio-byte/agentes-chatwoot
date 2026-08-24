@@ -16,6 +16,8 @@ import { UserRole } from "@/generated/prisma/enums";
 import { resumoDoBot } from "@/server/actions/chatwoot";
 import { resumoDoGatilho } from "@/server/actions/gatilho";
 import { GatilhoDoAgente } from "@/components/gatilho-do-agente";
+import { AgendamentosDoAgente } from "@/components/agendamentos-do-agente";
+import { listarAgendamentos } from "@/server/actions/agendamentos";
 import { obterConfigChatwoot } from "@/server/integrations/chatwoot/credenciais";
 import { listarIntegracoes } from "@/server/integrations/registry";
 import { tokensAproximadosDaTool } from "@/server/integrations/resolve";
@@ -86,6 +88,7 @@ export default async function AgentePage({
   // hora de gerar (server action, não aqui: nunca guardamos texto puro).
   const urlBaseGatilho = `${protocolo}://${host}/api/webhooks/gatilho/${agente.id}`;
   const resumoGatilho = await resumoDoGatilho(agente.id);
+  const agendamentos = await listarAgendamentos(agente.id);
   const entregasGatilho = await db.webhookEvent.findMany({
     where: { agentId: agente.id, provider: "TRIGGER" },
     orderBy: { createdAt: "desc" },
@@ -289,11 +292,21 @@ export default async function AgentePage({
           },
           {
             id: "gatilho",
-            rotulo: "Gatilho",
+            rotulo: "Gatilhos",
             icone: <Webhook size={15} aria-hidden />,
-            alerta: Boolean(resumoGatilho.pausadoAutomaticamenteMotivo),
+            contador: agendamentos.filter((a) => a.enabled).length || undefined,
+            alerta:
+              Boolean(resumoGatilho.pausadoAutomaticamenteMotivo) ||
+              agendamentos.some((a) => a.pausadoAutomaticamenteMotivo),
             conteudo: (
-              <div className="max-w-3xl">
+              <div className="max-w-3xl space-y-6">
+                <AgendamentosDoAgente
+                  agentId={agente.id}
+                  agendamentos={agendamentos}
+                  agenteAtivo={agente.active}
+                  editavel={editavel}
+                />
+
                 <GatilhoDoAgente
                   agentId={agente.id}
                   urlBase={urlBaseGatilho}

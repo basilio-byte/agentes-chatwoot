@@ -129,6 +129,7 @@ model Agent {
   runs          AgentRun[]
   chatwootBot   AgentChatwootBot?
   trigger       AgentTrigger?
+  schedules     AgentSchedule[]
 
   handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
   handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
@@ -232,6 +233,64 @@ model AgentTrigger {
   pausadoAutomaticamenteMotivo String?
 
   agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+/// Um agendamento: o agente roda sozinho na hora marcada, sem gatilho externo.
+///
+/// Vários por agente de propósito — diferente de `AgentTrigger`, que é um só.
+/// "Resumo às 8h" e "cobranças às 18h" são dois agendamentos do mesmo agente,
+/// com instruções diferentes, e cada um liga e desliga por conta própria.
+///
+/// ⚠ **O Postgres é a fonte da verdade; o Redis só executa.** O relógio de
+/// verdade é o Job Scheduler do BullMQ, que vive no Redis — mas Redis limpo
+/// faria os agendamentos sumirem em silêncio. Por isso o worker reconcilia
+/// estas linhas contra o Redis toda vez que sobe.
+model AgentSchedule {
+  id      String @id @default(cuid())
+  agentId String
+
+  /// Como aparece na tela e no rastro de execução. "Resumo diário".
+  nome String
+
+  /// Expressão de 5 campos, **sempre** interpretada em `America/Sao_Paulo`.
+  /// O container roda em UTC: sem fuso explícito, "9h" viraria 6h da manhã.
+  cron String
+
+  /// O que o agente deve fazer nesta execução. Vira a `mensagem` do turno —
+  /// aqui não há payload de sistema externo nem cliente perguntando nada.
+  instrucao String @db.Text
+
+  /// Nasce desligado, como `Agent.active` e `AgentTrigger.enabled`.
+  enabled Boolean @default(false)
+
+  /// Quanto tempo depois da hora marcada ainda vale executar.
+  ///
+  /// O worker fora do ar na hora marcada (deploy, queda) faz o BullMQ entregar
+  /// a ocorrência atrasada quando volta. Rodar o "resumo das 8h" às 15h como se
+  /// nada fosse é pior que não rodar: o agente age sobre um contexto que já
+  /// passou. Passou da tolerância, pula e registra o motivo.
+  toleranciaMinutos Int @default(60)
+
+  ultimaExecucaoEm DateTime?
+  /// `executado` · `falhou` · `pulado` · `interrompido`.
+  ultimoResultado  String?
+  ultimoDetalhe    String?
+
+  /// Zera a cada sucesso. Estourou o teto, o agendamento se desliga sozinho —
+  /// agendamento quebrado não pode queimar crédito para sempre.
+  falhasConsecutivas Int @default(0)
+
+  pausadoAutomaticamenteEm     DateTime?
+  pausadoAutomaticamenteMotivo String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([enabled])
 }
 
 /// Histórico imutável de prompt. Permite rollback quando um ajuste piora o atendimento.
@@ -422,6 +481,8 @@ enum RunSource {
   PLAYGROUND
   CHATWOOT
   TRIGGER
+  /// Disparado pelo relógio, sem ninguém do outro lado.
+  SCHEDULE
 }
 
 enum RunStatus {

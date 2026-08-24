@@ -16,7 +16,11 @@ async function encerrar(sinal: string) {
   // deixar cliente sem resposta no meio de um deploy. Os dois workers, não
   // só o de atendimento — matar um sem esperar o outro corta jobs de gatilho
   // em andamento sem necessidade.
-  await Promise.all([worker.atendimento.close(), worker.gatilho.close()]);
+  await Promise.all([
+    worker.atendimento.close(),
+    worker.gatilho.close(),
+    worker.agendamento.close(),
+  ]);
   process.exit(0);
 }
 

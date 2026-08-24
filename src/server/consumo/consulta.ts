@@ -124,6 +124,7 @@ export const ROTULO_DA_FONTE: Record<RunSource, string> = {
   [RunSource.CHATWOOT]: "Chatwoot",
   [RunSource.TRIGGER]: "Gatilho HTTP",
   [RunSource.PLAYGROUND]: "Playground",
+  [RunSource.SCHEDULE]: "Agendamento",
 };
 
 export function normalizarFonte(valor: string | undefined | null) {

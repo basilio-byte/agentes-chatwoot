@@ -40,6 +40,7 @@ const ROTULO_DA_FONTE: Record<string, string> = {
   CHATWOOT: "Chatwoot",
   TRIGGER: "Gatilho",
   PLAYGROUND: "Playground",
+  SCHEDULE: "Agendamento",
 };
 
 const PAPEL: Record<string, { rotulo: string; classe: string }> = {

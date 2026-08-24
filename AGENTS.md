@@ -223,6 +223,56 @@ tiver ligadas, e o payload vira a `mensagem` do turno (`RunSource.TRIGGER`).
 - **Fila e worker próprios** (`FILA_GATILHO`), mas no MESMO processo do worker
   de atendimento — `iniciarWorker()` sobe os dois. Zero serviço novo de deploy.
 
+### Gatilho por horário: o agente roda sozinho
+
+Terceiro jeito de acionar um agente, ao lado da mensagem do Chatwoot e do
+gatilho HTTP. `AgentSchedule`, vários por agente — "resumo às 8h" e "cobranças
+às 18h" são dois agendamentos do mesmo agente, cada um ligando e desligando por
+conta própria.
+
+- ⚠ **O agendamento NÃO fala no WhatsApp.** Ele age só pelas tools ligadas.
+  Toda tool de Chatwoot exige uma conversa existente, e quem envia mensagem no
+  atendimento é o worker, não uma tool. "Às 9h manda cobrança para os
+  inadimplentes" **não funciona** — precisaria de uma tool que inicia conversa,
+  que não existe. A tela diz isso em letras claras, porque é a expectativa que
+  mais naturalmente se cria.
+- **O relógio é o Job Scheduler do BullMQ** (`upsertJobScheduler`), não um
+  `setInterval` no worker: duas réplicas não disparam em dobro, sobrevive a
+  reinício, e dá para perguntar quando é a próxima.
+- ⚠ **`tz: FUSO_SEAHUB` é obrigatório e não tem padrão seguro.** O container
+  roda em UTC: `0 9 * * *` sem fuso dispara às 6h da manhã em São Paulo. Três
+  horas errado, todo dia, sem erro nenhum — a mesma armadilha das datas
+  exibidas, e pior, porque data errada alguém nota e execução na hora errada
+  não. Por isso a tela **mostra as próximas execuções** antes de salvar.
+- **Postgres manda, Redis executa.** O relógio vive no Redis, mas Redis limpo
+  apagaria todos os agendamentos em silêncio — a tela continuaria dizendo
+  "ligado" e nada dispararia nunca. `reconciliarAgendadores()` roda a cada boot
+  do worker e refaz o Redis a partir do banco, nos dois sentidos (cria o que
+  falta, remove órfão).
+- **Cinco campos, nunca seis.** O cron-parser aceita segundos, e isso seria uma
+  porta lateral para furar o piso de frequência.
+- **Piso de `INTERVALO_MINIMO_MINUTOS`**, medido pelo MENOR intervalo entre
+  ocorrências e não pela média: uma expressão que dispara de minuto em minuto
+  durante uma hora tem média mansa e é justo o que o piso existe para pegar.
+- ⚠ **`prev()` devolve a ocorrência ESTRITAMENTE anterior.** Chegando pontual
+  no segundo marcado, o atraso calculado seria de 24h e o agendamento diário
+  seria descartado **todo dia**. Por isso `ocorrenciaAnterior` consulta a partir
+  de `agora + 1s`.
+- **Atraso é medido pelo cron, não pelo relógio do job.** Worker fora do ar na
+  hora marcada faz o BullMQ entregar a ocorrência quando volta, e nada no job
+  diz que ele chegou tarde. Passou de `toleranciaMinutos`, pula e registra —
+  rodar "o resumo das 8h" às 15h é pior que não rodar.
+- **Trava de sobreposição no Redis** (`SET NX`): agendamento curto com turno
+  longo empilharia execuções. Falha de Redis libera em vez de barrar — o pior
+  caso vira sobreposição, e recusar por soluço seria agendamento que não roda.
+- **A ocorrência entra na chave de idempotência** (`<scheduleId>:<ISO>`), então
+  reentrega do BullMQ não custa uma execução paga.
+- **`pulado` e `interrompido` não contam como falha.** Pular por atraso é o
+  sistema funcionando e parar é decisão de alguém; contá-los desligaria por
+  engano um agendamento são. Só `falhou` conta, e ao bater
+  `FALHAS_ATE_DESLIGAR` o agendamento se desliga **e sai do relógio** — só
+  desligar no banco continuaria disparando até o próximo boot.
+
 ### ClickUp: armadilhas da API v2
 
 Todas cobertas por teste em `src/server/integrations/clickup/client.test.ts` —

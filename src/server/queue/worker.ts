@@ -13,6 +13,12 @@ import { iniciarLimpeza } from "./limpeza";
 import { iniciarVigia } from "./vigia";
 import { FILA_GATILHO, type JobGatilho } from "./gatilho";
 import { processarGatilho } from "./gatilho-worker";
+import {
+  FILA_AGENDAMENTO,
+  reconciliarAgendadores,
+  type JobAgendamento,
+} from "./agendamento";
+import { processarAgendamento } from "./agendamento-worker";
 import { executarAgente } from "@/server/agents/runner";
 import {
   clienteDoAgente,
@@ -869,6 +875,7 @@ async function reprocessarPendente(dados: JobAtendimento) {
 export type Workers = {
   atendimento: Worker<JobAtendimento>;
   gatilho: Worker<JobGatilho>;
+  agendamento: Worker<JobAgendamento>;
 };
 
 export function iniciarWorker(): Workers {
@@ -912,6 +919,29 @@ export function iniciarWorker(): Workers {
     );
   });
 
+  // Terceira fila, mesmo processo — igual às duas de cima. Concorrência 2: um
+  // agendamento não tem cliente esperando, e vários turnos pesados ao mesmo
+  // tempo roubariam vaga do atendimento, que tem.
+  const workerAgendamento = new Worker<JobAgendamento>(
+    FILA_AGENDAMENTO,
+    processarAgendamento,
+    { connection: getRedis(), concurrency: 2 },
+  );
+
+  workerAgendamento.on("failed", (job, erro) => {
+    logger.error(
+      { jobId: job?.id, tentativa: job?.attemptsMade, erro: erro.message },
+      "agendamento falhou",
+    );
+  });
+
+  // O relógio vive no Redis, mas quem sabe o que DEVERIA existir é o Postgres.
+  // Sem esta reconciliação, um Redis limpo apagaria todos os agendamentos em
+  // silêncio — a tela continuaria mostrando "ligado" e nada dispararia nunca.
+  void reconciliarAgendadores().catch((erro) => {
+    logger.error({ erro }, "falha ao reconciliar os agendadores");
+  });
+
   // Sinal de vida para o painel poder responder "o worker está rodando?".
   iniciarBatimento();
   // Poda o histórico de entregas — sem isto a tabela cresce para sempre.
@@ -921,5 +951,9 @@ export function iniciarWorker(): Workers {
   iniciarVigia();
 
   logger.info("worker de atendimento no ar");
-  return { atendimento: worker, gatilho: workerGatilho };
+  return {
+    atendimento: worker,
+    gatilho: workerGatilho,
+    agendamento: workerAgendamento,
+  };
 }
