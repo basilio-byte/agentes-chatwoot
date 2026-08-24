@@ -26,6 +26,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.CONEXA]: "ERP Conexa",
   [IntegrationProvider.ZAPSIGN]: "ZapSign",
   [IntegrationProvider.OPENAI]: "OpenAI — leitura de mídia",
+  [IntegrationProvider.DOCUMENTOS]: "Documentos (CPF, CNH, CNPJ)",
 };
 
 async function main() {

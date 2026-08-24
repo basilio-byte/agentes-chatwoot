@@ -20,10 +20,12 @@ import { ConexaConfigForm } from "@/components/conexa-config";
 import { ZapSignConfigForm } from "@/components/zapsign-config";
 import { OpenAIConfigForm } from "@/components/openai-config";
 import { LeiturasDeMidia } from "@/components/leituras-de-midia";
+import { DocumentosConfigForm } from "@/components/documentos-config";
 import {
   Building2,
   Ear,
   FileSignature,
+  IdCard,
   ListChecks,
   MessagesSquare,
 } from "lucide-react";
@@ -81,6 +83,11 @@ export default async function IntegracoesPage({
   });
   // Quantos agentes já têm a leitura ligada. Zero com a integração ligada é o
   // estado que engana: parece funcionando e nenhum atendimento lê nada.
+  const documentos = registros.find(
+    (i) => i.provider === IntegrationProvider.DOCUMENTOS,
+  );
+  const toolsDocumentos =
+    obterIntegracao(IntegrationProvider.DOCUMENTOS)?.tools.length ?? 0;
   const agentesComMidia = openai
     ? await db.agentIntegration.count({
         where: { integrationId: openai.id, enabled: true },
@@ -372,6 +379,53 @@ export default async function IntegracoesPage({
                     Último teste falhou: {zapsign.lastError}
                     {zapsign.lastCheckedAt
                       ? ` (${formatarData(zapsign.lastCheckedAt)})`
+                      : ""}
+                  </Aviso>
+                ) : null}
+              </Card>
+            ),
+          },
+          {
+            id: "documentos",
+            rotulo: "Documentos",
+            icone: <IdCard size={14} aria-hidden />,
+            contador: toolsDocumentos,
+            conteudo: (
+              <Card className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="font-medium">Documentos (CPF, CNH, CNPJ)</h2>
+                  {documentos?.enabled ? (
+                    <Badge tone="success">ligada</Badge>
+                  ) : (
+                    <Badge>desligada</Badge>
+                  )}
+                </div>
+
+                <p className="text-sm text-muted">
+                  Confere se o número de um documento é bem formado e consulta
+                  CNPJ na base pública da Receita. O agente recebe{" "}
+                  {toolsDocumentos} ferramenta(s) quando esta integração está
+                  ligada para ele.
+                </p>
+
+                <Aviso tone="danger">
+                  <strong>Isto não detecta falsificação.</strong> Prova que um
+                  número é bem formado e que uma empresa existe — não que o
+                  documento é autêntico nem que pertence a quem o enviou. Para
+                  CPF e CNH não existe consulta oficial gratuita. Antifraude de
+                  verdade exige serviço contratado.
+                </Aviso>
+
+                <DocumentosConfigForm
+                  habilitada={documentos?.enabled ?? false}
+                  somenteLeitura={!editavel}
+                />
+
+                {documentos?.lastError ? (
+                  <Aviso tone="danger">
+                    Último teste: {documentos.lastError}
+                    {documentos.lastCheckedAt
+                      ? ` (${formatarData(documentos.lastCheckedAt)})`
                       : ""}
                   </Aviso>
                 ) : null}

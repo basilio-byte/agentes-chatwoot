@@ -329,6 +329,10 @@ enum IntegrationProvider {
   /// numa tabela própria, para reusar credencial cifrada, toggle global e
   /// toggle por agente — capacidade duplicada é a que diverge.
   OPENAI
+  /// Conferência de documento (CPF, CNH, CNPJ). Sem credencial: usa algoritmo
+  /// público e a consulta gratuita de CNPJ da base aberta da Receita. Está no
+  /// registry pelo toggle de dois níveis e pela allowlist, não pela conta.
+  DOCUMENTOS
 }
 
 enum IntegrationStatus {

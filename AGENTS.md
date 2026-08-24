@@ -223,6 +223,46 @@ tiver ligadas, e o payload vira a `mensagem` do turno (`RunSource.TRIGGER`).
 - **Fila e worker próprios** (`FILA_GATILHO`), mas no MESMO processo do worker
   de atendimento — `iniciarWorker()` sobe os dois. Zero serviço novo de deploy.
 
+### Conferência de documento: o que dá e o que NÃO dá para provar
+
+Provedor `DOCUMENTOS`, sem credencial — algoritmo público e uma consulta
+gratuita. O agente confere o documento que o cliente mandou no WhatsApp e grava
+o resultado no cadastro.
+
+- ⚠ **Nada disto detecta falsificação.** Prova que um número é bem formado e,
+  no CNPJ, que a empresa existe e está ativa. Não prova autenticidade nem que o
+  documento é de quem mandou. As descrições das tools dizem isso ao modelo de
+  propósito: é ele quem escreve a conclusão que uma pessoa vai ler, e "CPF
+  válido" soa como muito mais do que é.
+- **Não existe consulta oficial gratuita de CPF nem de CNH.** A da Receita é
+  página com captcha; a do Serpro é paga. Sobra o dígito verificador. Só o
+  **CNPJ** tem base pública utilizável (BrasilAPI, sobre os dados abertos).
+  **RG não tem nada** — não há base nacional, cada estado tem formato próprio.
+- **Dígito verificador é tool, nunca prompt.** Modelo erra conta, e erra para os
+  dois lados: recusa documento bom e aceita número inventado.
+- ⚠ **O algoritmo da CNH tem variantes circulando**, e elas divergem quando o
+  primeiro dígito estoura. Por isso a mensagem de recusa manda **conferir à
+  mão** em vez de declarar o documento inválido — recusar uma CNH boa é pior que
+  mandar conferir uma suspeita. Os testes de CPF e CNPJ usam números reais e
+  públicos, não gerados pelo próprio algoritmo (senão a verificação seria
+  circular); a CNH não tem referência assim, e isso está registrado no teste.
+- **Falha da consulta pública nunca vira "não existe".** Só `404` autoriza dizer
+  não encontrado; timeout, 5xx e queda de rede viram `indeterminado`. A
+  BrasilAPI é projeto comunitário, sem compromisso de disponibilidade —
+  concluir inexistência a partir de um problema nosso recusaria um cliente.
+
+**Onde o resultado é gravado:** atributo personalizado do **CONTATO**, não da
+conversa (`anotar_no_contato`). A conversa é resolvida e some da vista; a pessoa
+permanece, e no atendimento seguinte a informação ainda está lá. Campo separado
+porque campo dá para **filtrar** ("quem está com documento vencido"), coisa que
+nota não permite. A explicação do que bateu e do que divergiu vai junto em
+`registrar_nota_interna` — campo para a máquina, nota para o humano.
+
+⚠ **`custom_attributes` do Chatwoot SUBSTITUI o objeto inteiro.** Mandar um
+atributo apagaria todos os outros — mesma armadilha dos labels, mesma solução:
+ler, mesclar, escrever. Vale o GET a mais, porque o que se perderia são dados
+que outra equipe pode ter cadastrado.
+
 ### Gatilho por horário: o agente roda sozinho
 
 Terceiro jeito de acionar um agente, ao lado da mensagem do Chatwoot e do

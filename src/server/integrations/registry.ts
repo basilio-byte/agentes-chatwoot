@@ -3,6 +3,7 @@ import type { IntegrationDefinition } from "./types";
 import { chatwootIntegration } from "./chatwoot";
 import { clickupIntegration } from "./clickup";
 import { conexaIntegration } from "./conexa";
+import { documentosIntegration } from "@/server/documentos";
 import { openaiIntegration } from "./openai";
 import { zapsignIntegration } from "./zapsign";
 
@@ -26,6 +27,9 @@ const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = 
   // Zero tools de propósito: prepara o contexto (áudio/imagem/documento viram
   // texto) em vez de dar uma ferramenta ao modelo. Ver `openai/index.ts`.
   [openaiIntegration.provider]: openaiIntegration,
+  // Sem credencial: algoritmo público e consulta gratuita. Está aqui pelo
+  // toggle de dois níveis e pela allowlist, não por ter conta para configurar.
+  [documentosIntegration.provider]: documentosIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {

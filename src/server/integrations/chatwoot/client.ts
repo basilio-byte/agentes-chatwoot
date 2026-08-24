@@ -174,6 +174,8 @@ export class ChatwootClient {
         assignee?: { id?: number } | null;
         /** `User` ou `AgentBot`. Ver `assigneeTipo` abaixo. */
         assignee_type?: string | null;
+        /** O contato da conversa — é nele que moram os atributos do cliente. */
+        sender?: { id?: number } | null;
       };
       assignee_id?: number | null;
     }>(`/conversations/${conversationId}`, {}, true);
@@ -193,6 +195,14 @@ export class ChatwootClient {
        * 4 e a agente Maria Eduarda também é o id 4.
        */
       assigneeTipo: bruta.meta?.assignee_type ?? null,
+      /**
+       * Id do CONTATO, não da conversa.
+       *
+       * Atributo de conferência de documento pertence à pessoa, não ao
+       * atendimento: a conversa é resolvida e o dado se perderia, e no próximo
+       * contato alguém pediria o documento de novo.
+       */
+      contactId: bruta.meta?.sender?.id ?? null,
       inboxId: bruta.inbox_id ?? null,
       // Quem decide se outro bot é o dono da conversa. Vem vazio se a instância
       // não devolver o campo — nesse caso a regra de label simplesmente não casa.
@@ -258,6 +268,66 @@ export class ChatwootClient {
         role?: string;
       }>
     >("/agents", {}, true);
+  }
+
+  /**
+   * Contato, com os atributos personalizados que já existem nele.
+   *
+   * Leitura, então usa o token de usuário — o do bot é recusado aqui como em
+   * todo endpoint de leitura.
+   */
+  async obterContato(contactId: number) {
+    const bruto = await this.requisitar<{
+      id: number;
+      name?: string | null;
+      email?: string | null;
+      phone_number?: string | null;
+      custom_attributes?: Record<string, unknown> | null;
+    }>(`/contacts/${contactId}`, {}, true);
+
+    // Algumas versões embrulham o contato em `payload`; aceitar as duas evita
+    // que uma diferença de versão vire atributo perdido.
+    const contato =
+      (bruto as unknown as { payload?: typeof bruto }).payload ?? bruto;
+
+    return {
+      id: contato.id,
+      nome: contato.name ?? null,
+      email: contato.email ?? null,
+      telefone: contato.phone_number ?? null,
+      atributos: (contato.custom_attributes ?? {}) as Record<string, unknown>,
+    };
+  }
+
+  /**
+   * Grava atributos personalizados no contato, **preservando os existentes**.
+   *
+   * ⚠ O `custom_attributes` desta API **substitui o objeto inteiro** — mandar
+   * um atributo apagaria todos os outros. É a mesma armadilha dos labels, e a
+   * solução é a mesma: ler, mesclar, escrever. Vale o custo do GET, porque o
+   * que se perderia são dados que outra equipe pode ter cadastrado.
+   *
+   * Chave que chega com valor `null` é **removida** — é como se apaga um
+   * atributo sem apagar o resto.
+   */
+  async definirAtributosDoContato(
+    contactId: number,
+    atributos: Record<string, string | number | boolean | null>,
+  ) {
+    const atual = await this.obterContato(contactId);
+    const mesclado: Record<string, unknown> = { ...atual.atributos };
+
+    for (const [chave, valor] of Object.entries(atributos)) {
+      if (valor === null) delete mesclado[chave];
+      else mesclado[chave] = valor;
+    }
+
+    await this.requisitar(`/contacts/${contactId}`, {
+      method: "PUT",
+      body: JSON.stringify({ custom_attributes: mesclado }),
+    });
+
+    return mesclado;
   }
 
   async atribuir(

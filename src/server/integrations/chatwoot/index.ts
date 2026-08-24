@@ -387,6 +387,137 @@ export const chatwootIntegration: IntegrationDefinition = {
       },
     },
 
+
+    {
+      name: "registrar_nota_interna",
+      categoria: "Atendimento",
+      description:
+        "Escreve uma nota INTERNA na conversa: só a equipe lê, o cliente não. Use para registrar o que você conferiu e por quê — o que bateu, o que divergiu, o que ficou em dúvida. É o que permite uma pessoa discordar de você depois. Não use para falar com o cliente.",
+      inputSchema: z.object({
+        texto: z
+          .string()
+          .min(5)
+          .describe(
+            "O registro, em uma ou poucas frases. Diga o que foi conferido e o resultado, não só o veredito.",
+          ),
+      }),
+      async execute(entrada, ctx) {
+        const { texto } = entrada as { texto: string };
+
+        if (!ctx.chatwootConversationId) {
+          return "Sem conversa do Chatwoot neste contexto — não há onde registrar.";
+        }
+
+        const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
+        if (!cliente) {
+          throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
+        }
+
+        await cliente.enviarMensagem(ctx.chatwootConversationId, texto.trim(), {
+          privado: true,
+        });
+
+        return { registrado: true, observacao: "Nota interna gravada. O cliente não vê." };
+      },
+    },
+
+    {
+      name: "ver_dados_do_contato",
+      categoria: "Cliente",
+      description:
+        "Mostra o cadastro do contato desta conversa no Chatwoot: nome, e-mail, telefone e os atributos personalizados já anotados (por exemplo, se o documento dele já foi conferido antes). Consulte ANTES de pedir dado ao cliente — pode ser que já esteja registrado.",
+      inputSchema: z.object({}),
+      async execute(_entrada, ctx) {
+        if (!ctx.chatwootConversationId) {
+          return "Sem conversa do Chatwoot neste contexto — não há contato para consultar.";
+        }
+
+        const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
+        if (!cliente) {
+          throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
+        }
+
+        const conversa = await cliente.obterConversa(ctx.chatwootConversationId);
+        if (!conversa.contactId) {
+          return "A conversa não trouxe o contato — não dá para consultar o cadastro.";
+        }
+
+        const contato = await cliente.obterContato(conversa.contactId);
+        return {
+          nome: contato.nome,
+          email: contato.email,
+          telefone: contato.telefone,
+          atributos: contato.atributos,
+        };
+      },
+    },
+
+    {
+      name: "anotar_no_contato",
+      categoria: "Cliente",
+      requiresConfirmation: true,
+      description:
+        "Grava informação no cadastro do CONTATO (a pessoa), não na conversa. Use para o que precisa sobreviver ao fim do atendimento: resultado de conferência de documento, validade, data. A conversa é encerrada e some da vista; o contato permanece, e no próximo atendimento a informação ainda está lá. Para observação que só vale para este atendimento, use registrar_nota_interna.",
+      inputSchema: z.object({
+        atributos: z
+          .array(
+            z.object({
+              chave: z
+                .string()
+                .min(1)
+                .describe(
+                  "Identificador do campo, minúsculo e sem espaço (ex.: cnh_status). Precisa existir em Configurações → Atributos personalizados do Chatwoot para aparecer bonito na tela.",
+                ),
+              valor: z
+                .string()
+                .describe("O valor a gravar. Texto vazio APAGA o atributo."),
+            }),
+          )
+          .min(1)
+          .describe("Um ou mais campos para gravar de uma vez."),
+      }),
+      async execute(entrada, ctx) {
+        const { atributos } = entrada as {
+          atributos: { chave: string; valor: string }[];
+        };
+
+        if (!ctx.chatwootConversationId) {
+          return "Sem conversa do Chatwoot neste contexto — não há contato para anotar.";
+        }
+
+        const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
+        if (!cliente) {
+          throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
+        }
+
+        const conversa = await cliente.obterConversa(ctx.chatwootConversationId);
+        if (!conversa.contactId) {
+          return "A conversa não trouxe o contato — não dá para anotar no cadastro.";
+        }
+
+        // Texto vazio vira `null`, que é como o cliente apaga a chave sem
+        // apagar as outras.
+        const mapa = Object.fromEntries(
+          atributos.map((a) => [
+            a.chave.trim(),
+            a.valor.trim() === "" ? null : a.valor.trim(),
+          ]),
+        );
+
+        const gravados = await cliente.definirAtributosDoContato(
+          conversa.contactId,
+          mapa,
+        );
+
+        logger.info(
+          { conversa: ctx.chatwootConversationId, chaves: Object.keys(mapa) },
+          "atributos do contato atualizados pelo agente",
+        );
+
+        return { anotado: true, atributosDoContato: gravados };
+      },
+    },
+
     {
       name: "transferir_para_humano",
       description:
