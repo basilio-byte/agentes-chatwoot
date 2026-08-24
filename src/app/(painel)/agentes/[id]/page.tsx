@@ -20,7 +20,11 @@ import { AgendamentosDoAgente } from "@/components/agendamentos-do-agente";
 import { listarAgendamentos } from "@/server/actions/agendamentos";
 import { obterConfigChatwoot } from "@/server/integrations/chatwoot/credenciais";
 import { listarIntegracoes } from "@/server/integrations/registry";
-import { tokensAproximadosDaTool } from "@/server/integrations/resolve";
+import {
+  resolverToolsDoAgente,
+  tokensAproximadosDaTool,
+} from "@/server/integrations/resolve";
+import { podeEncaminharParaHumano } from "@/server/agents/conduta";
 import { CanalDoAgente } from "@/components/canal-do-agente";
 import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
 import { EquipeDoAgente } from "@/components/equipe-do-agente";
@@ -68,6 +72,20 @@ export default async function AgentePage({
   if (!agente) notFound();
 
   const modelos = await listarModelos();
+
+  // O bloco de conduta exibido no formulário tem de ser o que este agente
+  // recebe de verdade: a linha de encaminhamento depende da transferência
+  // ligada, da tool estar na allowlist e do modelo aceitar ferramentas. Mesma
+  // função que o runner usa — texto de tela reescrito à mão é como a
+  // divergência começa.
+  const podeEncaminhar = podeEncaminharParaHumano({
+    handoffEnabled: agente.handoffEnabled,
+    temToolDeHandoff: (await resolverToolsDoAgente(agente.id)).has(
+      "transferir_para_humano",
+    ),
+    ferramentasVaoNoRequest:
+      modelos.find((m) => m.id === agente.model)?.suportaTools ?? true,
+  });
 
   // A URL do webhook é montada a partir do host da requisição — funciona em
   // local e no Easypanel sem precisar de variável de ambiente.
@@ -221,6 +239,7 @@ export default async function AgentePage({
                   modelos={modelos}
                   rotuloEnvio="Salvar alterações"
                   somenteLeitura={!editavel}
+                  podeEncaminhar={podeEncaminhar}
                   valores={{
                     name: agente.name,
                     description: agente.description ?? "",

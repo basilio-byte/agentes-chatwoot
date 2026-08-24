@@ -20,6 +20,11 @@ import type {
 } from "@/server/integrations/types";
 import { blocoDeRoster, montarRoster } from "./equipe";
 import {
+  blocoDeConduta,
+  podeEncaminharParaHumano,
+  tipoDeTurno,
+} from "./conduta";
+import {
   comParadaVigiada,
   conferirParada,
   ehInterrupcao,
@@ -144,7 +149,31 @@ export async function executarAgente(
     },
   });
   const roster = montarRoster(equipe, agente.id, entrada.inboxId);
-  const systemPrompt = agente.systemPrompt + blocoDeRoster(roster, agente.name);
+
+  // Ordem: PROMPT DO OPERADOR → REGRAS DA CASA → COLEGAS.
+  //
+  // As Regras da Casa vêm DEPOIS do prompt do operador porque dizem "as
+  // instruções acima" — é essa dêixis que faz as regras de escopo e de
+  // fonte-de-verdade funcionarem, já que as duas se definem por exclusão do
+  // que o operador escreveu. E vêm ANTES do roster porque, depois dele, "as
+  // instruções acima" passaria a incluir a lista de colegas, autorizando o
+  // agente a tratar o assunto dos outros como se fosse escopo dele.
+  const systemPrompt =
+    agente.systemPrompt +
+    blocoDeConduta({
+      tipo: tipoDeTurno(entrada.source),
+      // Fato do turno, não preferência: sem como entregar a conversa a uma
+      // pessoa, o bloco não manda o agente prometer que vai passar. Conta
+      // também `enviarFerramentas` — modelo sem suporte a tools zera o envio
+      // com a allowlist intacta, e prometer transferência sem ferramenta
+      // nenhuma no request é o sintoma que este bloco combate.
+      podeEncaminhar: podeEncaminharParaHumano({
+        handoffEnabled: agente.handoffEnabled,
+        temToolDeHandoff: resolvidas.has("transferir_para_humano"),
+        ferramentasVaoNoRequest: enviarFerramentas,
+      }),
+    }) +
+    blocoDeRoster(roster, agente.name);
 
   const sinais: SinaisDoTurno = {};
 

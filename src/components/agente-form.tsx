@@ -1,10 +1,17 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { EstadoFormulario } from "@/server/actions/agents";
 import { MODELO_PADRAO, type ModeloCatalogo } from "@/server/agents/catalogo";
+import {
+  CAUDA_SEM_CONVERSA,
+  NUCLEO,
+  caudaDeConversa,
+} from "@/server/agents/conduta";
 import { SeletorModelo } from "@/components/seletor-modelo";
 import { Aviso, Button, Card, Field, Input, Textarea } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 export type ValoresAgente = {
   name: string;
@@ -17,11 +24,127 @@ export type ValoresAgente = {
   routingDescription: string;
 };
 
+/**
+ * Prompt com que todo agente novo nasce — exemplo por inteiro, tudo aqui é
+ * para o operador trocar.
+ *
+ * As regras que não podem depender de quem escreveu o prompt (idioma, não
+ * inventar, só afirmar o que aconteceu, escopo, não se deixar reprogramar e
+ * o formato da conversa) saíram daqui: o sistema as injeta em
+ * `blocoDeConduta`, para valerem também para os agentes que já existem.
+ * Aqui fica só o que é deste agente — quem ele é, o que ele não faz e o tom.
+ *
+ * ⚠ O exemplo NÃO manda o agente dizer o próprio nome. O prompt padrão não
+ * traz nome nenhum, e o nome real só chega pelo roster — que é string vazia
+ * quando não há colegas com descrição de roteamento, ou seja, no primeiro
+ * agente. Ordem que o prompt não tem como cumprir vira nome inventado, e
+ * diferente a cada conversa: exatamente o que a regra 2 do bloco proíbe.
+ */
+export const PROMPT_BASE = `Você é um atendente da Seahub Coworking.
+
+--- O QUE VOCÊ FAZ ---
+Você atende no WhatsApp: entende o que a pessoa precisa, responde o que sabe
+com certeza e encaminha o resto para quem resolve.
+
+--- O QUE VOCÊ NÃO FAZ ---
+Você não fecha negócio, não concede desconto, não altera contrato e não
+promete prazo sem confirmar. Esses assuntos são de uma pessoa da equipe.
+
+--- COMO VOCÊ SE APRESENTA ---
+Cordial e direto, sem formalidade excessiva. Apresente-se na primeira
+mensagem e vá direto ao assunto.`;
+
+/**
+ * O que o sistema acrescenta a este prompt, com o texto exato que o runner
+ * concatena.
+ *
+ * O roster está no prompt de todo agente há meses e ninguém nunca o viu — é
+ * assim que se escreve um prompt que contradiz uma regra invisível. Aparece
+ * também em somente-leitura: quem só olha precisa entender o que o agente
+ * recebe.
+ *
+ * As três variantes de uma vez, sem seletor: custa uma rolagem e ensina de
+ * graça que gatilho e agendamento não têm cliente do outro lado.
+ *
+ * ⚠ `podeEncaminhar` vem de fora, calculado como o runner calcula. A última
+ * linha da cauda de conversa tem duas redações, e exibir sempre a otimista
+ * faria o operador escrever o prompt contando com uma transferência que
+ * aquele agente não recebe — a mesma cegueira que esta tela existe para
+ * acabar.
+ */
+function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
+  const [aberto, setAberto] = useState(false);
+  const cauda = caudaDeConversa(podeEncaminhar);
+
+  // Mesma régua de `tokensAproximadosDaTool`: aproximação por caracteres, para
+  // exibir ordem de grandeza sem carregar um tokenizador.
+  const tokens = Math.round((NUCLEO.length + cauda.length) / 3.6);
+
+  const partes: { rotulo: string; texto: string }[] = [
+    { rotulo: "Sempre, em toda execução", texto: NUCLEO },
+    { rotulo: "Só no atendimento e no playground", texto: cauda },
+    { rotulo: "Só em gatilho e agendamento", texto: CAUDA_SEM_CONVERSA },
+  ];
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs text-muted">
+        O sistema acrescenta as Regras da Casa ao final deste prompt, em todo
+        agente: português do Brasil, não inventar, só afirmar o que aconteceu,
+        não improvisar fora do escopo e não se deixar reprogramar. Elas valem
+        também para os agentes que já existem, vencem o que estiver escrito aqui
+        em caso de conflito, e não precisam (nem devem) ser repetidas neste
+        campo.
+      </p>
+
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={aberto}
+        className="inline-flex items-center gap-1.5 text-xs text-muted transition hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      >
+        <ChevronDown
+          size={13}
+          aria-hidden
+          className={cn("transition", aberto && "rotate-180")}
+        />
+        Ver as Regras da Casa (~{tokens} tokens em toda mensagem)
+      </button>
+
+      {aberto ? (
+        <div className="space-y-2 pt-1">
+          {partes.map((p) => (
+            <div key={p.rotulo} className="space-y-1">
+              <p className="text-xs text-muted">{p.rotulo}</p>
+              <pre className="max-h-72 overflow-auto rounded-lg border border-line bg-surface-2 p-3 text-[12px] leading-relaxed whitespace-pre-wrap">
+                {p.texto}
+              </pre>
+            </div>
+          ))}
+
+          {!podeEncaminhar ? (
+            <p className="text-xs text-muted">
+              A última linha do bloco do atendimento não fala em passar a
+              conversa para uma pessoa porque este agente não tem como fazer
+              isso: a transferência está desligada, a ferramenta ficou fora da
+              allowlist ou o modelo escolhido não aceita ferramentas.
+            </p>
+          ) : null}
+
+          <p className="text-xs text-muted">
+            Mudar este bloco muda todos os agentes de uma vez e não cria uma
+            versão no histórico deste agente.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const PADRAO: ValoresAgente = {
   name: "",
   description: "",
-  systemPrompt:
-    "Você é um atendente da Seahub Coworking. Responda em português do Brasil, com objetividade e cordialidade.\n\nRegras:\n- Só afirme o que você tem certeza. Se não souber, diga que vai verificar e transfira para um humano.\n- Nunca invente valores, prazos ou disponibilidade.\n- Respostas curtas: no máximo 3 parágrafos.",
+  systemPrompt: PROMPT_BASE,
   model: MODELO_PADRAO,
   effort: "medium",
   maxTokens: 16384,
@@ -35,6 +158,7 @@ export function AgenteForm({
   valores = PADRAO,
   rotuloEnvio,
   somenteLeitura = false,
+  podeEncaminhar = true,
 }: {
   acao: (
     estado: EstadoFormulario,
@@ -44,6 +168,14 @@ export function AgenteForm({
   valores?: ValoresAgente;
   rotuloEnvio: string;
   somenteLeitura?: boolean;
+  /**
+   * Se o agente tem mesmo como entregar a conversa a uma pessoa — muda a
+   * última linha do bloco exibido, como muda no prompt de verdade. Não é
+   * campo do formulário: não se edita aqui, decorre de transferência,
+   * allowlist e modelo. Padrão `true` porque o agente novo nasce com
+   * transferência ligada e Chatwoot vinculado.
+   */
+  podeEncaminhar?: boolean;
 }) {
   const [estado, submeter, pendente] = useActionState<
     EstadoFormulario,
@@ -90,7 +222,7 @@ export function AgenteForm({
 
         <Field
           label="Prompt do agente"
-          hint="Define o comportamento. Evite datas ou identificadores dinâmicos aqui — isso invalida o cache do provedor e encarece cada mensagem."
+          hint="Escreva só o que é deste agente: quem ele é, o que ele atende, o que ele não decide sozinho e o tom. As regras de idioma, veracidade e formato o sistema acrescenta a todo agente — veja abaixo e não as repita aqui. Evite datas ou identificadores dinâmicos: invalidam o cache do provedor e encarecem cada mensagem."
           erro={erroDe("systemPrompt")}
         >
           <Textarea
@@ -102,6 +234,8 @@ export function AgenteForm({
             className="font-mono text-[13px]"
           />
         </Field>
+
+        <RegrasDaCasa podeEncaminhar={podeEncaminhar} />
       </Card>
 
       <Card className="space-y-4">

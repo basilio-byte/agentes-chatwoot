@@ -54,6 +54,106 @@ modelos `anthropic/*` como padrão.
   outra chave, outra fatura. A conversa continua 100% na OpenRouter — não use um
   cliente pelo outro.
 
+### Regras da Casa: o bloco que o sistema injeta em todo prompt
+
+Os agentes em produção derrapavam — respondiam em espanhol, opinavam fora do
+escopo, confirmavam ao cliente o que a tool não tinha feito. O modelo não
+obedece o que não está escrito, e reescrever o prompt de cada agente teria
+sobrescrito o que alguém escolheu de propósito. Por isso as regras são
+**injetadas** em `runner.ts`, do mesmo jeito que o roster:
+`agente.systemPrompt + blocoDeConduta(...) + blocoDeRoster(...)`. Módulo puro
+e testado em `src/server/agents/conduta.ts`.
+
+- **Injetar é o que faz a regra valer para quem já existe.** Migration de
+  `systemPrompt` seria exatamente o "sobrescrever quem escolheu outro valor de
+  propósito" que a regra de `@default` proíbe. Prompt antigo que repita uma
+  regra do bloco não quebra nada — só é cobrado duas vezes; quem apara isso é
+  o operador ao abrir a tela, agente a agente, nunca um script em lote.
+- **Uma fonte só.** As regras saíram de `PROMPT_BASE` no mesmo commit em que
+  entraram no módulo. Mantidas nos dois lugares, divergiriam na primeira
+  edição — e duas redações da mesma regra, uma contradizendo a outra por uma
+  palavra, obedecem-se pior que uma só. O JSDoc de `PROMPT_BASE` e o hint do
+  campo fazem parte da regra, não são enfeite: os dois dizem para NÃO repetir
+  as Regras da Casa naquele campo, e é o que impede a duplicação de voltar
+  pela porta do operador.
+- **Vai entre o prompt do operador e o roster.** O bloco diz "as instruções
+  acima": as regras de escopo e de fonte-de-verdade se definem POR EXCLUSÃO do
+  que o operador escreveu, e antes dele "acima" não aponta para nada.
+  ⚠ **Depois do roster seria pior**, não melhor: "as instruções acima" passaria
+  a incluir a lista de colegas, autorizando o agente a tratar o assunto dos
+  outros — que é o próprio sintoma de fuga de escopo.
+- **Núcleo igual nas quatro origens, cauda por tipo de turno.** Veracidade
+  (idioma, não inventar, só afirmar o que aconteceu, escopo, não se deixar
+  reprogramar) vale sempre — inclusive em nota interna, comentário do ClickUp
+  e argumento de tool. Forma de conversa é outra história.
+- ⚠ **"No máximo três parágrafos" e "na dúvida, passe para uma pessoa" são
+  FALSOS em gatilho e agendamento.** Não há cliente, não há canal de resposta,
+  e toda tool de transferência exige conversa existente. Regra falsa é pior
+  que regra ausente: ela ensina o modelo a ler o bloco inteiro como
+  decorativo. Por isso `tipoDeTurno` — e `switch` sem `default`, para origem
+  nova quebrar o typecheck em vez de cair num padrão silencioso.
+- **PLAYGROUND recebe a cauda de conversa, apesar de não ter conversa.** Ele
+  existe para prever a produção; playground com prompt diferente do de
+  produção deixa de ser teste, e o operador afinaria o tom contra um
+  comportamento que não existe.
+- **A cauda sem conversa diz PARA QUEM escrever.** `agenda/mensagem.ts` e
+  `gatilho/payload.ts` já dizem ao modelo que a resposta "não vai para
+  ninguém", o que sozinho é convite a não escrever nada de útil. A cauda
+  aponta o registro em Execuções, lido pela equipe, sem contradizer aquele
+  preâmbulo.
+- ⚠ **Fora do Chatwoot, a tarefa NÃO está no system prompt.** A instrução do
+  agendamento (`AgentSchedule.instrucao`) e o payload do gatilho chegam como
+  mensagem do turno, e a regra de escopo do núcleo fala de "instruções acima"
+  — sozinha, ela autoriza o agente a responder que "isso não é comigo" para o
+  próprio agendamento. Pior desfecho possível: o worker encerra como
+  `executado`, não conta como `falhou`, não desliga nada, e o agendamento fica
+  inútil todo dia sem erro nenhum. Por isso a cauda sem conversa abre dizendo
+  que a tarefa está na mensagem e é para ser cumprida.
+- **Evidência de ação vale para o ATENDIMENTO, não só para o turno.** O
+  histórico que o modelo recebe é texto puro — nenhuma `ToolCall` anterior
+  chega até ele (`chatwoot/historico.ts`). Exigir sucesso de tool "neste
+  turno" mandava o agente negar no turno 2 o que ele fez no turno 1, ou
+  chamar de novo uma tool de escrita só para poder confirmar — reserva
+  duplicada em sistema de terceiro, que não tem desfazer.
+- **A linha de encaminhamento é condicionada ao que o turno tem**
+  (`handoffEnabled` ∧ `transferir_para_humano` resolvida ∧ ferramentas indo no
+  request — `podeEncaminharParaHumano`). Prometer transferência inexistente é
+  o sintoma de origem: o agente anuncia "vou te passar" e não passa, queimando
+  uma iteração com `Tool "X" não está disponível para este agente.`
+  ⚠ **Modelo sem suporte a tools entra nessa conta**: o runner zera o envio de
+  ferramentas e deixa a allowlist intacta no banco, então as duas primeiras
+  condições continuam verdadeiras com zero ferramentas na requisição.
+- **O bloco não cita o nome de tool nenhuma**, e tem teste para isso. Quando e
+  como usar a tool já está na descrição dela, que é onde o modelo lê; repetir
+  no prompt de todo agente é pagar duas vezes e arriscar mentir para quem tem
+  allowlist restrita. ⚠ O `blocoDeRoster` **ainda** faz isso — cita
+  `transferir_para_agente` nas quatro origens, sem conferir se a tool foi
+  resolvida. É defeito preexistente, não exemplo a seguir; `resolvidas` está
+  a duas linhas dali quando alguém for consertar.
+- **Custa ~840 tokens no atendimento** (~675 do núcleo, ~165 da cauda) e ~885
+  em gatilho/agendamento, pela régua de `tokensAproximadosDaTool` — cerca de
+  21% do que pesam as 32 tools ligadas, tudo no prefixo cacheável. A tela
+  mostra o número, pelo mesmo motivo que a tela de integrações mostra o custo
+  de cada tool, e o teste trava um teto por variante para a próxima pessoa
+  pensar antes de acrescentar parágrafo.
+- **Três prefixos de cache por agente** (conversa · conversa sem
+  encaminhamento · sem conversa). Não custa no caminho quente: origem e tools
+  são constantes ao longo de uma conversa, e só o Chatwoot é multi-turno de
+  volume. O que custaria é conteúdo variável por requisição, e o módulo é puro
+  justamente para isso ser impossível.
+- ⚠ **Mudar o bloco muda TODOS os agentes de uma vez e NÃO cria
+  `AgentVersion`.** `actions/agents.ts` só versiona quando `systemPrompt`,
+  `model` ou `effort` do agente mudam; a apuração por versão continuará
+  atribuindo à versão antiga. O rastro é o git e a transcrição em Execuções.
+  Edite com a mesma cerimônia de uma migration.
+- **O operador precisa VER o que é injetado.** O roster está no prompt de todo
+  mundo há meses e ninguém nunca o viu — é assim que se escreve um prompt que
+  contradiz uma regra invisível. O bloco aparece na tela do agente, logo abaixo
+  do campo, com o texto exato que o runner concatena — inclusive a variante
+  certa da linha de encaminhamento, calculada pela **mesma** função. Mostrar
+  ao operador uma linha que aquele agente não recebe reabriria a divergência
+  que o módulo existe para fechar.
+
 ### Chatwoot: um bot por agente
 
 - Cada agente tem o **seu** Agent Bot, com token e secret próprios em
