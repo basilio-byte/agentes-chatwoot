@@ -8,7 +8,9 @@ import { clickupConfigSchema } from "@/server/integrations/clickup/config";
 import { conexaConfigSchema } from "@/server/integrations/conexa/config";
 import { lerConfigZapSign } from "@/server/integrations/zapsign/config";
 import { lerConfigOpenAI } from "@/server/integrations/openai/config";
+import { lerConfigGoogle } from "@/server/integrations/google/config";
 import { leiturasRecentes, modelosParaEscolher } from "@/server/actions/openai";
+import { dadosDaContaGoogle } from "@/server/actions/google";
 import {
   IntegrationProvider,
   IntegrationStatus,
@@ -21,6 +23,7 @@ import { ZapSignConfigForm } from "@/components/zapsign-config";
 import { OpenAIConfigForm } from "@/components/openai-config";
 import { LeiturasDeMidia } from "@/components/leituras-de-midia";
 import { DocumentosConfigForm } from "@/components/documentos-config";
+import { GoogleConfigForm } from "@/components/google-config";
 import {
   Building2,
   Ear,
@@ -28,6 +31,7 @@ import {
   IdCard,
   ListChecks,
   MessagesSquare,
+  Table2,
 } from "lucide-react";
 import { Abas } from "@/components/abas";
 import { Aviso, Badge, Card, PageHeader } from "@/components/ui";
@@ -93,6 +97,21 @@ export default async function IntegracoesPage({
         where: { integrationId: openai.id, enabled: true },
       })
     : 0;
+
+  const google = registros.find(
+    (i) => i.provider === IntegrationProvider.GOOGLE,
+  );
+  const configGoogle = lerConfigGoogle(google?.config);
+  const toolsGoogle =
+    obterIntegracao(IntegrationProvider.GOOGLE)?.tools.length ?? 0;
+  // O e-mail da conta de serviço é lido do JSON decifrado a cada abertura, e
+  // não sai da config: a config é substituída inteira a cada save, e o
+  // primeiro "Salvar configuração" de um ADMIN apagaria o que o OWNER gravou.
+  //
+  // ⚠ Só para quem pode: `dadosDaContaGoogle` exige ADMIN e **lança** se não
+  // tiver. Chamar sem a guarda derrubaria a página inteira de Integrações para
+  // o papel Leitura, que hoje a abre sem problema.
+  const contaGoogle = editavel ? await dadosDaContaGoogle() : null;
 
   const comBot = await db.agentChatwootBot.count();
   const segredosDaConta = await obterSegredosDaConta();
@@ -426,6 +445,87 @@ export default async function IntegracoesPage({
                     Último teste: {documentos.lastError}
                     {documentos.lastCheckedAt
                       ? ` (${formatarData(documentos.lastCheckedAt)})`
+                      : ""}
+                  </Aviso>
+                ) : null}
+              </Card>
+            ),
+          },
+          {
+            id: "google",
+            rotulo: "Google Workspace",
+            icone: <Table2 size={14} aria-hidden />,
+            contador: toolsGoogle,
+            alerta: !google?.enabled,
+            conteudo: (
+              <Card className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="font-medium">Google Workspace</h2>
+                  {google?.enabled ? (
+                    <Badge tone="success">ligada</Badge>
+                  ) : (
+                    <Badge>desligada</Badge>
+                  )}
+                  {google?.status === IntegrationStatus.OK ? (
+                    <Badge tone="success">conexão ok</Badge>
+                  ) : google?.status === IntegrationStatus.ERROR ? (
+                    <Badge tone="danger">falha na conexão</Badge>
+                  ) : null}
+                </div>
+
+                {/* "Nunca vê um id" era falso: a listagem de pasta devolve o
+                    id de cada arquivo. O que sustenta a allowlist é outra
+                    afirmação, essa verdadeira — nenhuma tool aceita id de
+                    volta; ele aparece no retorno para uma pessoa cadastrar o
+                    arquivo. */}
+                <p className="text-sm text-muted">
+                  Planilhas do Sheets, documentos do Docs e pastas do Drive, por
+                  uma conta de serviço. Os arquivos são cadastrados{" "}
+                  <strong>por nome</strong>: o agente pede pelo nome,{" "}
+                  <strong>nenhuma ferramenta aceita id</strong>, e ele não
+                  alcança nada que esteja fora da lista. O agente recebe{" "}
+                  {toolsGoogle} ferramenta(s) quando esta integração está ligada
+                  para ele.
+                </p>
+
+                <GoogleConfigForm
+                  contaEmail={contaGoogle?.contaEmail ?? null}
+                  projectId={contaGoogle?.projectId ?? null}
+                  planilhas={configGoogle.planilhas
+                    .map((p) => `${p.nome} = ${p.id}`)
+                    .join("\n")}
+                  documentos={configGoogle.documentos
+                    .map((d) => `${d.nome} = ${d.id}`)
+                    .join("\n")}
+                  modelos={configGoogle.modelos
+                    .map((m) => `${m.nome} = ${m.id}`)
+                    .join("\n")}
+                  pastas={configGoogle.pastas
+                    .map((p) => `${p.nome} = ${p.id}`)
+                    .join("\n")}
+                  driveCompartilhadoId={configGoogle.driveCompartilhadoId}
+                  limiteDeLinhas={configGoogle.limiteDeLinhas}
+                  personificar={configGoogle.personificar}
+                  habilitada={google?.enabled ?? false}
+                  temChave={Boolean(google?.credential)}
+                  hintChave={google?.credential?.hint ?? null}
+                  somenteLeitura={!editavel}
+                  podeEditarCredencial={sessao.user.role === UserRole.OWNER}
+                />
+
+                {/* ⚠ Sob a MESMA condição do e-mail da conta de serviço, e não
+                    é excesso de zelo: as mensagens de erro de `google/client.ts`
+                    interpolam `client_email` e `project_id`. O papel Leitura
+                    acabou de ler, poucos blocos acima, que o endereço da conta
+                    não aparece para ele — mostrá-lo aqui, dentro do erro,
+                    desmentiria a barreira que a própria tela anuncia. Segredo
+                    não é, mas tela que contradiz o que promete ensina a não
+                    acreditar no resto. */}
+                {editavel && google?.lastError ? (
+                  <Aviso tone="danger">
+                    Último teste falhou: {google.lastError}
+                    {google.lastCheckedAt
+                      ? ` (${formatarData(google.lastCheckedAt)})`
                       : ""}
                   </Aviso>
                 ) : null}

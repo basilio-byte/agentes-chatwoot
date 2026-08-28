@@ -57,7 +57,11 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
     resumo: "Faz tudo, inclusive credenciais e contas.",
     pode: [
       "Tudo o que o Administrador faz",
-      "Trocar as credenciais de Chatwoot, ClickUp, Conexa, ZapSign e OpenAI",
+      // O JSON da conta de serviço do Google entra aqui como qualquer outra
+      // credencial: quem o cola é `salvarChaveGoogle`, que exige OWNER. Deixar
+      // a frase desatualizada faria alguém entregar uma conta de ADMIN
+      // achando que ela não alcança credencial nenhuma.
+      "Trocar as credenciais de Chatwoot, ClickUp, Conexa, ZapSign, OpenAI e Google Workspace",
       "Gerar e rotacionar o token do gatilho HTTP",
       "Criar contas, mudar papéis, redefinir senha e desativar pessoas",
     ],

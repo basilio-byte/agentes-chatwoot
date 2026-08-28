@@ -512,6 +512,300 @@ modelo escolher fornecedor.
 - **README de MCP não é fonte de rota.** O MCP oficial da ZapSign lista
   `GET /documents`; a API real é `GET /api/v1/docs/`.
 
+### Google Workspace: Sheets, Docs e Drive por uma conta de serviço
+
+O agente lê e escreve planilha, lê e gera documento, e lista pasta. O caso que
+motivou tudo: o cliente manda um PDF no WhatsApp, a leitura de mídia transforma
+em texto, e o agente grava uma linha na planilha de controle.
+
+- **Um provider, não três.** `IntegrationCredential` é 1:1 com `Integration`, e a
+  credencial aqui é uma só — a chave da conta de serviço. Três providers
+  (SHEETS/DOCS/DRIVE) obrigariam a colar o mesmo JSON três vezes e a rotacioná-lo
+  em três lugares; na primeira rotação alguém esquece um, e a integração
+  esquecida passa a falhar sozinha enquanto as outras duas funcionam. Além disso,
+  gerar documento de modelo atravessa Drive e Docs **na mesma tool**, e ela
+  ficaria partida entre dois toggles. Quem separa Sheets de Docs para o operador
+  é `categoria` e a allowlist — onde a separação custa zero.
+- **Conta de serviço, e não OAuth de um usuário.** `resolve.ts` só **decifra**:
+  não existe caminho de escrita de credencial a partir do runner, e um
+  `refresh_token` precisaria de um. Pior: ele morre por três caminhos silenciosos
+  (revogação, seis meses sem uso, teto de tokens por conta) e some junto com a
+  pessoa que autorizou, no dia em que ela sai da empresa.
+- **JWT assinado com `node:crypto`, sem SDK.** `googleapis` traz centenas de
+  módulos para o que cabe em cem linhas, e o worker é um bundle esbuild com lista
+  explícita de externals — dependência nova ali é risco que só aparece em
+  produção. Mesmo motivo de ClickUp, Conexa e ZapSign serem clientes escritos à
+  mão.
+- ⚠ **`aud` é a constante `URL_DO_TOKEN`, nunca o `token_uri` do JSON.** O
+  arquivo traz o endereço antigo (`accounts.google.com/o/oauth2/token`); o fluxo
+  JWT exige `oauth2.googleapis.com/token`.
+- ⚠ **O cache do access token é chaveado por `(client_email, escopos,
+  personificar)`.** Chavear só pela conta devolveria o token de OUTRO usuário
+  quando a personificação estivesse em uso — e o sintoma seria "o agente escreveu
+  na planilha errada". Tem dedupe de voo único porque a concorrência do worker é
+  4: sem ele, quatro conversas simultâneas fazem quatro assinaturas RSA e jogam
+  três fora.
+- ⚠ **`invalid_grant` tem três causas e a mensagem do Google não distingue
+  nenhuma**: JSON de outro projeto, relógio do container fora de hora (o
+  assertion vale no máximo 1h e o Google confere), ou quebras de linha destruídas
+  na `private_key`. A tradução em `auth.ts` cita as três, em ordem de
+  probabilidade — sem ela o operador rotaciona uma credencial que está boa.
+
+#### O cadastro por nome é a allowlist de arquivos
+
+Planilhas, documentos, modelos e pastas entram na config como `nome = id`, e o
+modelo **nunca vê um id**.
+
+- **Não é conveniência, é contenção.** `resolverCadastro` **recusa id cru** — ao
+  contrário do `resolverModelo` da ZapSign, que aceita o que "parece uuid". Lá o
+  token tem forma reconhecível; aqui o id do Google é uma string opaca qualquer,
+  e aceitar o que parece id deixaria o agente escrever em qualquer planilha que a
+  conta enxergasse, inclusive numa que ele alucinou. Allowlist com porta lateral
+  não é allowlist.
+- **Nome desconhecido devolve os nomes que existem**, e nunca lança: o modelo se
+  corrige no mesmo turno, em vez de queimar o turno inteiro. ⚠ **Lista vazia é
+  outra conversa**: "use um dos nomes abaixo" seguido de nada manda o agente
+  chutar, receber a mesma frase e chutar de novo até o teto de iterações — e é o
+  estado mais comum de todos, a integração ligada no primeiro dia. Nesse caso o
+  retorno diz que **falta configuração** e que não há como contornar.
+- **Leitura longa devolve `proximaLinha`.** "Peça uma faixa menor" levava o
+  agente a reler o COMEÇO com outro tamanho, receber `truncado: false` e
+  concluir que percorreu a planilha inteira — respondendo ao cliente que não há
+  registro em nome dele com o registro na linha 640. O campo `total` virou
+  `linhasDevolvidas` pelo mesmo motivo: o nome antigo sugeria o total da aba.
+- ⚠ **A config nunca chega ao prompt.** `ToolDefinition.description` é string
+  estática, montada no carregamento do módulo — o cadastro não aparece lá. Por
+  isso `google_sheets_ver_estrutura` **sem parâmetro nenhum** lista as planilhas
+  disponíveis: é a porta de descoberta, e ela não custa chamada HTTP. Ainda
+  assim, o `systemPrompt` do agente é o lugar certo para dizer em qual planilha
+  ele grava.
+
+#### Escrever numa planilha que já existe é diferente de criar arquivo
+
+⚠ **A conta de serviço tem quota de armazenamento ZERO e não pode ser dona de
+arquivo nenhum.** Não é quota pequena, e não há tela para aumentar.
+
+- **Mas isso só morde em criar, copiar e subir.** Escrever numa planilha que já
+  existe não muda o dono e não toca quota. É o que faz o caso de uso principal
+  funcionar sem Workspace pago, sem Drive compartilhado e sem Admin console:
+  basta compartilhar a planilha com o e-mail da conta de serviço, como Editor.
+- **Pôr a pasta de destino em `parents` NÃO transfere a propriedade.** Quem cria
+  é o dono, e quem cria é a conta de serviço — mesmo `403 storageQuotaExceeded`.
+  Só um Drive compartilhado resolve, e por isso `google_docs_criar_de_modelo`
+  recusa **antes de gastar chamada** quando `driveCompartilhadoId` está vazio:
+  deixar o 403 cru chegar ao modelo não diz a ninguém o que precisa ser feito.
+- ⚠ **`spreadsheets.create` e `documents.create` não aceitam `parents`** e criam
+  na raiz do My Drive do chamador — que, para a conta de serviço, é o nada. E
+  `documents.create` **ignora o conteúdo enviado, em silêncio**. Criar arquivo é
+  sempre pelo Drive (`files.copy`), nunca pela API do produto.
+- ⚠ **O e-mail da conta termina em `gserviceaccount.com`, que é domínio
+  externo**, e o Google não permite cadastrá-lo como domínio confiável. Se o
+  Admin do Workspace restringiu compartilhamento, não há como compartilhar nada
+  com ela e o único caminho é `personificar` (domain-wide delegation). O campo
+  existe, nasce vazio, e não é o caminho padrão.
+- ⚠ **`drive.file` não serve.** "Arquivos que o app abriu" significa Google
+  Picker, no navegador; um worker headless nunca abre nada, e a planilha
+  compartilhada por e-mail fica invisível com `403 appNotAuthorizedToFile`.
+  Escolher o escopo restrito "por segurança" produz um agente que não enxerga
+  nada. Quem restringe é o compartilhamento.
+
+#### Sheets: os dois parâmetros que apagam dados em silêncio
+
+- ⚠⚠ **`insertDataOption: "INSERT_ROWS"`, sempre explícito.** A referência da API
+  documenta os dois valores e **não documenta qual é o padrão**. Com `OVERWRITE`,
+  uma aba que tenha qualquer coisa abaixo da tabela — linha de totais, rodapé,
+  segunda tabela — é gravada por cima, e a resposta volta `200` com
+  `updatedCells` correto. Perda de dados silenciosa, sem desfazer. Tem teste.
+- ⚠ **`valueInputOption: "RAW"`, sempre.** `USER_ENTERED` interpreta como se
+  alguém tivesse digitado: `01234567890` vira o número `1234567890` e o zero do
+  CPF some; `28/08/2026` é lido conforme o `locale` da planilha, que um humano
+  pode mudar; e um valor começando com `=` vira **fórmula** — texto de cliente
+  executando fórmula em planilha corporativa é exfiltração. A formatação visual
+  (R$, dd/mm/aaaa) é atributo da coluna, definido uma vez.
+- ⚠ **O `range` do append não é o destino** — é "onde procurar a tabela", e a
+  escrita começa na primeira coluna da tabela **detectada**, não na coluna A.
+  Mandar a aba inteira fazia uma planilha cujo cabeçalho comece em `B1` (coluna
+  A deixada vazia por estética) sair com a linha deslocada uma casa, e o último
+  valor caindo fora do cabeçalho — com `200` e `gravado: true`. Por isso a faixa
+  é ancorada em `A:<última coluna do cabeçalho>`, e o retorno **confere** que o
+  `updates.updatedRange` começa em A antes de afirmar que gravou. Quem diz onde
+  caiu é sempre a resposta do Google, nunca a suposição de quem chamou.
+- ⚠ **Falha depois do envio não é "não gravou".** Um `5xx`, um timeout de 30 s ou
+  uma queda de rede não dizem se a linha entrou, e o runner entrega a exceção ao
+  modelo como resultado de tool comum — o que o ensina a corrigir e chamar de
+  novo. Duas linhas da mesma pessoa, e o `atualizar_linha` do atendimento
+  seguinte recusando alterar qualquer uma por achar duas ocorrências: o cadastro
+  trava até alguém abrir a planilha à mão. As tools de escrita devolvem
+  `resultado: "indeterminado"` mandando **conferir antes de tentar de novo**.
+  `4xx` (inclusive `429`) continua sendo relançado: é recusa antes de aplicar.
+- ⚠ **`UNFORMATTED_VALUE` sozinho transforma toda data num inteiro de cinco
+  dígitos**, porque `dateTimeRenderOption` fica no padrão `SERIAL_NUMBER`. Os
+  dois andam juntos: `UNFORMATTED_VALUE` + `FORMATTED_STRING`.
+- ⚠ **`values` some da resposta quando a faixa está vazia** — não vem `[]`, vem
+  ausente. E "empty trailing rows and columns will not be included": as linhas
+  chegam com comprimentos diferentes, e `linha[4]` é `undefined`, não `""`. É o
+  que `normalizarLinhas` conserta.
+- **Não existe busca na Sheets API.** `procurar_linha` lê a coluna com
+  `majorDimension=COLUMNS` e compara aqui — com `ROWS` chegariam mil arrays de um
+  elemento.
+- **Não existe concorrência otimista nem idempotência**: sem ETag, sem
+  `If-Match`, sem chave de requisição. Por isso a política de retry do cliente é
+  assimétrica: leitura repete em `429` e `5xx`; **escrita repete só em `429`**,
+  que é recusa definitiva. Um `5xx` numa escrita é ambíguo — pode ter sido
+  aplicada antes de o erro voltar —, e repetir gravaria a linha duas vezes.
+
+#### Coluna errada aborta a gravação inteira
+
+`casarComCabecalho` devolve `ok: false` e **nada é escrito** quando o agente
+informa uma coluna que não existe no cabeçalho.
+
+- **É a lição de `clickup/campos.ts`, e aqui vale mais.** Lá dá para editar a
+  tarefa depois; aqui não existe desfazer e não há tool de exclusão. Gravar a
+  linha faltando o CPF e devolver `gravado: true` faria o agente confirmar ao
+  cliente um registro incompleto — e a Regra 3 manda ele confirmar, justamente
+  porque a ferramenta devolveu sucesso.
+- **O retorno traz o `cabecalhoReal`**, para o modelo se corrigir no mesmo turno.
+- **Coluna do cabeçalho que o agente NÃO informou fica em branco, sem
+  reclamar.** Ninguém preenche todas as colunas a cada linha.
+- **Coluna informada duas vezes também aborta**, nos dois caminhos de escrita.
+  "Última vence" gravaria um valor que o agente não escolheu conscientemente.
+- ⚠ **Cabeçalho com duas colunas de nome equivalente aborta a LEITURA também.**
+  `"CPF"` na coluna B e `"CPF "` (com um espaço no fim, invisível na tela) na D
+  é o caso real: a escrita resolvia para B, e a leitura — que monta o registro
+  por nome de coluna — deixava a chave `CPF` ser reatribuída pela D, vazia. O
+  agente lia "falta o CPF", mandava atualizar, e a atualização sobrescrevia o
+  CPF correto. `atualizado: true`, e a leitura seguinte continuava mostrando
+  vazio. Leitura e escrita discordando sobre a mesma coluna é o pior estado
+  possível numa planilha sem desfazer, então as duas recusam — e o retorno manda
+  escalar, porque nenhuma reformulação do pedido resolve.
+
+#### Atualizar localiza pela chave de negócio, nunca pelo número da linha
+
+`google_sheets_atualizar_linha` recebe `colunaChave` + `valorChave` e acha a linha
+por dentro, recusando com zero ou mais de uma ocorrência.
+
+⚠ **Aceitar o número da linha do modelo seria a pior falha desta integração.** O
+histórico que o modelo recebe é texto puro — nenhuma `ToolCall` anterior chega até
+ele —, então num turno seguinte ele só poderia **chutar** o número. E um humano
+que insira ou remova uma linha entre a busca e a escrita desloca tudo. Nos dois
+casos o resultado é sobrescrever o registro de outra pessoa, com `200` de resposta
+e ninguém sabendo.
+
+E a escrita é **célula a célula** (`values:batchUpdate`), nunca um `values.update`
+da linha inteira — que apagaria todas as colunas não informadas.
+
+#### Docs: índice nenhum, e conferir antes de copiar
+
+- ⚠ **Os índices do Docs são UTF-16 e cascateiam**: toda inserção desloca os
+  maiores, e um índice calculado antes da requisição já está errado quando ela
+  chega. O módulo evita o problema **por construção** — só `replaceAllText` (que
+  não usa índice) e `endOfSegmentLocation` (que o Google resolve). Se algum dia
+  entrar `insertText` com `index`, a regra é aplicar de trás para frente.
+- ⚠ **`endOfSegmentLocation` sem `tabId` escreve na PRIMEIRA aba, não no fim do
+  documento.** Só `replaceAllText`, `deleteNamedRange` e
+  `replaceNamedRangeContent` valem para todas as abas quando o `tabId` é
+  omitido; `insertText` não está nessa lista. Numa ata com abas `2025` e `2026`,
+  a ocorrência de hoje ia para o fim do arquivo morto, com `anexado: true` e uma
+  descrição de tool afirmando "ao FINAL do documento". Por isso
+  `google_docs_anexar_texto` **recusa documento com mais de uma aba** em vez de
+  escolher: "o final" de um documento com abas não é uma coisa só, e adivinhar
+  errado aqui é indetectável.
+- ⚠ **`occurrencesChanged: 0` volta com HTTP 200.** Placeholder que alguém quebrou
+  por autocorreção no Google Docs não casa, e o contrato sai com `{{cliente}}`
+  impresso. O retorno nomeia o que não foi trocado e manda o agente avisar que
+  precisa de revisão humana.
+- ⚠ **Conferir por um critério e substituir por outro não protege nada.** A
+  conferência do pedido do agente é tolerante (casa `cliente` com `Cliente`),
+  mas `replaceAllText` é literal e com `matchCase`. Um modelo escrito
+  `{{ Cliente }}` aprovava o pedido, o `files.copy` criava o documento, e a
+  substituição achava zero ocorrências — sobrava um contrato órfão no Drive, e
+  mais um a cada tentativa do agente. Por isso `camposDoModelo` devolve **o
+  nome E o literal**: casa-se pelo nome, substitui-se pelo literal.
+- ⚠ **A conferência acontece nos DOIS sentidos, e antes do `files.copy`.** Campo
+  informado que não existe no modelo já era recusado; faltava o inverso —
+  campo que existe no modelo e o agente não informou sai impresso como
+  `{{Vigência}}` no contrato, e o retorno dizia `criado: true` sem ressalva
+  nenhuma. Os dois recusam antes de copiar: se a checagem viesse depois, o
+  documento já existiria, o erro voltaria ao modelo como resultado normal, ele
+  corrigiria e chamaria de novo — e cada tentativa deixaria no Drive um
+  documento que **nenhuma tool apaga**.
+- **Chamar sem `campos` consulta o modelo sem criar nada.** É o
+  `zapsign_ver_modelo` desta integração, embutido na mesma tool em vez de custar
+  uma tool inteira no prompt de todo agente. Sem ela o agente não teria como
+  saber quais campos existem, e o caminho provável era criar o documento com
+  metade deles cru.
+- ⚠ **`includeTabsContent=true` é obrigatório.** No padrão, um documento com abas
+  devolve só a primeira, sem erro nenhum. E documento organizado por abas tem o
+  `body` vazio: quem lê só `body` recebe string vazia justamente dos documentos
+  mais organizados. Tabela também tem árvore própria — `docs.ts` é puro e testado
+  por isso.
+
+#### Drive: três parâmetros cuja ausência devolve 200 com nada
+
+- ⚠ **`includeItemsFromAllDrives=true` na listagem.** Sem ele, `files.list`
+  devolve `200` com `files: []` — silêncio, não erro, e o agente conclui que a
+  pasta está vazia. `supportsAllDrives` sozinho **não** basta na listagem.
+- ⚠ **`corpora`/`driveId` NÃO entram na listagem**, por mais que o
+  `driveCompartilhadoId` esteja configurado. `corpora=drive` restringe a
+  consulta aos itens **daquele** Drive compartilhado, e o campo existe para
+  dizer onde CRIAR arquivo, não onde procurar. Mandá-lo fazia uma pasta do Meu
+  Drive de alguém — o caminho normal — passar a devolver lista vazia no dia em
+  que o operador preenchesse o Drive compartilhado para poder gerar documento.
+  `200`, sem erro, sem rastro: o mesmo desfecho que os dois parâmetros acima
+  existem para evitar. Os dois juntos já alcançam os dois mundos.
+- ⚠ **`fields` omitido devolve só `kind,id,name,mimeType`** — nada de tamanho,
+  data ou link. E `fields=files(...)` **sem `nextPageToken`** mata a paginação na
+  primeira página, também em silêncio.
+- ⚠ **`404 File not found` significa "não existe OU não foi compartilhado"**, de
+  propósito, para não vazar a existência do arquivo. Repassado cru, o modelo diz
+  ao cliente que a planilha não existe e o operador vai trocar um id que está
+  certo. A tradução cita o `client_email` — que é a coisa que falta ser feita.
+- ⚠ **`403` no Drive é cota tanto quanto permissão**, e só
+  `error.errors[0].reason` separa. Tratar todo `403` como fatal faz desistir de um
+  pico que passaria sozinho; tratar como retentável faz martelar um
+  `insufficientFilePermissions` com o cliente esperando.
+- **`name contains` casa o COMEÇO do nome, não um pedaço do meio**, e `parents` é
+  um nível só — não há listagem recursiva. As duas coisas estão escritas na
+  descrição da tool, porque o modelo que não sabe disso diz ao cliente que o
+  arquivo não existe.
+- **`trashed = false` em toda listagem**, senão a lixeira aparece como conteúdo
+  vivo.
+
+#### O que ficou de fora, e por quê
+
+- **Excluir, mover e compartilhar arquivo.** Dar a um modelo que lê mensagem de
+  cliente o poder de apagar arquivo ou de conceder acesso a terceiros é risco sem
+  contrapartida. Mesmo tratamento do `DELETE` da ZapSign — e há teste no catálogo
+  travando que nenhuma tool tenha `excluir`/`apagar`/`remover` ou
+  `permiss`/`compartilh` no nome.
+- **Arquivar no Drive o anexo que o cliente mandou.** Precisa dos bytes, e
+  `ToolContext` não os tem. É possível sem mudar o contrato
+  (`chatwootConversationId` + `listarMensagens` + `baixarArquivo`), mas é
+  capacidade nova, acopla o módulo Google ao do Chatwoot, e um upload de 5 MB não
+  cabe no orçamento de 3 minutos do vigia de espera.
+- **Criar planilha ou aba nova.** Exige quota de criação e resolve um problema que
+  ninguém tem: a planilha de controle já existe.
+- **Config de Google por agente.** `AgentIntegration` só tem `enabled` +
+  `allowedTools`. O cadastro é global e quem restringe é o `systemPrompt` do
+  agente. Se virar requisito, o molde é `AgentChatwootBot`.
+
+#### Pré-requisito que não é adivinhável
+
+⚠ **Sem a leitura de mídia ligada no agente da PORTA, o caso de uso morre antes de
+começar.** Mensagem só com anexo e leitura desligada vira entrega `ignorado` no
+webhook e **nenhum job é criado** — o PDF não chega a agente nenhum. Quem liga o
+Google não pensa em ir na aba da OpenAI, e o sintoma é silêncio.
+
+E ⚠ **PDF que chegue por gatilho HTTP ou por agendamento não vira texto**: só o
+worker de atendimento chama `lerMidiaDaConversa`. As tools de planilha funcionam
+nas quatro origens; a leitura do anexo, não.
+
+⚠ **Afiar `instrucaoDocumento` muda TODOS os agentes.** É campo único da linha
+única da integração OPENAI. Trocar "resuma" por "transcreva literalmente" para
+melhorar a extração muda o contexto de todo atendimento que recebe PDF — e **não
+reprocessa** o que já está em `MediaAnalysis` com status `OK`, porque a chave do
+cache é o arquivo. Teste sempre com arquivo novo.
+
 ### Regras globais de atendimento
 
 Em `src/server/integrations/chatwoot/regras.ts`, puras e testadas. Aplicadas em

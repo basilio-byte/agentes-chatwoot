@@ -333,6 +333,12 @@ enum IntegrationProvider {
   /// público e a consulta gratuita de CNPJ da base aberta da Receita. Está no
   /// registry pelo toggle de dois níveis e pela allowlist, não pela conta.
   DOCUMENTOS
+  /// Google Workspace — Sheets, Docs e Drive por uma conta de serviço. Um
+  /// provider só, e não três, porque a credencial é UMA (IntegrationCredential
+  /// é 1:1 com Integration) e porque gerar documento a partir de modelo
+  /// atravessa Drive e Docs na mesma tool. A separação que o operador vê vem
+  /// de `categoria` e da allowlist, que é onde ela custa zero.
+  GOOGLE
 }
 
 enum IntegrationStatus {

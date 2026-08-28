@@ -27,6 +27,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.ZAPSIGN]: "ZapSign",
   [IntegrationProvider.OPENAI]: "OpenAI — leitura de mídia",
   [IntegrationProvider.DOCUMENTOS]: "Documentos (CPF, CNH, CNPJ)",
+  [IntegrationProvider.GOOGLE]: "Google Workspace",
 };
 
 /**

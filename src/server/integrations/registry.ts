@@ -4,6 +4,7 @@ import { chatwootIntegration } from "./chatwoot";
 import { clickupIntegration } from "./clickup";
 import { conexaIntegration } from "./conexa";
 import { documentosIntegration } from "@/server/documentos";
+import { googleIntegration } from "./google";
 import { openaiIntegration } from "./openai";
 import { zapsignIntegration } from "./zapsign";
 
@@ -30,6 +31,12 @@ const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = 
   // Sem credencial: algoritmo público e consulta gratuita. Está aqui pelo
   // toggle de dois níveis e pela allowlist, não por ter conta para configurar.
   [documentosIntegration.provider]: documentosIntegration,
+  // Sheets, Docs e Drive num provider só: a credencial é uma (a chave da conta
+  // de serviço) e `IntegrationCredential` é 1:1 com `Integration`. Três
+  // providers obrigariam a colar o mesmo JSON três vezes e a rotacioná-lo em
+  // três lugares — e o primeiro esquecido falharia sozinho, com os outros dois
+  // funcionando. Quem separa Sheets de Docs para o operador é `categoria`.
+  [googleIntegration.provider]: googleIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {
