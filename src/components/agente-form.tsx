@@ -35,6 +35,18 @@ export type ValoresAgente = {
  * que já existem. Aqui fica só o que é deste agente — quem ele é, o que ele
  * não faz e o tom.
  *
+ * ⚠ **Elas saíram do bloco INJETADO antes de saírem daqui**, e por um mês este
+ * texto continuou dizendo "responde o que sabe com certeza", "não concede
+ * desconto" e "não promete prazo sem confirmar" — as três já garantidas pelas
+ * regras 2 e 5. O usuário viu isso como "as regras antigas voltaram" depois de
+ * um deploy, e a leitura dele estava certa: era o campo abaixo da dica que diz
+ * "não precisam (nem devem) ser repetidas neste campo" repetindo-as.
+ *
+ * A divisão que vale daqui em diante: o bloco injetado descreve COMPORTAMENTO
+ * (o que não se inventa, o que não se afirma, até onde se vai); este texto
+ * nomeia ASSUNTO (o que é e o que não é com este agente) e TOM. Assunto o bloco
+ * não tem como saber — é a única coisa que só o operador pode escrever.
+ *
  * ⚠ O exemplo NÃO manda o agente dizer o próprio nome. O prompt padrão não
  * traz nome nenhum, e o nome real só chega pelo roster — que é string vazia
  * quando não há colegas com descrição de roteamento, ou seja, no primeiro
@@ -43,13 +55,12 @@ export type ValoresAgente = {
  */
 export const PROMPT_BASE = `Você é um atendente da Seahub Coworking.
 
---- O QUE VOCÊ FAZ ---
-Você atende no WhatsApp: entende o que a pessoa precisa, responde o que sabe
-com certeza e encaminha o resto para quem resolve.
+--- O QUE É COM VOCÊ ---
+Você atende no WhatsApp quem procura a Seahub: entende o que a pessoa precisa
+e resolve o que estiver ao seu alcance.
 
---- O QUE VOCÊ NÃO FAZ ---
-Você não fecha negócio, não concede desconto, não altera contrato e não
-promete prazo sem confirmar. Esses assuntos são de uma pessoa da equipe.
+--- O QUE NÃO É COM VOCÊ ---
+Contrato, cobrança e negociação comercial são de uma pessoa da equipe.
 
 --- COMO VOCÊ SE APRESENTA ---
 Cordial e direto, sem formalidade excessiva. Apresente-se na primeira
