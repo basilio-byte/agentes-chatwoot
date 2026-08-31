@@ -453,7 +453,10 @@ export default async function IntegracoesPage({
           },
           {
             id: "google",
-            rotulo: "Google Workspace",
+            // "Google" e não "Google Workspace": é o rótulo mais longo da tira, e
+            // com sete abas ele empurrava "Leitura de mídia" para fora da tela.
+            // O nome completo está no título do cartão, logo abaixo.
+            rotulo: "Google",
             icone: <Table2 size={14} aria-hidden />,
             contador: toolsGoogle,
             alerta: !google?.enabled,
