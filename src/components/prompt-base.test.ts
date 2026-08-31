@@ -3,75 +3,72 @@ import { PROMPT_BASE } from "./agente-form";
 import { NUCLEO, caudaDeConversa } from "@/server/agents/conduta";
 
 /**
- * O prompt-semente não pode repetir o bloco que o sistema injeta.
+ * O prompt-semente tem de CARREGAR as regras gerais, e ficar em dia com o bloco.
  *
- * Este arquivo existe por um defeito real: as regras de comportamento saíram do
- * `PROMPT_BASE` para o `blocoDeConduta` em 24/08/2026, mas o texto-semente
- * continuou dizendo "responde o que sabe com certeza", "não concede desconto" e
- * "não promete prazo sem confirmar" — as três já garantidas pelas regras 2 e 5.
+ * ⚠ A redundância é deliberada e é decisão do usuário: as regras gerais vão
+ * duas vezes no prompt de um agente novo — uma escrita neste texto, outra
+ * injetada pelo `blocoDeConduta`. Ele pediu isso três vezes, terminando em "as
+ * regras gerais devem aparecer dentro do prompt do agente, sem seção nova".
  *
- * Ficou assim por um mês porque nada olhava os dois textos juntos. O usuário
- * viu depois de um deploy e leu como "as regras antigas voltaram": ele estava
- * olhando o campo logo abaixo da dica que promete que essas regras "não
- * precisam (nem devem) ser repetidas neste campo".
+ * O campo de prompt é onde ele lê e edita o agente; regra que só existe
+ * injetada é regra que ele não vê nem controla. Um exemplo completo ensina o
+ * que escrever, um esqueleto ensina a deixar em branco.
  *
- * A divisão que estes testes travam: o bloco injetado descreve COMPORTAMENTO;
- * o prompt-semente nomeia ASSUNTO e TOM — a única parte que o bloco não tem
- * como saber, e por isso a única que o operador precisa escrever.
+ * O que estes testes evitam é o defeito REAL que já aconteceu: em 24/08/2026 as
+ * regras mudaram no bloco injetado e ninguém releu o exemplo, que por um mês
+ * seguiu prometendo coisas noutra redação. Aqui não se trava o texto palavra a
+ * palavra — isso engessaria a escrita — e sim que cada assunto do bloco tenha
+ * contraparte no exemplo.
  */
 
-/** Termos que o bloco injetado passou a possuir. */
-const DO_BLOCO = [
-  { termo: "desconto", regra: "5 (condição não sai de você)" },
-  { termo: "português", regra: "1 (idioma)" },
-  { termo: "invent", regra: "2 (não invente)" },
-  { termo: "sem confirmar", regra: "2 (prazo só vem de ferramenta)" },
-  { termo: "o que sabe com certeza", regra: "2 (não invente)" },
-  { termo: "parágrafos", regra: "cauda de conversa (tamanho)" },
-  { termo: "emoji", regra: "cauda de conversa (formato)" },
-  { termo: "markdown", regra: "cauda de conversa (formato)" },
+/** Cada assunto do bloco e a marca que prova que o exemplo o cobre. */
+const ASSUNTOS = [
+  { assunto: "idioma (regra 1)", marca: /português do brasil/i },
+  { assunto: "não inventar (regra 2)", marca: /não vale como fato sobre a seahub/i },
+  { assunto: "fontes permitidas (regra 2)", marca: /duas fontes/i },
+  { assunto: "data vem do sistema (regra 3)", marca: /chegam do sistema/i },
+  { assunto: "só afirmar o que aconteceu (regra 4)", marca: /devolver sucesso/i },
+  { assunto: "escopo (regra 5)", marca: /não é com você/i },
+  { assunto: "parar na dúvida (regra 6)", marca: /na dúvida, pare/i },
+  { assunto: "formato da conversa (cauda)", marca: /três parágrafos/i },
 ];
 
-describe("o prompt-semente não repete o bloco injetado", () => {
-  it("não usa nenhum termo que as Regras da Casa já possuem", () => {
-    const texto = PROMPT_BASE.toLowerCase();
-
-    for (const { termo, regra } of DO_BLOCO) {
-      expect(texto, `"${termo}" já é garantido pela regra ${regra}`).not.toContain(
-        termo,
-      );
+describe("o prompt-semente carrega as regras gerais", () => {
+  it("cobre cada assunto do bloco injetado", () => {
+    for (const { assunto, marca } of ASSUNTOS) {
+      expect(
+        PROMPT_BASE,
+        `o exemplo deixou de cobrir ${assunto} — se o bloco mudou, atualize os dois`,
+      ).toMatch(marca);
     }
   });
 
-  it("nenhuma frase inteira aparece nos dois textos", () => {
-    // Repetir uma regra não quebra o agente — só é cobrada duas vezes e
-    // convida o operador a editar a cópia achando que edita o original.
-    const injetado = `${NUCLEO}\n${caudaDeConversa(true)}`.toLowerCase();
-
-    const frases = PROMPT_BASE.split(/[.\n]/)
-      .map((f) => f.trim().toLowerCase())
-      .filter((f) => f.length > 25);
-
-    for (const frase of frases) {
-      expect(injetado, `esta frase já está no bloco: "${frase}"`).not.toContain(
-        frase,
-      );
-    }
-  });
-
-  it("nomeia assunto e tom, que é o que só o operador sabe", () => {
-    // O bloco injetado não tem como saber o que é com ESTE agente. Se o
-    // exemplo deixar de mostrar isso, ele para de ensinar o que preencher.
+  it("continua sendo um prompt de agente, não uma cópia do bloco", () => {
+    // Se alguém colar o bloco inteiro aqui, o exemplo deixa de ensinar: o
+    // operador precisa ver ASSUNTO e TOM — as duas coisas que só ele sabe —
+    // junto das regras, não uma segunda via do texto do sistema.
     expect(PROMPT_BASE).toContain("O QUE É COM VOCÊ");
     expect(PROMPT_BASE).toContain("O QUE NÃO É COM VOCÊ");
     expect(PROMPT_BASE).toContain("COMO VOCÊ SE APRESENTA");
+    expect(PROMPT_BASE).not.toContain("--- REGRAS DA CASA ---");
+    expect(PROMPT_BASE).not.toContain(NUCLEO);
+    expect(PROMPT_BASE).not.toContain(caudaDeConversa(true));
+  });
+
+  it("cabe no campo sem virar parede de texto", () => {
+    // O campo tem dez linhas visíveis. Um exemplo que precise de rolagem para
+    // ser lido inteiro deixa de ser lido — e aí não ensina nada.
+    const linhas = PROMPT_BASE.split("\n").length;
+    expect(linhas, `${linhas} linhas é longo demais para um exemplo`).toBeLessThan(
+      32,
+    );
   });
 
   it("não manda o agente dizer o próprio nome", () => {
     // O nome real só chega pelo roster, que é string vazia quando não há
-    // colegas com descrição de roteamento — ou seja, no primeiro agente.
-    // Ordem que o prompt não tem como cumprir vira nome inventado, e diferente
-    // a cada conversa: exatamente o que a regra 2 proíbe.
+    // colegas com descrição de roteamento — ou seja, no primeiro agente. Ordem
+    // que o prompt não tem como cumprir vira nome inventado, e diferente a cada
+    // conversa: exatamente o que a regra 2 proíbe.
     expect(PROMPT_BASE.toLowerCase()).not.toContain("seu nome");
     expect(PROMPT_BASE.toLowerCase()).not.toContain("diga que você é a");
   });

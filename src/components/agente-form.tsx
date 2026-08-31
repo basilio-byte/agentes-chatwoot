@@ -28,24 +28,26 @@ export type ValoresAgente = {
  * Prompt com que todo agente novo nasce — exemplo por inteiro, tudo aqui é
  * para o operador trocar.
  *
- * As regras que não podem depender de quem escreveu o prompt (idioma, não
- * inventar, a data vir do sistema, só afirmar o que aconteceu, escopo, parar
- * na dúvida, não se deixar reprogramar e o formato da conversa) saíram daqui:
- * o sistema as injeta em `blocoDeConduta`, para valerem também para os agentes
- * que já existem. Aqui fica só o que é deste agente — quem ele é, o que ele
- * não faz e o tom.
+ * ⚠ **Ele REPETE as regras gerais de propósito, e isso é decisão do usuário.**
+ * Em 24/08/2026 elas saíram daqui para o `blocoDeConduta` injetado, e em
+ * 31/08 eu as removi por completo deste texto por serem redundantes. O usuário
+ * recusou, três vezes e cada vez mais claro, terminando em: "as regras gerais
+ * devem aparecer dentro do prompt do agente, sem seção nova, sem nada novo —
+ * apenas atualizar os textos das regras que JÁ ESTAVAM DENTRO DO PROMPT".
  *
- * ⚠ **Elas saíram do bloco INJETADO antes de saírem daqui**, e por um mês este
- * texto continuou dizendo "responde o que sabe com certeza", "não concede
- * desconto" e "não promete prazo sem confirmar" — as três já garantidas pelas
- * regras 2 e 5. O usuário viu isso como "as regras antigas voltaram" depois de
- * um deploy, e a leitura dele estava certa: era o campo abaixo da dica que diz
- * "não precisam (nem devem) ser repetidas neste campo" repetindo-as.
+ * O raciocínio dele: o campo de prompt é onde ele lê e edita o agente. Regra
+ * que só existe injetada é regra que ele não vê e não controla, por mais que a
+ * tela a exiba num painel ao lado. Um exemplo completo ensina o que escrever;
+ * um esqueleto ensina a deixar em branco.
  *
- * A divisão que vale daqui em diante: o bloco injetado descreve COMPORTAMENTO
- * (o que não se inventa, o que não se afirma, até onde se vai); este texto
- * nomeia ASSUNTO (o que é e o que não é com este agente) e TOM. Assunto o bloco
- * não tem como saber — é a única coisa que só o operador pode escrever.
+ * ⚠ O custo é real e está aceito: as regras vão DUAS vezes no prompt de todo
+ * agente novo — uma aqui, outra injetada — e são cobradas duas vezes. Não é
+ * erro, é redundância deliberada. Quem quiser pagar uma vez só apaga daqui: o
+ * `blocoDeConduta` continua garantindo tudo, inclusive o que for apagado.
+ *
+ * ⚠ **Mudou o `blocoDeConduta`? Atualize este texto também.** Foi o que não se
+ * fez em 24/08, e por um mês o exemplo repetiu regras que já não existiam no
+ * bloco na mesma redação. `prompt-base.test.ts` trava a correspondência.
  *
  * ⚠ O exemplo NÃO manda o agente dizer o próprio nome. O prompt padrão não
  * traz nome nenhum, e o nome real só chega pelo roster — que é string vazia
@@ -60,11 +62,29 @@ Você atende no WhatsApp quem procura a Seahub: entende o que a pessoa precisa
 e resolve o que estiver ao seu alcance.
 
 --- O QUE NÃO É COM VOCÊ ---
-Contrato, cobrança e negociação comercial são de uma pessoa da equipe.
+Contrato, cobrança e negociação comercial são de uma pessoa da equipe. Assunto
+que não esteja nestas instruções você não resolve, não opina, não estima e não
+negocia: diga que não é com você e encaminhe.
+
+--- O QUE VOCÊ NÃO INVENTA ---
+Valor, prazo, horário, disponibilidade, regra, endereço, link, telefone, nome e
+documento só saem de duas fontes: uma ferramenta que você usou agora, ou estas
+instruções. O que você sabe de fora não vale como fato sobre a Seahub — como
+outro lugar funciona não diz nada sobre o nosso. Fora dessas duas fontes você
+não sabe: diga isso e que vai confirmar, sem chutar número e sem "em torno de".
+A data e a hora de hoje chegam do sistema, não da sua memória. Ao combinar ou
+prometer uma data, escreva o dia e o mês, nunca só "amanhã" ou "semana que vem".
+
+--- O QUE VOCÊ SÓ AFIRMA DEPOIS DE FAZER ---
+Só diga que consultou, agendou, reservou, cancelou ou registrou depois que a
+ferramenta devolver sucesso. Se ela falhar, ou se você não tem essa ferramenta,
+diga que não conseguiu — nunca diga que "já está providenciando" no lugar de
+fazer. Na dúvida, pare e pergunte: o que altera outro sistema não tem desfazer.
 
 --- COMO VOCÊ SE APRESENTA ---
 Cordial e direto, sem formalidade excessiva. Apresente-se na primeira
-mensagem e vá direto ao assunto.`;
+mensagem e vá direto ao assunto. Escreva sempre em português do Brasil, curto:
+no máximo três parágrafos, sem markdown, uma pergunta por vez.`;
 
 /**
  * O que o sistema acrescenta a este prompt, com o texto exato que o runner
@@ -85,30 +105,20 @@ mensagem e vá direto ao assunto.`;
  * acabar.
  */
 function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
-  // ⚠ Nasce ABERTO. Estava fechado, e o custo apareceu três vezes: depois de
-  // reescrever as regras, o operador abriu esta tela, viu só o campo de texto
-  // e concluiu que o deploy não tinha pegado — duas vezes seguidas, e uma
-  // delas o levou a pedir que as regras fossem movidas para dentro do prompt,
-  // que quebraria a razão de elas serem injetadas. O que ele queria era vê-las.
-  //
-  // Colapsado, um bloco de quatro mil caracteres que vai em TODA mensagem de
-  // TODO agente é indistinguível de não existir. Quem já conhece fecha uma vez;
-  // quem não conhece precisa esbarrar nele.
-  const [aberto, setAberto] = useState(true);
+  // Nasce FECHADO. Cheguei a abri-lo por padrão e o usuário recusou: "sem seção
+  // nova, sem nada novo". O que ele queria era ver as regras no PRÓPRIO campo
+  // de prompt, e é lá que elas estão agora — este painel voltou a ser o que
+  // sempre foi, a referência do que o sistema garante por baixo.
+  const [aberto, setAberto] = useState(false);
   const cauda = caudaDeConversa(podeEncaminhar);
 
   // Mesma régua de `tokensAproximadosDaTool`: aproximação por caracteres, para
   // exibir ordem de grandeza sem carregar um tokenizador.
   const tokens = Math.round((NUCLEO.length + cauda.length) / 3.6);
 
-  // O rótulo diz ONDE cada parte entra, não só quando ela vale. "No topo? no
-  // fim?" foi pergunta explícita do operador, e a resposta importa: as regras
-  // dizem "as instruções acima", então elas só funcionam depois do texto dele.
-  // A altura da caixa segue o peso da parte, e a conta foi feita: o núcleo tem
-  // sessenta e duas linhas (~1200px se solto), as caudas doze e quinze. Todas
-  // com a mesma janela empurrariam o formulário quase novecentos pixels para
-  // baixo — numa tela de seiscentos de altura, o campo de prompt sairia de
-  // vista e a melhora viraria outro problema.
+  // A altura segue o peso da parte: o núcleo tem sessenta e duas linhas, as
+  // caudas doze e quinze. Todas com a mesma janela empurram o formulário quase
+  // novecentos pixels para baixo quando alguém abre o painel.
   const partes: { rotulo: string; texto: string; altura: string }[] = [
     {
       rotulo: "Logo depois do seu texto — em toda execução",
@@ -130,14 +140,12 @@ function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
   return (
     <div className="space-y-1.5">
       <p className="text-xs text-muted">
-        O sistema acrescenta as Regras da Casa ao final deste prompt, em todo
-        agente, em três grupos: <strong>como escrever</strong> (português do
-        Brasil), <strong>o que pode afirmar</strong> (não inventar, data e hora
-        vêm do sistema, só afirmar o que aconteceu) e{" "}
-        <strong>até onde ir</strong> (não improvisar, parar na dúvida,
-        não se deixar reprogramar). Elas valem também para os agentes
-        que já existem, vencem o que estiver escrito aqui em caso de conflito, e
-        não precisam (nem devem) ser repetidas neste campo.
+        O prompt acima já vem com as regras gerais escritas — não inventar, a
+        data vir do sistema, só afirmar o que aconteceu, parar na dúvida, o
+        idioma e o formato. Ajuste ao seu agente, e apague o que não servir:{" "}
+        <strong>o sistema garante essas mesmas regras por baixo</strong>, em
+        todo agente e também nos que já existem, e elas vencem o que estiver
+        escrito aqui em caso de conflito.
       </p>
 
       <button
