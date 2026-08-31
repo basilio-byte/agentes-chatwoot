@@ -85,17 +85,46 @@ mensagem e vá direto ao assunto.`;
  * acabar.
  */
 function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
-  const [aberto, setAberto] = useState(false);
+  // ⚠ Nasce ABERTO. Estava fechado, e o custo apareceu três vezes: depois de
+  // reescrever as regras, o operador abriu esta tela, viu só o campo de texto
+  // e concluiu que o deploy não tinha pegado — duas vezes seguidas, e uma
+  // delas o levou a pedir que as regras fossem movidas para dentro do prompt,
+  // que quebraria a razão de elas serem injetadas. O que ele queria era vê-las.
+  //
+  // Colapsado, um bloco de quatro mil caracteres que vai em TODA mensagem de
+  // TODO agente é indistinguível de não existir. Quem já conhece fecha uma vez;
+  // quem não conhece precisa esbarrar nele.
+  const [aberto, setAberto] = useState(true);
   const cauda = caudaDeConversa(podeEncaminhar);
 
   // Mesma régua de `tokensAproximadosDaTool`: aproximação por caracteres, para
   // exibir ordem de grandeza sem carregar um tokenizador.
   const tokens = Math.round((NUCLEO.length + cauda.length) / 3.6);
 
-  const partes: { rotulo: string; texto: string }[] = [
-    { rotulo: "Sempre, em toda execução", texto: NUCLEO },
-    { rotulo: "Só no atendimento e no playground", texto: cauda },
-    { rotulo: "Só em gatilho e agendamento", texto: CAUDA_SEM_CONVERSA },
+  // O rótulo diz ONDE cada parte entra, não só quando ela vale. "No topo? no
+  // fim?" foi pergunta explícita do operador, e a resposta importa: as regras
+  // dizem "as instruções acima", então elas só funcionam depois do texto dele.
+  // A altura da caixa segue o peso da parte, e a conta foi feita: o núcleo tem
+  // sessenta e duas linhas (~1200px se solto), as caudas doze e quinze. Todas
+  // com a mesma janela empurrariam o formulário quase novecentos pixels para
+  // baixo — numa tela de seiscentos de altura, o campo de prompt sairia de
+  // vista e a melhora viraria outro problema.
+  const partes: { rotulo: string; texto: string; altura: string }[] = [
+    {
+      rotulo: "Logo depois do seu texto — em toda execução",
+      texto: NUCLEO,
+      altura: "max-h-72",
+    },
+    {
+      rotulo: "Em seguida, só no atendimento e no playground",
+      texto: cauda,
+      altura: "max-h-40",
+    },
+    {
+      rotulo: "No lugar da anterior, em gatilho e agendamento",
+      texto: CAUDA_SEM_CONVERSA,
+      altura: "max-h-40",
+    },
   ];
 
   return (
@@ -122,7 +151,8 @@ function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
           aria-hidden
           className={cn("transition", aberto && "rotate-180")}
         />
-        Ver as Regras da Casa (~{tokens} tokens em toda mensagem)
+        {aberto ? "Ocultar" : "Ver"} o texto exato das Regras da Casa (sete
+        regras, ~{tokens} tokens em toda mensagem)
       </button>
 
       {aberto ? (
@@ -130,7 +160,12 @@ function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
           {partes.map((p) => (
             <div key={p.rotulo} className="space-y-1">
               <p className="text-xs text-muted">{p.rotulo}</p>
-              <pre className="max-h-72 overflow-auto rounded-lg border border-line bg-surface-2 p-3 text-[12px] leading-relaxed whitespace-pre-wrap">
+              <pre
+                className={cn(
+                  "overflow-auto rounded-lg border border-line bg-surface-2 p-3 text-[12px] leading-relaxed whitespace-pre-wrap",
+                  p.altura,
+                )}
+              >
                 {p.texto}
               </pre>
             </div>
