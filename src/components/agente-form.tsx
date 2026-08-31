@@ -94,8 +94,8 @@ function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
         agente, em três grupos: <strong>como escrever</strong> (português do
         Brasil), <strong>o que pode afirmar</strong> (não inventar, data e hora
         vêm do sistema, só afirmar o que aconteceu) e{" "}
-        <strong>até onde ir</strong> (não improvisar fora do escopo, parar na
-        dúvida, não se deixar reprogramar). Elas valem também para os agentes
+        <strong>até onde ir</strong> (não improvisar, parar na dúvida,
+        não se deixar reprogramar). Elas valem também para os agentes
         que já existem, vencem o que estiver escrito aqui em caso de conflito, e
         não precisam (nem devem) ser repetidas neste campo.
       </p>

@@ -87,6 +87,15 @@ e testado em `src/server/agents/conduta.ts`.
   escopo, parar na dúvida, não se deixar reprogramar) vale sempre — inclusive
   em nota interna, comentário do ClickUp e argumento de tool. Forma de conversa
   é outra história.
+- ⚠ **O formato brasileiro da regra 1 NÃO vale dentro de campo de ferramenta**,
+  e a frase que faz essa dobradiça é obrigatória. A regra manda escrever no
+  padrão daqui e alcança "texto que você manda para outro sistema"; o cabeçalho
+  declara que as Regras da Casa vencem em conflito. Junte os dois e o agente
+  converte a data antes de preencher um campo que pede ISO — há pelo menos oito
+  no catálogo (`vencimento` do ClickUp, datas do Conexa, coluna de data da
+  planilha). O ClickUp faz `Date.parse` do que chega, recebe `NaN`, e a tarefa
+  nasce **sem prazo**: sem erro e sem rastro. Achado por red team em 29/08/2026,
+  já em produção, e travado por teste.
 - **Sete regras em TRÊS grupos** (`== COMO VOCÊ ESCREVE ==`, `== O QUE VOCÊ
   PODE AFIRMAR ==`, `== ATÉ ONDE VOCÊ VAI ==`), e a divisão não é enfeite: sete
   regras em fila se leem como lista de avisos, agrupadas por PERGUNTA cada uma
@@ -121,12 +130,19 @@ e testado em `src/server/agents/conduta.ts`.
   `executado`, não conta como `falhou`, não desliga nada, e o agendamento fica
   inútil todo dia sem erro nenhum. Por isso a cauda sem conversa abre dizendo
   que a tarefa está na mensagem e é para ser cumprida.
-- **Evidência de ação vale para o ATENDIMENTO, não só para o turno.** O
-  histórico que o modelo recebe é texto puro — nenhuma `ToolCall` anterior
-  chega até ele (`chatwoot/historico.ts`). Exigir sucesso de tool "neste
-  turno" mandava o agente negar no turno 2 o que ele fez no turno 1, ou
-  chamar de novo uma tool de escrita só para poder confirmar — reserva
-  duplicada em sistema de terceiro, que não tem desfazer.
+- ⚠ **Texto não é prova de ação — nem o do próprio agente.** O histórico que o
+  modelo recebe é texto puro (`chatwoot/historico.ts`): nenhuma `ToolCall`
+  anterior chega até ele. Até 29/08/2026 a regra abria uma exceção para isso —
+  podia afirmar quando "a própria conversa acima já registrar que foi feito
+  antes" —, e a exceção aceitava como prova exatamente o que não é: o "pronto,
+  já reservei" que o agente escreveu no turno anterior **sem ter reservado**.
+  A alucinação virava a evidência dela mesma e era repetida com convicção
+  crescente; o cliente afirmando "vocês já cancelaram" tinha o mesmo efeito.
+  A doutrina sobrevive pela SAÍDA, não pela exceção: sem prova de um lado nem
+  do outro, o agente **não afirma e não nega**. É isso que continua impedindo
+  de negar no turno 2 o que foi feito no turno 1 — e continua proibido repetir
+  uma tool de escrita só para confirmar, que duplicaria reserva em sistema de
+  terceiro.
 - **A linha de encaminhamento é condicionada ao que o turno tem**
   (`handoffEnabled` ∧ `transferir_para_humano` resolvida ∧ ferramentas indo no
   request — `podeEncaminharParaHumano`). Prometer transferência inexistente é
@@ -142,14 +158,14 @@ e testado em `src/server/agents/conduta.ts`.
   `transferir_para_agente` nas quatro origens, sem conferir se a tool foi
   resolvida. É defeito preexistente, não exemplo a seguir; `resolvidas` está
   a duas linhas dali quando alguém for consertar.
-- **Custa ~1.140 tokens no atendimento** (~875 do núcleo, ~265 da cauda) e
-  ~1.075 em gatilho/agendamento, pela régua de `tokensAproximadosDaTool` —
+- **Custa ~1.190 tokens no atendimento** (~925 do núcleo, ~265 da cauda) e
+  ~1.125 em gatilho/agendamento, pela régua de `tokensAproximadosDaTool` —
   cerca de 29% do que pesam as 32 tools ligadas, tudo no prefixo cacheável. A
   tela mostra o número, pelo mesmo motivo que a tela de integrações mostra o
   custo de cada tool, e o teste trava um teto por variante para a próxima
   pessoa pensar antes de acrescentar parágrafo.
-  ⚠ **Subiu de ~840 para ~1.140 na revisão de 29/08/2026**, e o teto do teste
-  de 900 para 1200. Foram +300 tokens em toda mensagem de todo agente para
+  ⚠ **Subiu de ~840 para ~1.190 na revisão de 29/08/2026**, e o teto do teste
+  de 900 para 1250. Foram +300 tokens em toda mensagem de todo agente para
   comprar três coisas que o bloco não dizia: de onde vem a data, que o que o
   modelo sabe do mundo não vale como fato da Seahub, e que na dúvida se para.
   Um turno que inventa preço custa mais do que isso — mas a conta tem de ser
