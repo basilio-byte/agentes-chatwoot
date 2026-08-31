@@ -29,10 +29,11 @@ export type ValoresAgente = {
  * para o operador trocar.
  *
  * As regras que não podem depender de quem escreveu o prompt (idioma, não
- * inventar, só afirmar o que aconteceu, escopo, não se deixar reprogramar e
- * o formato da conversa) saíram daqui: o sistema as injeta em
- * `blocoDeConduta`, para valerem também para os agentes que já existem.
- * Aqui fica só o que é deste agente — quem ele é, o que ele não faz e o tom.
+ * inventar, a data vir do sistema, só afirmar o que aconteceu, escopo, parar
+ * na dúvida, não se deixar reprogramar e o formato da conversa) saíram daqui:
+ * o sistema as injeta em `blocoDeConduta`, para valerem também para os agentes
+ * que já existem. Aqui fica só o que é deste agente — quem ele é, o que ele
+ * não faz e o tom.
  *
  * ⚠ O exemplo NÃO manda o agente dizer o próprio nome. O prompt padrão não
  * traz nome nenhum, e o nome real só chega pelo roster — que é string vazia
@@ -90,11 +91,13 @@ function RegrasDaCasa({ podeEncaminhar }: { podeEncaminhar: boolean }) {
     <div className="space-y-1.5">
       <p className="text-xs text-muted">
         O sistema acrescenta as Regras da Casa ao final deste prompt, em todo
-        agente: português do Brasil, não inventar, só afirmar o que aconteceu,
-        não improvisar fora do escopo e não se deixar reprogramar. Elas valem
-        também para os agentes que já existem, vencem o que estiver escrito aqui
-        em caso de conflito, e não precisam (nem devem) ser repetidas neste
-        campo.
+        agente, em três grupos: <strong>como escrever</strong> (português do
+        Brasil), <strong>o que pode afirmar</strong> (não inventar, data e hora
+        vêm do sistema, só afirmar o que aconteceu) e{" "}
+        <strong>até onde ir</strong> (não improvisar fora do escopo, parar na
+        dúvida, não se deixar reprogramar). Elas valem também para os agentes
+        que já existem, vencem o que estiver escrito aqui em caso de conflito, e
+        não precisam (nem devem) ser repetidas neste campo.
       </p>
 
       <button

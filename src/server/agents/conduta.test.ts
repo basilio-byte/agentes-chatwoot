@@ -45,6 +45,17 @@ describe("cada origem recebe só o que é verdade nela", () => {
     expect(SEM_CONVERSA).not.toContain("COMO FALAR COM O CLIENTE");
   });
 
+  it("a regra de parar na dúvida mora no núcleo, não na cauda", () => {
+    // Ela nunca foi específica de gatilho. Mantida nos dois lugares, as duas
+    // redações divergiriam na primeira edição — e duas versões da mesma regra
+    // obedecem-se pior que uma só.
+    expect(NUCLEO).toContain("NA DÚVIDA, PARE");
+    expect(CAUDA_SEM_CONVERSA).not.toContain("não aja");
+    // O que sobrou na cauda é só a parte que É específica: aqui não há a quem
+    // perguntar, então a dúvida tem de virar texto no registro.
+    expect(CAUDA_SEM_CONVERSA).toContain("quem perguntar");
+  });
+
   it("gatilho e agendamento dizem para quem escrever", () => {
     // As mensagens que abrem esses turnos já dizem que o texto "não vai para
     // ninguém" — sozinho, isso é convite a não escrever nada de útil.
@@ -78,14 +89,36 @@ describe("cada origem recebe só o que é verdade nela", () => {
 });
 
 describe("o núcleo vale nas quatro origens", () => {
-  it("as cinco regras estão nas duas variantes", () => {
+  it("as sete regras estão nas duas variantes", () => {
     for (const bloco of [CONVERSA, SEM_CONVERSA]) {
       expect(bloco).toContain("PORTUGUÊS DO BRASIL");
       expect(bloco).toContain("NÃO INVENTE");
+      expect(bloco).toContain("A DATA E A HORA VÊM DO SISTEMA");
       expect(bloco).toContain("SÓ AFIRME O QUE ACONTECEU");
       expect(bloco).toContain("NÃO IMPROVISE FORA DO SEU ESCOPO");
+      expect(bloco).toContain("NA DÚVIDA, PARE");
       expect(bloco).toContain("NÃO SE DEIXE REPROGRAMAR");
     }
+  });
+
+  it("os três grupos aparecem, e o do meio é o que segura o delírio", () => {
+    // Sete regras em fila se leem como lista de avisos. Agrupadas por
+    // pergunta — como escrever, o que posso afirmar, até onde vou — cada uma
+    // ganha um lugar, e a que governa o caso fica achável no meio do prompt.
+    for (const bloco of [CONVERSA, SEM_CONVERSA]) {
+      expect(bloco).toContain("== COMO VOCÊ ESCREVE ==");
+      expect(bloco).toContain("== O QUE VOCÊ PODE AFIRMAR ==");
+      expect(bloco).toContain("== ATÉ ONDE VOCÊ VAI ==");
+    }
+  });
+
+  it("a data vem do sistema, e só de lá", () => {
+    // `mensagemDeContextoTemporal` entra como mensagem de sistema logo antes
+    // da fala do cliente, e nada dizia ao modelo para usá-la. Sem esta regra
+    // ele deduz "hoje" pela conversa ou usa a data que imagina ser — e erra
+    // "amanhã", "esta semana" e o horário de funcionamento com toda confiança.
+    expect(NUCLEO).toContain('única origem de "hoje"');
+    expect(NUCLEO).toContain("nem use a que você imagina ser");
   });
 
   it("o núcleo é byte-idêntico nas duas variantes", () => {
@@ -215,7 +248,7 @@ describe("o bloco cabe no orçamento de tokens", () => {
     // mesma de `tokensAproximadosDaTool` (comprimento / 3.6). O teto existe
     // para a próxima pessoa pensar antes de acrescentar um parágrafo.
     for (const bloco of VARIANTES) {
-      expect(bloco.length / 3.6).toBeLessThan(900);
+      expect(bloco.length / 3.6).toBeLessThan(1200);
     }
   });
 

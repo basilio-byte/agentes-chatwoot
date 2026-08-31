@@ -83,9 +83,21 @@ e testado em `src/server/agents/conduta.ts`.
   a incluir a lista de colegas, autorizando o agente a tratar o assunto dos
   outros — que é o próprio sintoma de fuga de escopo.
 - **Núcleo igual nas quatro origens, cauda por tipo de turno.** Veracidade
-  (idioma, não inventar, só afirmar o que aconteceu, escopo, não se deixar
-  reprogramar) vale sempre — inclusive em nota interna, comentário do ClickUp
-  e argumento de tool. Forma de conversa é outra história.
+  (idioma, não inventar, data e hora do sistema, só afirmar o que aconteceu,
+  escopo, parar na dúvida, não se deixar reprogramar) vale sempre — inclusive
+  em nota interna, comentário do ClickUp e argumento de tool. Forma de conversa
+  é outra história.
+- **Sete regras em TRÊS grupos** (`== COMO VOCÊ ESCREVE ==`, `== O QUE VOCÊ
+  PODE AFIRMAR ==`, `== ATÉ ONDE VOCÊ VAI ==`), e a divisão não é enfeite: sete
+  regras em fila se leem como lista de avisos, agrupadas por PERGUNTA cada uma
+  ganha um lugar e a que governa o caso fica achável no meio do prompt. O grupo
+  do meio é o que combate o delírio, e é o maior de propósito.
+- ⚠ **Regra que o código já garante NÃO entra no bloco.** O bot nunca resolve a
+  conversa, o cliente nunca fica sem resposta (`garantirRespostaAoCliente`) e
+  toda transferência avisa a pessoa (`aviso` é parâmetro obrigatório) — as três
+  são impostas pelo worker. Repeti-las custaria token em toda mensagem para
+  ensinar o que já não pode falhar. Aqui só entra o que depende de o modelo
+  escolher fazer.
 - ⚠ **"No máximo três parágrafos" e "na dúvida, passe para uma pessoa" são
   FALSOS em gatilho e agendamento.** Não há cliente, não há canal de resposta,
   e toda tool de transferência exige conversa existente. Regra falsa é pior
@@ -130,12 +142,20 @@ e testado em `src/server/agents/conduta.ts`.
   `transferir_para_agente` nas quatro origens, sem conferir se a tool foi
   resolvida. É defeito preexistente, não exemplo a seguir; `resolvidas` está
   a duas linhas dali quando alguém for consertar.
-- **Custa ~840 tokens no atendimento** (~675 do núcleo, ~165 da cauda) e ~885
-  em gatilho/agendamento, pela régua de `tokensAproximadosDaTool` — cerca de
-  21% do que pesam as 32 tools ligadas, tudo no prefixo cacheável. A tela
-  mostra o número, pelo mesmo motivo que a tela de integrações mostra o custo
-  de cada tool, e o teste trava um teto por variante para a próxima pessoa
-  pensar antes de acrescentar parágrafo.
+- **Custa ~1.140 tokens no atendimento** (~875 do núcleo, ~265 da cauda) e
+  ~1.075 em gatilho/agendamento, pela régua de `tokensAproximadosDaTool` —
+  cerca de 29% do que pesam as 32 tools ligadas, tudo no prefixo cacheável. A
+  tela mostra o número, pelo mesmo motivo que a tela de integrações mostra o
+  custo de cada tool, e o teste trava um teto por variante para a próxima
+  pessoa pensar antes de acrescentar parágrafo.
+  ⚠ **Subiu de ~840 para ~1.140 na revisão de 29/08/2026**, e o teto do teste
+  de 900 para 1200. Foram +300 tokens em toda mensagem de todo agente para
+  comprar três coisas que o bloco não dizia: de onde vem a data, que o que o
+  modelo sabe do mundo não vale como fato da Seahub, e que na dúvida se para.
+  Um turno que inventa preço custa mais do que isso — mas a conta tem de ser
+  refeita a cada regra nova, e o caminho barato é sempre tirar redundância
+  antes de acrescentar parágrafo (foi assim que a linha de "na dúvida" saiu da
+  cauda de gatilho e virou regra do núcleo).
 - **Três prefixos de cache por agente** (conversa · conversa sem
   encaminhamento · sem conversa). Não custa no caminho quente: origem e tools
   são constantes ao longo de uma conversa, e só o Chatwoot é multi-turno de
