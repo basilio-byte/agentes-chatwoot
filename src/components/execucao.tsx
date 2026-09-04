@@ -252,6 +252,15 @@ function Detalhe({
             Tools chamadas ({detalhe.toolCalls.length}) — abra para ver
             parâmetros e retorno
           </Meta>
+          {/* Corte que não aparece é o mesmo defeito por outro nome: sem esta
+              linha, uma execução truncada se lê como uma execução curta. */}
+          {detalhe.omitidas.toolCalls > 0 ? (
+            <Aviso tone="warning">
+              Outras {detalhe.omitidas.toolCalls} chamadas ficaram de fora
+              porque esta execução é grande demais para caber numa tela só. Elas
+              continuam no banco.
+            </Aviso>
+          ) : null}
           <ul className="space-y-1.5">
             {detalhe.toolCalls.map((t) => (
               <Chamada key={t.id} tool={t} />
@@ -281,6 +290,14 @@ function Detalhe({
               <Aviso tone="warning">
                 Um ou mais blocos foram cortados por tamanho para não travar a
                 página. O conteúdo completo continua no banco.
+              </Aviso>
+            ) : null}
+
+            {detalhe.omitidas.mensagens > 0 ? (
+              <Aviso tone="warning">
+                As últimas {detalhe.omitidas.mensagens} mensagens não foram
+                carregadas — o detalhe inteiro passou do teto de tamanho. Elas
+                continuam no banco.
               </Aviso>
             ) : null}
 

@@ -8,6 +8,10 @@ import { RunSource, RunStatus, UserRole } from "@/generated/prisma/enums";
 import { limparPedido, pedirParada } from "@/server/agents/cancelamento";
 import { estadoDoWorker } from "@/server/queue/batimento";
 import { lerTranscricao, recortar } from "@/server/execucoes/trace";
+import {
+  IDADE_DE_ZUMBI_MS,
+  TETO_DO_DETALHE,
+} from "@/server/execucoes/limites";
 import type { MensagemDoTrace } from "@/server/execucoes/trace";
 
 /**
@@ -45,6 +49,8 @@ export type DetalheDaExecucao = {
   mensagens: MensagemDoTrace[];
   /** Algum bloco foi cortado por tamanho — a tela avisa. */
   transcricaoCortada: boolean;
+  /** Mensagens e chamadas deixadas de fora pelo teto do detalhe inteiro. */
+  omitidas: { mensagens: number; toolCalls: number };
   conversa: {
     id: string;
     chatwootConversationId: number;
@@ -62,6 +68,12 @@ export type DetalheDaExecucao = {
  * diagnóstico, em 09/2026.
  */
 export type FalhaAoDetalhar = { erro: string };
+
+// ⚠ NADA além de função assíncrona pode ser exportado deste arquivo — nem
+// constante, nem type guard. Exportar um número derruba a avaliação do módulo
+// INTEIRO em runtime, e com ela TODAS as ações daqui; o build só pega parte dos
+// casos. Os tetos moram em `execucoes/limites.ts`, o reconhecedor de falha no
+// componente que o consome, e `use-server.test.ts` é quem cobra.
 
 // ⚠ O reconhecedor NÃO mora aqui. Num arquivo "use server" toda exportação
 // precisa ser função assíncrona, e um type guard é síncrono — o `tsc` aceita e
@@ -124,11 +136,21 @@ async function detalharExecucaoImpl(
   const transcricao = lerTranscricao(run.messages);
   let cortou = transcricao.cortada;
 
-  const toolCalls = run.toolCalls.map((t) => {
+  // Orçamento compartilhado: as chamadas vêm primeiro porque são o que se olha
+  // para entender o que o agente FEZ; a transcrição é material de leitura.
+  let orcamento = TETO_DO_DETALHE;
+
+  const toolCalls: ToolCallDetalhada[] = [];
+  for (const t of run.toolCalls) {
     const entrada = recortar(t.input);
     const saida = recortar(t.output);
     if (entrada.cortado || saida.cortado) cortou = true;
-    return {
+
+    const custo = entrada.texto.length + saida.texto.length;
+    if (custo > orcamento) break;
+    orcamento -= custo;
+
+    toolCalls.push({
       id: t.id,
       toolName: t.toolName,
       provider: t.provider,
@@ -137,8 +159,15 @@ async function detalharExecucaoImpl(
       createdAt: t.createdAt,
       input: entrada.texto,
       output: saida.texto,
-    };
-  });
+    });
+  }
+
+  const mensagens: typeof transcricao.mensagens = [];
+  for (const m of transcricao.mensagens) {
+    if (m.conteudo.length > orcamento) break;
+    orcamento -= m.conteudo.length;
+    mensagens.push(m);
+  }
 
   return {
     id: run.id,
@@ -152,20 +181,15 @@ async function detalharExecucaoImpl(
     finishedAt: run.finishedAt,
     conversa: run.conversation,
     transcricaoCortada: cortou,
-    mensagens: transcricao.mensagens,
+    mensagens,
     toolCalls,
+    omitidas: {
+      mensagens: transcricao.mensagens.length - mensagens.length,
+      toolCalls: run.toolCalls.length - toolCalls.length,
+    },
   };
 }
 
-/**
- * Idade a partir da qual uma execução `RUNNING` é tratada como zumbi.
- *
- * Turno legítimo não chega perto disso: o vigia já escala a conversa em 3
- * minutos, e o teto de iterações de tool limita o resto. Passou daqui, quem
- * gravou `RUNNING` morreu sem conseguir fechar a linha — e aí não existe
- * ninguém para receber o recado de parada.
- */
-export const IDADE_DE_ZUMBI_MS = 10 * 60 * 1000;
 
 export type EstadoDaParada = { ok?: string; erro?: string };
 
