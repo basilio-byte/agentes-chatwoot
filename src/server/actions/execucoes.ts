@@ -63,11 +63,9 @@ export type DetalheDaExecucao = {
  */
 export type FalhaAoDetalhar = { erro: string };
 
-export function ehFalhaAoDetalhar(
-  r: DetalheDaExecucao | FalhaAoDetalhar | null,
-): r is FalhaAoDetalhar {
-  return r !== null && "erro" in r;
-}
+// ⚠ O reconhecedor NÃO mora aqui. Num arquivo "use server" toda exportação
+// precisa ser função assíncrona, e um type guard é síncrono — o `tsc` aceita e
+// só o build do Next reprova. Ele vive no componente que consome.
 
 export async function detalharExecucao(
   id: string,

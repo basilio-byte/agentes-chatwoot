@@ -5,10 +5,10 @@ import Link from "next/link";
 import { ChevronDown, Copy, ExternalLink, Square } from "lucide-react";
 import {
   detalharExecucao,
-  ehFalhaAoDetalhar,
   pararExecucao,
   type DetalheDaExecucao,
   type EstadoDaParada,
+  type FalhaAoDetalhar,
   type ToolCallDetalhada,
 } from "@/server/actions/execucoes";
 import { Aviso, Badge, Button, Card, Meta } from "@/components/ui";
@@ -41,6 +41,19 @@ export type ResumoDaExecucao = {
   agente: { id: string; nome: string };
   tools: { toolName: string; isError: boolean }[];
 };
+
+/**
+ * A ação devolve o detalhe OU uma falha nomeada.
+ *
+ * ⚠ Mora aqui, e não junto da ação: num arquivo "use server" toda exportação
+ * precisa ser função assíncrona, e este reconhecedor é síncrono. O `tsc` deixa
+ * passar — quem reprova é o build do Next.
+ */
+function ehFalhaAoDetalhar(
+  r: DetalheDaExecucao | FalhaAoDetalhar | null,
+): r is FalhaAoDetalhar {
+  return r !== null && "erro" in r;
+}
 
 const ROTULO_DA_FONTE: Record<string, string> = {
   CHATWOOT: "Chatwoot",
