@@ -8,6 +8,7 @@ import { exigirPapel } from "@/server/auth-guard";
 import { IntegrationProvider, UserRole } from "@/generated/prisma/enums";
 import { EFFORTS, listarModelos } from "@/server/agents/catalogo";
 import { slugUnico } from "@/lib/slug";
+import { comFalhaVisivel } from "@/server/actions/falha-visivel";
 
 const agenteSchema = z.object({
   name: z.string().min(2, "Informe um nome").max(80),
@@ -26,6 +27,8 @@ const agenteSchema = z.object({
 
 export type EstadoFormulario = {
   erro?: string;
+  /** Confirmação de sucesso. Sem ela, salvar e falhar são iguais na tela. */
+  ok?: string;
   camposComErro?: Record<string, string>;
 };
 
@@ -72,7 +75,25 @@ async function validarModelo(
   return null;
 }
 
+/**
+ * ⚠ O envoltório existe porque uma server action que LANÇA some duas vezes: o
+ * React descarta a rejeição no cliente e o Next mascara a mensagem em produção,
+ * deixando só o digest. Em 04/09/2026 isso fez "salvei o prompt e não aconteceu
+ * nada" parecer defeito de armazenamento. Agora o erro inteiro vai para o log
+ * com um código, e a tela mostra o mesmo código.
+ */
 export async function criarAgente(
+  estado: EstadoFormulario,
+  formData: FormData,
+): Promise<EstadoFormulario> {
+  return comFalhaVisivel(
+    "agente.criar",
+    () => criarAgenteImpl(estado, formData),
+    (falha) => ({ erro: falha.erro }),
+  );
+}
+
+async function criarAgenteImpl(
   _estado: EstadoFormulario,
   formData: FormData,
 ): Promise<EstadoFormulario> {
@@ -141,6 +162,18 @@ export async function criarAgente(
 
 export async function atualizarAgente(
   id: string,
+  estado: EstadoFormulario,
+  formData: FormData,
+): Promise<EstadoFormulario> {
+  return comFalhaVisivel(
+    "agente.atualizar",
+    () => atualizarAgenteImpl(id, estado, formData),
+    (falha) => ({ erro: falha.erro }),
+  );
+}
+
+async function atualizarAgenteImpl(
+  id: string,
   _estado: EstadoFormulario,
   formData: FormData,
 ): Promise<EstadoFormulario> {
@@ -197,7 +230,15 @@ export async function atualizarAgente(
 
   revalidatePath(`/agentes/${id}`);
   revalidatePath("/agentes");
-  return {};
+
+  // A mensagem NOMEIA o que aconteceu: mudar prompt, modelo ou effort cria uma
+  // versão no histórico, e mudar nome ou descrição não. Sem isso, o operador
+  // não tem como saber se o que ele mexeu foi o que versionou.
+  return {
+    ok: mudouComportamento
+      ? "Agente salvo. O prompt mudou, então uma nova versão entrou no histórico."
+      : "Agente salvo.",
+  };
 }
 
 export async function alternarAtivo(id: string) {

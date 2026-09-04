@@ -11,6 +11,11 @@ import {
 } from "@/server/agents/conduta";
 import { SeletorModelo } from "@/components/seletor-modelo";
 import { Aviso, Button, Card, Field, Input, Textarea } from "@/components/ui";
+import {
+  AVISO_DESATUALIZADO,
+  ehFluxoDeControle,
+  ehVersaoDesatualizada,
+} from "@/lib/erro-de-acao";
 import { cn } from "@/lib/utils";
 
 export type ValoresAgente = {
@@ -234,10 +239,46 @@ export function AgenteForm({
    */
   podeEncaminhar?: boolean;
 }) {
+  /**
+   * A ação, embrulhada para FALAR quando quebra.
+   *
+   * ⚠ Uma server action que lança dentro de `useActionState` some sem deixar
+   * rastro: o React descarta a rejeição, o estado não muda, e o botão volta ao
+   * normal. Foi exatamente o que o operador viu em 04/09/2026 — "escrevi o
+   * prompt, salvei, não aconteceu nada" — e o que o fez suspeitar do banco de
+   * dados. A causa era a aba estar com o JavaScript de uma build anterior.
+   *
+   * `redirect()` continua subindo intacto: `criarAgente` termina com um, e
+   * capturá-lo deixaria o operador parado numa tela que já salvou.
+   */
+  const acaoQueFala = async (
+    anterior: EstadoFormulario,
+    formData: FormData,
+  ): Promise<EstadoFormulario> => {
+    try {
+      return await acao(anterior, formData);
+    } catch (e) {
+      if (ehFluxoDeControle(e)) throw e;
+
+      if (ehVersaoDesatualizada(e)) {
+        // NÃO recarrega sozinho: o prompt que a pessoa acabou de escrever está
+        // na tela e iria junto. Ela copia, recarrega e cola.
+        return { erro: AVISO_DESATUALIZADO.comPerda };
+      }
+
+      return {
+        erro:
+          e instanceof Error && e.message
+            ? `Não deu para salvar: ${e.message}`
+            : "Não deu para salvar, e o servidor não disse por quê. Confira o log do painel.",
+      };
+    }
+  };
+
   const [estado, submeter, pendente] = useActionState<
     EstadoFormulario,
     FormData
-  >(acao, {});
+  >(acaoQueFala, {});
   const erroDe = (campo: string) => estado.camposComErro?.[campo];
 
   return (
@@ -346,6 +387,10 @@ export function AgenteForm({
       </Card>
 
       {estado.erro ? <Aviso tone="danger">{estado.erro}</Aviso> : null}
+      {/* Sem confirmação, salvar e falhar em silêncio eram indistinguíveis —
+          metade do motivo de "não está sendo salvo" ter parecido defeito de
+          armazenamento. */}
+      {estado.ok ? <Aviso tone="success">{estado.ok}</Aviso> : null}
 
       {!somenteLeitura ? (
         <Button type="submit" disabled={pendente}>

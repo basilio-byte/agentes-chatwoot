@@ -12,6 +12,11 @@ import {
 } from "@/server/actions/execucoes";
 import { Aviso, Badge, Button, Card, Meta } from "@/components/ui";
 import {
+  AVISO_DESATUALIZADO,
+  ehFluxoDeControle,
+  ehVersaoDesatualizada,
+} from "@/lib/erro-de-acao";
+import {
   cn,
   formatarData,
   formatarDuracao,
@@ -326,6 +331,9 @@ export function Execucao({
   const [aberto, setAberto] = useState(false);
   const [detalhe, setDetalhe] = useState<DetalheDaExecucao | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  // Separado do texto do erro porque muda a AÇÃO oferecida: recarregar resolve,
+  // "tentar de novo" não resolve nunca.
+  const [desatualizado, setDesatualizado] = useState(false);
   const [carregando, iniciar] = useTransition();
 
   function alternar() {
@@ -344,8 +352,28 @@ export function Execucao({
         }
         setDetalhe(resultado);
         setErro(null);
-      } catch {
-        setErro("Não foi possível carregar o detalhe. Tente de novo.");
+        setDesatualizado(false);
+      } catch (e) {
+        // ⚠ `redirect()` e `notFound()` chegam aqui como exceção. Engoli-los
+        // era metade do defeito de 04/09/2026: sessão expirada virava "tente de
+        // novo", e o operador nunca era levado ao login.
+        if (ehFluxoDeControle(e)) throw e;
+
+        // A aba está com o JavaScript de uma build anterior e chamou uma ação
+        // que não existe mais. Tentar de novo NUNCA resolve — só recarregar —,
+        // e foi por isso que isto passou por "problema de armazenamento".
+        if (ehVersaoDesatualizada(e)) {
+          setDesatualizado(true);
+          setErro(AVISO_DESATUALIZADO.semPerda);
+          return;
+        }
+
+        setDesatualizado(false);
+        setErro(
+          e instanceof Error && e.message
+            ? `Não foi possível carregar o detalhe: ${e.message}`
+            : "Não foi possível carregar o detalhe. Tente de novo.",
+        );
       }
     });
   }
@@ -459,8 +487,19 @@ export function Execucao({
         ) : null}
 
         {erro ? (
-          <div className="border-t border-line pt-4">
-            <Aviso tone="danger">{erro}</Aviso>
+          <div className="space-y-2 border-t border-line pt-4">
+            <Aviso tone={desatualizado ? "warning" : "danger"}>{erro}</Aviso>
+            {/* Aqui recarregar não custa nada — não há texto digitado para
+                perder, ao contrário do formulário do agente. */}
+            {desatualizado ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => window.location.reload()}
+              >
+                Recarregar a página
+              </Button>
+            ) : null}
           </div>
         ) : null}
 
