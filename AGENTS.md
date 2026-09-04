@@ -69,13 +69,20 @@ e testado em `src/server/agents/conduta.ts`.
   propósito" que a regra de `@default` proíbe. Prompt antigo que repita uma
   regra do bloco não quebra nada — só é cobrado duas vezes; quem apara isso é
   o operador ao abrir a tela, agente a agente, nunca um script em lote.
-- **Uma fonte só.** As regras saíram de `PROMPT_BASE` no mesmo commit em que
-  entraram no módulo. Mantidas nos dois lugares, divergiriam na primeira
-  edição — e duas redações da mesma regra, uma contradizendo a outra por uma
-  palavra, obedecem-se pior que uma só. O JSDoc de `PROMPT_BASE` e o hint do
-  campo fazem parte da regra, não são enfeite: os dois dizem para NÃO repetir
-  as Regras da Casa naquele campo, e é o que impede a duplicação de voltar
-  pela porta do operador.
+- ⚠ **O `PROMPT_BASE` REPETE as regras, e isso é decisão do usuário (31/08/2026).**
+  Cheguei a removê-las de lá por serem redundantes; ele recusou três vezes, cada
+  vez mais claro: *"as regras gerais devem aparecer dentro do prompt do agente,
+  sem seção nova"*. O raciocínio é dele e é bom: o campo de prompt é onde ele lê
+  e edita o agente, e regra que só existe injetada é regra que ele não vê nem
+  controla. Exemplo completo ensina o que escrever; esqueleto ensina a deixar em
+  branco.
+  O custo está aceito: ~265 tokens a mais por mensagem (a parte de regras do
+  exemplo). Quem quiser pagar uma vez só apaga do campo — o `blocoDeConduta`
+  continua garantindo tudo, inclusive o que for apagado.
+  ⚠ **Mexeu no bloco? Atualize o `PROMPT_BASE` no MESMO commit.** Foi o que não
+  se fez em 24/08, e por um mês o exemplo prometeu regras noutra redação.
+  `prompt-base.test.ts` exige que cada assunto do bloco tenha contraparte no
+  exemplo — trava o ASSUNTO, não a palavra.
 - **Vai entre o prompt do operador e o roster.** O bloco diz "as instruções
   acima": as regras de escopo e de fonte-de-verdade se definem POR EXCLUSÃO do
   que o operador escreveu, e antes dele "acima" não aponta para nada.
