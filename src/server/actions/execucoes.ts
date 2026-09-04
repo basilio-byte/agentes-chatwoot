@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { exigirPapel, exigirSessao } from "@/server/auth-guard";
+import { comFalhaVisivel } from "@/server/actions/falha-visivel";
 import { RunSource, RunStatus, UserRole } from "@/generated/prisma/enums";
 import { limparPedido, pedirParada } from "@/server/agents/cancelamento";
 import { estadoDoWorker } from "@/server/queue/batimento";
@@ -51,7 +52,34 @@ export type DetalheDaExecucao = {
   } | null;
 };
 
+/**
+ * Falha nomeada, em vez de exceção que o Next mascara.
+ *
+ * ⚠ Em produção o Next entrega ao cliente só o `digest` de um erro de server
+ * action — a mensagem real fica no servidor. Se esta ação apenas LANÇASSE, a
+ * tela mostraria "não foi possível carregar" para qualquer causa e o log não
+ * teria nada. Foi assim que uma falha ao expandir execução passou dias sem
+ * diagnóstico, em 09/2026.
+ */
+export type FalhaAoDetalhar = { erro: string };
+
+export function ehFalhaAoDetalhar(
+  r: DetalheDaExecucao | FalhaAoDetalhar | null,
+): r is FalhaAoDetalhar {
+  return r !== null && "erro" in r;
+}
+
 export async function detalharExecucao(
+  id: string,
+): Promise<DetalheDaExecucao | FalhaAoDetalhar | null> {
+  return comFalhaVisivel<DetalheDaExecucao | FalhaAoDetalhar | null>(
+    "execucao.detalhar",
+    () => detalharExecucaoImpl(id),
+    (falha) => ({ erro: falha.erro }),
+  );
+}
+
+async function detalharExecucaoImpl(
   id: string,
 ): Promise<DetalheDaExecucao | null> {
   // Mesmo tier da tela que lista: quem enxerga a lista pode abrir o item dela.

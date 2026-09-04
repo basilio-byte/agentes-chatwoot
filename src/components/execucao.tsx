@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronDown, Copy, ExternalLink, Square } from "lucide-react";
 import {
   detalharExecucao,
+  ehFalhaAoDetalhar,
   pararExecucao,
   type DetalheDaExecucao,
   type EstadoDaParada,
@@ -348,6 +349,14 @@ export function Execucao({
         const resultado = await detalharExecucao(resumo.id);
         if (!resultado) {
           setErro("Esta execução não existe mais — pode ter sido apagada.");
+          return;
+        }
+        // A ação devolve a falha NOMEADA, com o código que também foi para o
+        // log do servidor — em produção o Next mascara a mensagem de um erro
+        // lançado, e sem isto a causa ficaria invisível dos dois lados.
+        if (ehFalhaAoDetalhar(resultado)) {
+          setDesatualizado(false);
+          setErro(resultado.erro);
           return;
         }
         setDetalhe(resultado);
