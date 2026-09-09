@@ -106,3 +106,51 @@ export function semVazios<T extends Record<string, unknown>>(obj: T) {
     Object.entries(obj).filter(([, v]) => v !== undefined && v !== null && v !== ""),
   );
 }
+
+/**
+ * Teto do campo de observações do cliente.
+ *
+ * ⚠ **Não é limite documentado do Conexa** — a documentação da API não declara
+ * nenhum, e inventar um número como se fosse dela seria pior que não ter. O
+ * teto existe por outro motivo, que vale sozinho: `notes` é UM campo de texto
+ * que uma pessoa lê na tela do ERP, e um campo com dezenas de milhares de
+ * caracteres já não é legível. Acrescentar para sempre transforma a anotação
+ * útil de hoje em lixo amanhã.
+ *
+ * Estourou, a tool RECUSA e manda uma pessoa limpar. Cortar seria destruir
+ * justamente o texto humano que este caminho existe para preservar.
+ */
+export const TETO_DE_OBSERVACOES = 20_000;
+
+/**
+ * Acrescenta uma anotação ao campo de observações, preservando o que já existe.
+ *
+ * ⚠ **Preservar não é detalhe, é a razão desta função existir.** `notes` do
+ * Conexa é um campo único: gravar nele SUBSTITUI. A equipe comercial escreve
+ * ali à mão, e um `PATCH` ingênuo apagaria tudo sem erro nenhum e sem desfazer
+ * — a mesma armadilha dos `custom_attributes` e dos labels do Chatwoot, que
+ * neste projeto já mordeu duas vezes. Ler, mesclar, escrever.
+ *
+ * O carimbo entra porque quem lê o ERP precisa saber que aquilo saiu de um
+ * robô e quando: anotação sem origem, no meio de texto escrito por gente, é
+ * indistinguível de alguém da equipe tendo afirmado aquilo.
+ *
+ * Pura e testada de propósito — é aqui que texto de cliente se perde.
+ */
+export function acrescentarAnotacao(
+  atual: unknown,
+  anotacao: string,
+  carimbo: string,
+): { texto: string; excedeu: boolean; tamanho: number } {
+  const anterior = (atual == null ? "" : String(atual)).trimEnd();
+  const linha = `[${carimbo}] ${anotacao.trim()}`;
+
+  // Sem conteúdo anterior, nada de linha em branco no começo do campo.
+  const texto = anterior ? `${anterior}\n${linha}` : linha;
+
+  return {
+    texto,
+    excedeu: texto.length > TETO_DE_OBSERVACOES,
+    tamanho: texto.length,
+  };
+}

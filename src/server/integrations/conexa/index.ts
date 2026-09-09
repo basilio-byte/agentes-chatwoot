@@ -9,6 +9,7 @@ import {
 } from "./config";
 import { ConexaClient } from "./client";
 import {
+  acrescentarAnotacao,
   formatarCliente,
   formatarCobranca,
   formatarContrato,
@@ -17,6 +18,9 @@ import {
   semVazios,
   STATUS_PENDENTE,
 } from "./formatacao";
+// ⚠ O container roda em UTC. Carimbar a anotação com `new Date()` cru poria
+// três horas a menos no que uma pessoa vai ler no ERP.
+import { agoraEmSaoPaulo } from "@/lib/tempo";
 
 /** Teto por resposta: lista longa só gasta token sem ajudar o modelo. */
 const LIMITE = 25;
@@ -190,6 +194,69 @@ export const conexaIntegration: IntegrationDefinition = {
           semVazios({ name: args.nome, email: args.email, phone: args.telefone }),
         );
         return { atualizado: true };
+      },
+    },
+
+    {
+      name: "conexa_anotar_no_cliente",
+      categoria: "Clientes",
+      description:
+        "Acrescenta uma anotação ao campo de observações do cliente no ERP, sem apagar o que já estiver escrito lá. Use para registrar o que a equipe precisa saber depois — combinado feito, restrição do cliente, motivo de um pedido. A anotação fica marcada com a data e como vinda do atendimento, e NÃO tem desfazer: escreva a versão final de uma vez, e não repita para confirmar. Não use para o que já tem campo próprio (nome, e-mail, telefone) nem para o que é só desta conversa.",
+      requiresConfirmation: true,
+      inputSchema: z.object({
+        clienteId: z.number().int().positive(),
+        anotacao: z
+          .string()
+          .trim()
+          .min(3)
+          .max(1000)
+          .describe(
+            "O que registrar, em uma ou duas frases. Escreva para uma pessoa da equipe ler daqui a meses, sem o contexto da conversa.",
+          ),
+      }),
+      async execute(entrada, ctx) {
+        const { clienteId, anotacao } = entrada as {
+          clienteId: number;
+          anotacao: string;
+        };
+        const { cliente } = contexto(ctx);
+
+        // ⚠ Ler IMEDIATAMENTE antes de escrever. `notes` é um campo único e o
+        // PATCH substitui: sem esta leitura, a primeira anotação apagaria tudo
+        // que a equipe comercial escreveu à mão, sem erro e sem desfazer.
+        //
+        // O intervalo entre ler e gravar é uma corrida conhecida e aceita: o
+        // Conexa não tem ETag nem `If-Match`, então duas anotações simultâneas
+        // no mesmo cliente perdem uma. Mantê-lo curto é tudo que dá para fazer,
+        // e o caso é raro — dois atendimentos do MESMO cliente no mesmo
+        // segundo. Mesma escolha já feita nos `custom_attributes` do Chatwoot.
+        const atual = await cliente.obterCliente(clienteId);
+        const agora = agoraEmSaoPaulo();
+
+        const resultado = acrescentarAnotacao(
+          (atual as Record<string, unknown>).notes,
+          anotacao,
+          `${agora.data} ${agora.hora} · atendimento`,
+        );
+
+        if (resultado.excedeu) {
+          // Recusa em vez de cortar: cortar destruiria exatamente o texto
+          // humano que este caminho existe para preservar.
+          return {
+            anotado: false,
+            nadaFoiAlterado: true,
+            erro: `O campo de observações deste cliente já está cheio demais para receber mais texto sem virar ilegível. Avise que uma pessoa precisa revisar e limpar as observações dele no ERP — não é algo que você possa resolver.`,
+          };
+        }
+
+        await cliente.atualizarCliente(clienteId, { notes: resultado.texto });
+
+        return {
+          anotado: true,
+          clienteId,
+          observacao:
+            "A anotação foi ACRESCENTADA ao que já existia; nada foi apagado.",
+        };
       },
     },
 

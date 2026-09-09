@@ -54,6 +54,7 @@ describe("catálogo do Conexa", () => {
     expect(escrevem.sort()).toEqual(
       [
         "conexa_alterar_reserva",
+        "conexa_anotar_no_cliente",
         "conexa_atualizar_cliente",
         "conexa_cancelar_reserva",
         "conexa_criar_cliente",
