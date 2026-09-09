@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import {
   ArrowLeft,
   Bot,
+  ExternalLink,
   FlaskConical,
   History,
   MessagesSquare,
@@ -193,14 +194,31 @@ export default async function AgentePage({
           </code>
 
           {editavel ? (
-            <form
-              action={alternarAtivo.bind(null, agente.id)}
-              className="ml-auto"
-            >
-              <Button variant="secondary" size="sm">
-                {agente.active ? "Desligar" : "Ligar"}
-              </Button>
-            </form>
+            <div className="ml-auto flex items-center gap-2">
+              {/*
+                A mesa fica FORA das abas e abre em guia nova de propósito: ela é
+                para trabalhar com o agente, não para configurá-lo, e quem está
+                conferindo documento não quer perder a tela de configuração de
+                vista. Só aparece para quem edita porque executar gasta crédito
+                — a rota recusa VIEWER de qualquer jeito, e esconder sozinho não
+                é garantia.
+              */}
+              <Link
+                href={`/mesa/${agente.key}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+              >
+                Abrir a mesa
+                <ExternalLink size={12} aria-hidden />
+              </Link>
+
+              <form action={alternarAtivo.bind(null, agente.id)}>
+                <Button variant="secondary" size="sm">
+                  {agente.active ? "Desligar" : "Ligar"}
+                </Button>
+              </form>
+            </div>
           ) : null}
         </div>
 
