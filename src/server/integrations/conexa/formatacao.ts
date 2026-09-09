@@ -123,6 +123,35 @@ export function semVazios<T extends Record<string, unknown>>(obj: T) {
 export const TETO_DE_OBSERVACOES = 20_000;
 
 /**
+ * De onde saiu a anotação, na palavra que uma pessoa do comercial vai ler.
+ *
+ * ⚠ **Carimbo com origem errada é pior que carimbo nenhum.** A string literal
+ * `· atendimento` foi escrita quando o único caminho era o Chatwoot; a mesa do
+ * agente não tem conversa nenhuma, e uma anotação carimbada como atendimento
+ * manda quem cobra ou renova procurar uma conversa que não existe em
+ * /conversas — ou ele desconfia da linha inteira, ou acredita nela sem poder
+ * conferir. E `notes` não tem desfazer.
+ *
+ * ⚠ **A palavra do lado "sem conversa" tem de ser verdadeira em TODAS as
+ * origens sem conversa, não só na mesa.** Gatilho HTTP e agendamento também
+ * chamam esta tool, e o `ToolContext` só sabe dizer se há conversa do Chatwoot
+ * — não qual das outras origens é. Escrever "mesa" ali seria repetir, em três
+ * origens, exatamente a mentira que esta função existe para tirar.
+ *
+ * "robô" é a palavra que o projeto já usa para separar a nossa máquina de uma
+ * pessoa, e é a única coisa que o carimbo precisa garantir: que aquela linha,
+ * no meio de texto escrito à mão, não foi um colega quem afirmou. Quem lê o
+ * ERP não conhece a mesa, o gatilho nem o agendamento — e não precisa.
+ */
+export function carimboDaAnotacao(
+  quando: { data: string; hora: string },
+  origem: { chatwootConversationId?: number | null },
+): string {
+  const de = origem.chatwootConversationId != null ? "atendimento" : "robô";
+  return `${quando.data} ${quando.hora} · ${de}`;
+}
+
+/**
  * Acrescenta uma anotação ao campo de observações, preservando o que já existe.
  *
  * ⚠ **Preservar não é detalhe, é a razão desta função existir.** `notes` do

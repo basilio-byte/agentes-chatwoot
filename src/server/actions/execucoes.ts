@@ -12,6 +12,7 @@ import {
   IDADE_DE_ZUMBI_MS,
   TETO_DO_DETALHE,
 } from "@/server/execucoes/limites";
+import { ONDE_RODA } from "@/server/execucoes/onde-roda";
 import type { MensagemDoTrace } from "@/server/execucoes/trace";
 
 /**
@@ -268,15 +269,21 @@ export async function pararExecucao(id: string): Promise<EstadoDaParada> {
 /**
  * A execução está órfã — sem processo vivo capaz de atender ao pedido?
  *
- * Duas evidências: idade absurda para um turno, ou worker morto. O playground
- * roda no processo do painel, não no worker, então para ele só a idade vale.
+ * Duas evidências: idade absurda para um turno, ou worker morto. Para quem
+ * roda no processo do painel só a idade vale — o batimento do worker não diz
+ * nada sobre um turno que nunca esteve lá.
  */
 async function ninguemVaiReceber(run: {
   createdAt: Date;
   source: RunSource;
 }): Promise<boolean> {
   if (Date.now() - run.createdAt.getTime() > IDADE_DE_ZUMBI_MS) return true;
-  if (run.source === RunSource.PLAYGROUND) return false;
+  // ⚠ Quem responde "onde isto roda" é o mapa, nunca uma comparação escrita
+  // aqui: esta linha era `source === PLAYGROUND`, e origem nova que rodasse no
+  // painel sem entrar na condição passaria a ser julgada pelo batimento do
+  // worker — com o worker reiniciando, "parar" encerraria como `CANCELED` um
+  // turno vivo e respondendo, sem erro e sem rastro.
+  if (ONDE_RODA[run.source] === "painel") return false;
 
   const worker = await estadoDoWorker();
   // Indeterminado (Redis fora do ar) não é prova de morte: nesse caso não se

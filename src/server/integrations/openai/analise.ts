@@ -245,7 +245,14 @@ function valeInsistir(erro: unknown): boolean {
   return true;
 }
 
-function resumirFalha(erro: unknown): string {
+/**
+ * A falha em uma frase que dá para mostrar a alguém.
+ *
+ * Exportada por causa da mesa (`upload.ts`), que precisa exatamente disto e
+ * copiá-la seria pior que reusar: a mensagem crua da OpenAI chega a repetir
+ * pedaço da chave enviada, e na mesa ela iria direto para a tela.
+ */
+export function resumirFalha(erro: unknown): string {
   if (erro instanceof MidiaGrandeDemaisError) return "arquivo grande demais";
 
   const status = (erro as { status?: number } | null)?.status;

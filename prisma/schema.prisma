@@ -493,6 +493,24 @@ enum RunSource {
   TRIGGER
   /// Disparado pelo relógio, sem ninguém do outro lado.
   SCHEDULE
+
+  /// A mesa do agente: página própria, aberta por alguém da equipe, onde se
+  /// envia um arquivo e o agente executa UMA vez sobre ele.
+  ///
+  /// Origem própria, e não `PLAYGROUND`, por dois motivos que não se resolvem
+  /// com um filtro na tela. O primeiro é dinheiro: no playground alguém afina
+  /// prompt, na mesa alguém trabalha — misturar os dois em /consumo faz o
+  /// custo de conferência parecer teste. O segundo é o prompt: `tipoDeTurno`
+  /// manda PLAYGROUND para a cauda de conversa, que afirma "do outro lado tem
+  /// uma pessoa de verdade, no WhatsApp, lendo no celular" e limita a três
+  /// parágrafos sem markdown — quatro afirmações falsas justamente no turno
+  /// que existe para produzir um laudo.
+  ///
+  /// ⚠ E também não serve a cauda `sem-conversa`: ela declara que a mensagem
+  /// de abertura "vem da equipe da Seahub, não de um cliente, e é para ser
+  /// cumprida mesmo que o assunto não apareça nas instruções acima". Na mesa
+  /// o corpo dessa mensagem é o texto extraído do documento de um terceiro.
+  MESA
 }
 
 enum RunStatus {

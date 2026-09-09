@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { IntegrationProvider } from "@/generated/prisma/enums";
+import type { ToolContext } from "../types";
 import { conexaIntegration } from "./index";
 import { ehCobrancaPendente, formatarCobranca, semVazios } from "./formatacao";
 
@@ -123,5 +125,73 @@ describe("formatação", () => {
 
   it("campos vazios não vão para o modelo", () => {
     expect(semVazios({ a: 1, b: undefined, c: null, d: "", e: 0 })).toEqual({ a: 1, e: 0 });
+  });
+});
+
+/**
+ * A tool tem de USAR a função pura do carimbo — não basta ela existir.
+ *
+ * ⚠ O defeito que motivou o carimbo por origem era uma string literal DENTRO
+ * de `execute`. Testar só `carimboDaAnotacao` em `formatacao.test.ts` deixa
+ * passar a versão em que a função nasce, é exportada e ninguém a chama: o
+ * `notes` continuaria saindo "· atendimento" numa execução sem atendimento
+ * nenhum. Quem trava a ligação entre as duas é este teste, e ele confere o
+ * corpo do PATCH — que é o texto que cai no ERP.
+ */
+describe("conexa_anotar_no_cliente carimba a origem de verdade", () => {
+  const anotar = tools.find((t) => t.name === "conexa_anotar_no_cliente")!;
+
+  const config = {
+    baseUrl: "https://seahub.conexa.app/index.php/api/v2",
+    unidades: [{ nome: "Natal", companyId: 3 }],
+  };
+
+  /** Devolve o `notes` que a tool mandou no PATCH. */
+  async function notesGravado(origem: Partial<ToolContext>) {
+    let corpo = "";
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      if (init?.method === "PATCH") corpo = String(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 42, notes: "Falar com o Marcos antes de renovar." }),
+        text: async () => "{}",
+        headers: new Headers(),
+      } as unknown as Response;
+    });
+
+    const ctx: ToolContext = {
+      provider: IntegrationProvider.CONEXA,
+      config,
+      credential: "tok_123",
+      agentId: "conferencia",
+      ...origem,
+    };
+
+    await anotar.execute(
+      { clienteId: 42, anotacao: "CNPJ conferido: ativo na Receita." },
+      ctx,
+    );
+
+    vi.unstubAllGlobals();
+    return String(JSON.parse(corpo).notes);
+  }
+
+  it("sem conversa do Chatwoot, não promete atendimento", async () => {
+    // ⚠ É o caso da mesa do agente, e também o do gatilho e o do agendamento —
+    // nenhum deles põe `chatwootConversationId` no contexto.
+    const notes = await notesGravado({});
+
+    expect(notes).toContain("· robô]");
+    expect(notes).not.toContain("atendimento");
+    // E continua preservando o que a equipe escreveu à mão.
+    expect(notes.startsWith("Falar com o Marcos antes de renovar.")).toBe(true);
+  });
+
+  it("vindo de um atendimento, continua dizendo atendimento", async () => {
+    const notes = await notesGravado({ chatwootConversationId: 4812 });
+
+    expect(notes).toContain("· atendimento]");
+    expect(notes).not.toContain("robô");
   });
 });

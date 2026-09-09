@@ -629,8 +629,11 @@ describe("cliente que manda anexo", () => {
 
     await processarAtendimento(job());
 
+    // O `[fim da imagem]` fecha a cerca do anexo: sem ele, da segunda linha em
+    // diante o texto lido do arquivo era indistinguível do que o cliente
+    // digitou. Ver `linhaDoAnexo`.
     expect(mensagensRecebidasPeloAgente[0]).toBe(
-      "segue o comprovante\n[imagem — p.png] PIX de R$ 350,00 para Seahub em 12/08",
+      "segue o comprovante\n[imagem — p.png] PIX de R$ 350,00 para Seahub em 12/08\n[fim da imagem]",
     );
   });
 

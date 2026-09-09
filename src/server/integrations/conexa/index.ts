@@ -10,6 +10,7 @@ import {
 import { ConexaClient } from "./client";
 import {
   acrescentarAnotacao,
+  carimboDaAnotacao,
   formatarCliente,
   formatarCobranca,
   formatarContrato,
@@ -201,7 +202,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_anotar_no_cliente",
       categoria: "Clientes",
       description:
-        "Acrescenta uma anotação ao campo de observações do cliente no ERP, sem apagar o que já estiver escrito lá. Use para registrar o que a equipe precisa saber depois — combinado feito, restrição do cliente, motivo de um pedido. A anotação fica marcada com a data e como vinda do atendimento, e NÃO tem desfazer: escreva a versão final de uma vez, e não repita para confirmar. Não use para o que já tem campo próprio (nome, e-mail, telefone) nem para o que é só desta conversa.",
+        "Acrescenta uma anotação ao campo de observações do cliente no ERP, sem apagar o que já estiver escrito lá. Use para registrar o que a equipe precisa saber depois — combinado feito, restrição do cliente, motivo de um pedido. A anotação fica marcada com a data e com a origem, e NÃO tem desfazer: escreva a versão final de uma vez, e não repita para confirmar. Não use para o que já tem campo próprio (nome, e-mail, telefone) nem para o que é só desta conversa.",
       requiresConfirmation: true,
       inputSchema: z.object({
         clienteId: z.number().int().positive(),
@@ -236,7 +237,7 @@ export const conexaIntegration: IntegrationDefinition = {
         const resultado = acrescentarAnotacao(
           (atual as Record<string, unknown>).notes,
           anotacao,
-          `${agora.data} ${agora.hora} · atendimento`,
+          carimboDaAnotacao(agora, ctx),
         );
 
         if (resultado.excedeu) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acrescentarAnotacao,
+  carimboDaAnotacao,
   TETO_DE_OBSERVACOES,
 } from "./formatacao";
 
@@ -66,5 +67,63 @@ describe("acrescentarAnotacao", () => {
   it("dentro do teto não acusa nada", () => {
     const r = acrescentarAnotacao("curto", "também curto", CARIMBO);
     expect(r.excedeu).toBe(false);
+  });
+});
+
+/**
+ * O carimbo é a única coisa que separa "o robô afirmou isso" de "um colega
+ * afirmou isso", no meio de um campo onde a equipe comercial escreve à mão.
+ * Origem ERRADA é pior que origem nenhuma: manda quem cobra ou renova procurar
+ * um atendimento que nunca existiu, e `notes` não tem desfazer.
+ */
+describe("carimboDaAnotacao", () => {
+  const AGORA = { data: "09/09/2026", hora: "14:32" };
+
+  it("veio de uma conversa do Chatwoot: continua dizendo atendimento", () => {
+    // Aqui a palavra é verdadeira e é útil — quem ler acha a conversa em
+    // /conversas e confere o que foi combinado.
+    expect(carimboDaAnotacao(AGORA, { chatwootConversationId: 4812 })).toBe(
+      "09/09/2026 14:32 · atendimento",
+    );
+  });
+
+  it("sem conversa nenhuma, NÃO promete um atendimento", () => {
+    // ⚠ Este é o caso da mesa do agente — `AgentRun.conversationId` fica nulo e
+    // não há conversa. Mas também é o do gatilho HTTP e o do agendamento: o
+    // `ToolContext` só sabe dizer se há conversa do Chatwoot, então a palavra
+    // tem de ser verdadeira nos três.
+    for (const semConversa of [
+      {},
+      { chatwootConversationId: undefined },
+      { chatwootConversationId: null },
+    ]) {
+      const carimbo = carimboDaAnotacao(AGORA, semConversa);
+      expect(carimbo).toBe("09/09/2026 14:32 · robô");
+      expect(carimbo).not.toContain("atendimento");
+    }
+  });
+
+  it("a data e a hora vão como recebidas, no formato daqui", () => {
+    // ⚠ O container roda em UTC; quem resolve o fuso é `agoraEmSaoPaulo`. Esta
+    // função não pode reformatar nada — só compor.
+    expect(carimboDaAnotacao({ data: "01/12/2026", hora: "08:05" }, {})).toBe(
+      "01/12/2026 08:05 · robô",
+    );
+  });
+
+  it("a linha que cai no ERP não afirma origem que não houve", () => {
+    // Ponta a ponta, porque é o texto inteiro que uma pessoa lê na tela do
+    // Conexa — e é a composição dos dois que já saiu errada uma vez.
+    const humano = "Cliente pediu nota fiscal separada por unidade.";
+
+    const r = acrescentarAnotacao(
+      humano,
+      "CNPJ conferido: ativo na Receita.",
+      carimboDaAnotacao(AGORA, {}),
+    );
+
+    expect(r.texto).toBe(
+      `${humano}\n[09/09/2026 14:32 · robô] CNPJ conferido: ativo na Receita.`,
+    );
   });
 });

@@ -120,13 +120,7 @@ export async function opcoesDeFiltro(): Promise<OpcoesDeFiltro> {
   };
 }
 
-export const ROTULO_DA_FONTE: Record<RunSource, string> = {
-  [RunSource.CHATWOOT]: "Chatwoot",
-  [RunSource.TRIGGER]: "Gatilho HTTP",
-  [RunSource.PLAYGROUND]: "Playground",
-  [RunSource.SCHEDULE]: "Agendamento",
-};
-
-export function normalizarFonte(valor: string | undefined | null) {
-  return valor && valor in ROTULO_DA_FONTE ? (valor as RunSource) : null;
-}
+// Os rótulos mudaram de casa para `@/lib/origens`, que é puro: este arquivo
+// importa `@/lib/db`, e componente de cliente não pode ler daqui sem arrastar o
+// Prisma para o bundle. Reexportado para os chamadores continuarem intactos.
+export { ROTULO_DA_FONTE, normalizarFonte } from "@/lib/origens";

@@ -11,6 +11,8 @@ import {
   type FalhaAoDetalhar,
   type ToolCallDetalhada,
 } from "@/server/actions/execucoes";
+import type { RunSource } from "@/generated/prisma/enums";
+import { ROTULO_DA_FONTE } from "@/lib/origens";
 import { Aviso, Badge, Button, Card, Meta } from "@/components/ui";
 import {
   AVISO_DESATUALIZADO,
@@ -55,12 +57,18 @@ function ehFalhaAoDetalhar(
   return r !== null && "erro" in r;
 }
 
-const ROTULO_DA_FONTE: Record<string, string> = {
-  CHATWOOT: "Chatwoot",
-  TRIGGER: "Gatilho",
-  PLAYGROUND: "Playground",
-  SCHEDULE: "Agendamento",
-};
+/**
+ * ⚠ Repete os rótulos de `server/consumo/consulta.ts` porque este é componente
+ * de cliente e aquele módulo importa o Prisma — importá-lo aqui arrastaria o
+ * banco para o bundle do navegador. Origem nova entra nas DUAS listas.
+ *
+ * ⚠ Era `Record<string, string>`, e por isso o build não cobrava nada: origem
+ * que faltasse aqui não quebrava compilação nenhuma, só aparecia crua na tela
+ * ("MESA" em caixa alta, no meio de rótulos em português). O
+ * `Record<RunSource, …>` é o que faz o typecheck cobrar esta metade.
+ */
+// ROTULO_DA_FONTE morava aqui, copiado de /consumo — e as cópias divergiram
+// ("Gatilho" × "Gatilho HTTP"). Agora as duas telas leem `@/lib/origens`.
 
 const PAPEL: Record<string, { rotulo: string; classe: string }> = {
   system: { rotulo: "sistema", classe: "text-muted" },
@@ -436,7 +444,11 @@ export function Execucao({
     <Card className="space-y-2 p-4">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <Badge tone={tomDoStatus}>{resumo.status}</Badge>
-        <Badge>{ROTULO_DA_FONTE[resumo.source] ?? resumo.source}</Badge>
+        {/* O valor vem do banco, que pode ser mais novo que o JavaScript desta
+            aba: o fallback continua sendo o que impede a etiqueta vazia. */}
+        <Badge>
+          {ROTULO_DA_FONTE[resumo.source as RunSource] ?? resumo.source}
+        </Badge>
         <Link
           href={`/agentes/${resumo.agente.id}`}
           className="font-medium hover:underline"
