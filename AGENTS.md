@@ -406,6 +406,54 @@ atributo apagaria todos os outros — mesma armadilha dos labels, mesma soluçã
 ler, mesclar, escrever. Vale o GET a mais, porque o que se perderia são dados
 que outra equipe pode ter cadastrado.
 
+#### Onde o resultado é gravado MUDOU: agora é o ERP
+
+⚠ **Decisão do usuário em 09/09/2026** — *"tínhamos montado para salvar no
+custom field do Chatwoot, mas achamos melhor salvar no Conexa"*. O parágrafo
+acima continua descrevendo o que o CÓDIGO oferece (`anotar_no_contato` existe e
+não mudou); o que mudou é o **prompt** do agente de conferência, que agora
+procura o cliente no Conexa e grava o resultado com `conexa_anotar_no_cliente`.
+
+- **O que se ganha:** o ERP é onde a equipe olha o cliente. Atributo de contato
+  do Chatwoot só existe dentro do atendimento, e quem cobra, fatura ou renova
+  contrato nunca abre aquela tela.
+- ⚠ **O que se perde é justamente o que o parágrafo acima promete: filtro.**
+  Nota não responde "quem está com documento vencido". Se essa pergunta voltar a
+  ser necessária, o caminho não é trocar de volta — é gravar nos dois lugares,
+  campo para a máquina e nota para o humano.
+- **O prompt não está versionado no repositório**, como os de conferência e da
+  ZapSign que vieram antes: foi entregue no chat.
+
+#### `notes` do Conexa é campo único — a terceira vez da mesma armadilha
+
+`conexa_anotar_no_cliente` ACRESCENTA, nunca substitui. A lógica é pura e
+testada em `conexa/formatacao.ts`, porque é ali que texto escrito por gente se
+perde.
+
+- ⚠ **`PATCH /customer/{id}` com `notes` sobrescreve o campo inteiro**, e a
+  equipe comercial escreve ali à mão. Ler, mesclar, escrever — mesma solução dos
+  labels e dos `custom_attributes`, terceira aparição da mesma armadilha neste
+  projeto. A leitura acontece **imediatamente antes** da escrita, dentro da tool.
+- **A corrida entre ler e gravar é conhecida e aceita.** O Conexa não tem ETag
+  nem `If-Match`: duas anotações simultâneas no mesmo cliente perdem uma. Só dá
+  para manter o intervalo curto, e o caso exige dois atendimentos do MESMO
+  cliente no mesmo segundo.
+- **O carimbo `[dd/mm/aaaa hh:mm · atendimento]` não é enfeite.** Anotação sem
+  origem, no meio de texto humano, é indistinguível de alguém da equipe ter
+  afirmado aquilo. A data sai de `agoraEmSaoPaulo()` — o container roda em UTC.
+- ⚠ **O teto de 20.000 caracteres NÃO é limite documentado do Conexa.** A
+  documentação não declara nenhum, e inventar um número como se fosse dela seria
+  pior que não ter teto. Ele existe por outro motivo, que basta sozinho: `notes`
+  é um campo que uma pessoa lê na tela, e acrescentar para sempre transforma a
+  anotação útil de hoje no lixo de amanhã. Estourou, a tool **recusa** e manda
+  uma pessoa limpar — cortar destruiria exatamente o texto humano que este
+  caminho existe para preservar.
+- **`conexa_ver_cliente` não devolve `notes`, e continua assim.** O agente
+  escreve na observação sem conseguir lê-la, então não tem como saber se já
+  anotou aquilo — por isso a descrição da tool manda escrever a versão final de
+  uma vez e não repetir para confirmar. Devolver o campo em toda consulta de
+  cliente jogaria meses de texto humano dentro do prompt.
+
 ### Gatilho por horário: o agente roda sozinho
 
 Terceiro jeito de acionar um agente, ao lado da mensagem do Chatwoot e do
