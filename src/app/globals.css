@@ -134,7 +134,7 @@ body {
   scrollbar-color: var(--border) transparent;
 }
 
-/* `.sem-barra` foi removida em 09/09/2026 junto com a rolagem da tira de abas.
+/* `.sem-barra` foi removida em 10/09/2026 junto com a rolagem da tira de abas.
    Ela existia para esconder o scrollbar do Windows sob as abas — e esconder a
    barra foi justamente o que fez uma aba inteira sumir sem ninguém perceber.
    A tira agora quebra em linhas e não rola. Se voltar a fazer falta, o motivo

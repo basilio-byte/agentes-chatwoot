@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
  *    o próprio usuário que desconfiou, olhando uma captura: "a opção do Google
  *    está sendo mostrada cortada, não sei se pode haver mais itens ocultos à
  *    frente dele". Havia: uma aba inteira.
- * 2. 09/09/2026 — mesmo defeito cobrando de novo. Ele precisava do campo de
+ * 2. 10/09/2026 — mesmo defeito cobrando de novo. Ele precisava do campo de
  *    instrução de leitura de documento, abriu Integrações, e foi procurar na
  *    aba "Documentos" (que é a conferência de CPF/CNH, outra coisa) porque
  *    "Leitura de mídia" continuava atrás da borda direita.

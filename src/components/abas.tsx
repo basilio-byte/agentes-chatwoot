@@ -86,7 +86,7 @@ export function Abas({
         onKeyDown={navegarPeloTeclado}
         // ⚠ QUEBRA EM LINHAS, e nunca rola. Aba fora da vista é aba que não
         // existe para quem usa: em 28/08 a entrada do Google empurrou "Leitura
-        // de mídia" para fora da tela, e em 09/09 o usuário foi procurar o
+        // de mídia" para fora da tela, e em 10/09 o usuário foi procurar o
         // campo de instrução na aba errada — porque a certa estava atrás da
         // borda. Duas vezes o mesmo defeito.
         //
