@@ -134,16 +134,11 @@ body {
   scrollbar-color: var(--border) transparent;
 }
 
-/* Rola, mas sem desenhar a barra.
-   Para a tira de abas: no Windows o scrollbar clássico virava uma faixa cinza
-   sob as abas, e a régua de rolagem lia como layout quebrado. */
-.sem-barra {
-  scrollbar-width: none;
-}
-
-.sem-barra::-webkit-scrollbar {
-  display: none;
-}
+/* `.sem-barra` foi removida em 09/09/2026 junto com a rolagem da tira de abas.
+   Ela existia para esconder o scrollbar do Windows sob as abas — e esconder a
+   barra foi justamente o que fez uma aba inteira sumir sem ninguém perceber.
+   A tira agora quebra em linhas e não rola. Se voltar a fazer falta, o motivo
+   original está no git. */
 
 /* Quem pediu menos movimento não recebe transição nenhuma — inclusive as que
    vierem em componente novo, por isso a regra é global e não por classe. */

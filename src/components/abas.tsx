@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export type Aba = {
@@ -44,55 +44,6 @@ export function Abas({
   );
   const listaRef = useRef<HTMLDivElement>(null);
 
-  /**
-   * De que lado ainda há aba fora da vista.
-   *
-   * ⚠ Existe porque `sem-barra` esconde a barra de rolagem: a tira rola, mas
-   * não havia **nada** dizendo isso. Enquanto nenhuma página passava de seis
-   * abas ninguém notou; na sétima, a última some da tela e parece não existir.
-   * Foi o que aconteceu em Integrações — "Leitura de mídia" desapareceu atrás
-   * da borda, e ela é justamente o pré-requisito da integração que entrou na
-   * frente dela.
-   */
-  const [sobra, setSobra] = useState({ esquerda: false, direita: false });
-
-  const conferirSobra = useCallback(() => {
-    const el = listaRef.current;
-    if (!el) return;
-    // A folga de 2px absorve arredondamento de zoom e de tela HiDPI, que senão
-    // deixa a sombra acesa numa tira que já chegou ao fim.
-    const folga = el.scrollWidth - el.clientWidth;
-    setSobra({
-      esquerda: el.scrollLeft > 2,
-      direita: folga > 2 && el.scrollLeft < folga - 2,
-    });
-  }, []);
-
-  useEffect(() => {
-    const el = listaRef.current;
-    if (!el) return;
-
-    conferirSobra();
-
-    const observador = new ResizeObserver(conferirSobra);
-    observador.observe(el);
-    // Os filhos também: a tira não muda de tamanho quando a FONTE termina de
-    // carregar, mas o conteúdo dela muda — e é aí que a sobra aparece.
-    for (const filho of el.children) observador.observe(filho);
-
-    return () => observador.disconnect();
-  }, [conferirSobra, itens.length]);
-
-  // A aba escolhida pela URL pode estar fora da vista, e aí a página abre com
-  // um painel visível cuja aba não aparece em lugar nenhum. Só na montagem:
-  // depois disso, quem rola é quem clica.
-  useEffect(() => {
-    listaRef.current
-      ?.querySelector<HTMLButtonElement>(`[data-aba="${ativa}"]`)
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   function selecionar(id: string) {
     setAtiva(id);
 
@@ -128,20 +79,28 @@ export function Abas({
 
   return (
     <div className={cn("space-y-5", className)}>
-      {/* A moldura existe só para pendurar as sombras de rolagem. */}
-      <div className="relative">
-        <div
-          ref={listaRef}
-          role="tablist"
-          aria-label="Seções da página"
-          onKeyDown={navegarPeloTeclado}
-          onScroll={conferirSobra}
-          // Rola na horizontal em tela estreita em vez de quebrar em duas
-          // linhas. `sem-barra` esconde o scrollbar: o clássico do Windows
-          // aparecia como uma faixa cinza sob as abas e fazia a tira parecer
-          // quebrada. Quem avisa que há mais são as sombras abaixo.
-          className="sem-barra flex gap-1 overflow-x-auto border-b border-line"
-        >
+      <div
+        ref={listaRef}
+        role="tablist"
+        aria-label="Seções da página"
+        onKeyDown={navegarPeloTeclado}
+        // ⚠ QUEBRA EM LINHAS, e nunca rola. Aba fora da vista é aba que não
+        // existe para quem usa: em 28/08 a entrada do Google empurrou "Leitura
+        // de mídia" para fora da tela, e em 09/09 o usuário foi procurar o
+        // campo de instrução na aba errada — porque a certa estava atrás da
+        // borda. Duas vezes o mesmo defeito.
+        //
+        // A versão anterior rolava na horizontal com a barra escondida, e
+        // tentava avisar com sombra em degradê nas pontas. Não bastou: sombra
+        // depende de a pessoa reparar numa dica, e a prova de que não repara
+        // aconteceu duas vezes. Aqui o custo é altura — em tela estreita a tira
+        // ocupa duas ou três linhas — e é o custo certo: altura se vê, aba
+        // escondida não.
+        //
+        // Sem `overflow`, sem `ResizeObserver`, sem `scrollIntoView` e sem
+        // sombra: tudo aquilo existia só para administrar o que rolava.
+        className="flex flex-wrap gap-x-1 border-b border-line"
+      >
           {itens.map((item) => {
             const selecionada = item.id === ativa;
             return (
@@ -194,27 +153,6 @@ export function Abas({
               </button>
             );
           })}
-        </div>
-
-        {/*
-          Sombra em degradê nas pontas — o único sinal de que a tira continua.
-          `pointer-events-none` para não roubar o clique da aba que está
-          embaixo, e `bottom-px` para não cobrir a linha que separa a tira do
-          conteúdo. A cor sai de `--background`, então funciona nos dois temas
-          sem uma segunda definição.
-        */}
-        {sobra.esquerda ? (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute top-0 bottom-px left-0 w-8 bg-linear-to-r from-background to-transparent"
-          />
-        ) : null}
-        {sobra.direita ? (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute top-0 right-0 bottom-px w-8 bg-linear-to-l from-background to-transparent"
-          />
-        ) : null}
       </div>
 
       {itens.map((item) => (

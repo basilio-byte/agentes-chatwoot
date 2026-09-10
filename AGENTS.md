@@ -1431,6 +1431,15 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
   por `history.replaceState` — **não** use `router.replace`, que reexecuta o
   componente de servidor e mata a troca instantânea. O playground fica **fora**
   das abas, para dar para testar enquanto se mexe em qualquer configuração.
+  ⚠ **A tira QUEBRA EM LINHAS e nunca rola, e isso não é preferência de
+  estilo.** Ela já rolou na horizontal, com a barra escondida para não virar
+  faixa cinza no Windows — e o resultado foi uma aba inteira invisível: em
+  28/08/2026 a entrada do Google empurrou "Leitura de mídia" para fora da tela,
+  e em 09/09 o operador foi procurar um campo na aba errada porque a certa
+  estava atrás da borda. Sombra em degradê nas pontas foi a primeira tentativa
+  de conserto e **não bastou**: dica visual depende de a pessoa reparar, e a
+  prova de que não repara aconteceu duas vezes. Quebrar custa altura, e altura
+  se vê. **Não reintroduza `overflow-x` aqui** — sete integrações vão virar oito.
 - **O logo da Seahub só existe em branco.** No tema claro ele é invertido por CSS
   (`.logo-seahub`) em vez de manter dois arquivos.
 - **Tools são ordenadas por nome** antes de ir para a API (`paraFerramentasAnthropic`).
