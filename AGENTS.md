@@ -421,6 +421,14 @@ o resultado no cadastro.
   não encontrado; timeout, 5xx e queda de rede viram `indeterminado`. A
   BrasilAPI é projeto comunitário, sem compromisso de disponibilidade —
   concluir inexistência a partir de um problema nosso recusaria um cliente.
+- **O que dá para checar em site do governo está em
+  `docs/03-validacao-de-documentos.md`**, com o link de cada serviço e o que cada
+  um exige. O resumo que importa aqui: **nenhum serviço gratuito de governo para
+  CPF ou CNH tem API.** ⚠ A CNH-e em PDF sai **assinada com certificado
+  ICP-Brasil**, e o VALIDAR do ITI confere de graça a autenticidade do ARQUIVO —
+  mas só pela página web e só com o PDF original; foto ou print perde a
+  assinatura. E a frase "documento assinado com certificado digital" no rodapé
+  é TEXTO: um PDF falso pode conter a mesma frase.
 
 **Onde o resultado é gravado:** atributo personalizado do **CONTATO**, não da
 conversa (`anotar_no_contato`). A conversa é resolvida e some da vista; a pessoa
