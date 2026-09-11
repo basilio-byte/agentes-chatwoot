@@ -1369,9 +1369,85 @@ que **não carimba nada** e é resolvido por `prefers-color-scheme`.
   conforme o valor só repetiria em cor o que o comprimento já diz. Duas medidas
   nunca dividem o mesmo eixo — troca-se a medida e a escala inteira troca junto.
 
+### Servidor MCP: o painel operado por um assistente
+
+`/api/mcp` abre o painel a um assistente de I.A. (Claude Code, Cursor…) com o
+poder da conta dona de um token pessoal, gerado em **Acesso MCP**
+(`/acesso-mcp`). São 27 ferramentas: 12 de consulta, para Leitura em diante, e
+15 que alteram produção, para Administrador. Pedido do usuário em 11/09/2026 —
+*"um MCP completo para gerenciamento total da plataforma"* —, depois de ele
+querer colar a senha de Proprietário no chat para um levantamento dos agentes.
+
+- **Serviço compartilhado, nunca regra copiada.** O miolo das ações do painel
+  saiu para `src/server/gestao/` (agentes, integrações, escopo, gatilho,
+  agendamentos) e `src/server/execucoes/` (detalhe, parada). As server actions
+  ficaram só com papel, formulário e redirect; as ferramentas chamam as mesmas
+  funções. `Autor` diz quem e por onde — pelo MCP, a auditoria sai com
+  `diff: { via: "mcp", tokenId }`. ⚠ **Regra nova de agente mora no serviço,
+  não na action**: na action ela valeria para uma porta só, e a outra
+  continuaria fazendo o que a regra proíbe.
+- **O que fica de fora é decisão, não pendência**: excluir agente, ver ou trocar
+  credencial, gerar token de gatilho, contas e papéis. Nem o token de um
+  Proprietário alcança isso — `catalogo.test.ts` trava os nomes e garante que
+  nenhuma ferramenta exige OWNER. Acrescentar exige mudar o teste de propósito.
+- **Token guardado como hash, não cifrado** (`McpToken.tokenHash`, sha256). O
+  do gatilho é cifrado porque é conferido contra um agente conhecido pela URL;
+  este é procurado entre os tokens de todo mundo. Prefixo `seahub_mcp_` para ser
+  reconhecível onde vazar. ⚠ **O papel é relido da CONTA a cada chamada**:
+  rebaixar ou desativar alguém vale para o assistente dele na hora.
+- **Prompt em dois passos, sem estado no servidor.** `propor_alteracao_de_prompt`
+  devolve o diff, o `baseHash` (prompt de partida) e o `hashDaProposta`
+  (resultado). `aplicar_alteracao_de_prompt` recalcula e só grava se os dois
+  conferem, e a trava de concorrência vai no `WHERE` do próprio UPDATE
+  (`promptEsperado`), não numa leitura antes. ⚠ **O segundo carimbo é o que
+  importa**: sem ele, o assistente mostraria uma alteração, ouviria "pode
+  aplicar" e aplicaria outra, reescrevendo o texto de memória no segundo passo.
+- ⚠ **O prompt salvo pelo painel tem `\r\n`** — é como o formulário serializa a
+  quebra do `<textarea>`. Substituição e diff normalizam a quebra, e o resultado
+  volta no estilo do prompt existente. Sem isso, nenhum trecho com quebra de
+  linha seria encontrado, e trocar uma palavra mostraria o prompt inteiro como
+  reescrito.
+- **Parâmetro desconhecido é ERRO** (`z.strictObject` em toda entrada) — o
+  contrário das tools dos agentes, onde o Zod descarta a chave em silêncio. E o
+  que o formulário nunca mandaria é recusado em voz alta: lista vazia de
+  ferramentas, caixas sem modo `specific` (o serviço as jogaria fora), restaurar
+  agente que não está arquivado (o desligaria) e definir ferramentas de
+  integração desligada (o upsert criaria o vínculo LIGADO).
+- **Dual-era de protocolo.** Atende a revisão `2026-07-28` (sem aperto de mão;
+  `_meta` e os cabeçalhos `MCP-Protocol-Version`, `Mcp-Method` e `Mcp-Name` em
+  toda requisição, conferidos contra o corpo) e as de 2025 (`initialize`). A era
+  é escolhida pela forma da requisição. Sem sessão, resposta sempre JSON, GET e
+  DELETE dão 405. O protocolo é puro e testado em `mcp/protocolo.ts`.
+- **O prompt "como o agente recebe" usa a conta do turno.** `prepararContexto`
+  (`agents/contexto.ts`) saiu do runner para `ver_regras_injetadas` mostrar
+  Regras da Casa e roster pela MESMA função. Recompor com as mesmas peças noutro
+  lugar é o jeito de a ordem ou a linha de encaminhamento divergirem.
+- **O freio por token falha ABERTO, e com prazo.** Nenhuma ferramenta gasta
+  crédito, e barrar por Redis fora do ar deixaria sem painel justamente quem
+  investiga a queda. ⚠ **O prazo é obrigatório**: a conexão compartilhada tem
+  `maxRetriesPerRequest: null` (exigência do BullMQ), e com o Redis caído um
+  comando não falha — espera para sempre. ⚠ **O freio da mesa usa a mesma
+  conexão SEM prazo**: o "falha fechado" de lá, na prática, pendura a
+  requisição. Achado em 11/09/2026 e ainda não corrigido.
+
+#### O que o MCP expôs no painel
+
+Dois defeitos em produção, achados ao escrever e testar as ferramentas — o
+serviço compartilhado corrigiu os dois para as duas portas:
+
+- ⚠ **"Desmarcar todas" liberava TODAS as ferramentas.** A tela salvava
+  `allowedTools: []`, e no banco vazio significa sem restrição: o agente passava
+  a enxergar tudo, o contrário do pedido, sem erro. `definirFerramentasDoAgente`
+  recusa lista sem nenhum nome válido; para tirar todas, desliga-se a
+  integração para o agente.
+- ⚠ **Modelo fora do catálogo travava qualquer edição do agente**, inclusive o
+  conserto do prompt, sem ninguém ter mexido no modelo. Agora ele só é conferido
+  contra o catálogo quando MUDA.
+
 ### Papéis: a descrição faz parte da permissão
 
-`OWNER > ADMIN > VIEWER`, com os pesos em `auth-guard.ts`. O que cada papel
+`OWNER > ADMIN > VIEWER`, com a régua em `src/lib/papeis.ts` (`alcancaPapel`) —
+o `auth-guard.ts` e o MCP leem a mesma. O que cada papel
 concede está descrito em **`src/lib/papeis.ts`**, e essa é a fonte única —
 rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários mostra.
 
@@ -1389,6 +1465,9 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
 - **Só `OWNER` toca em credencial, em token de gatilho e em conta.** `ADMIN` faz
   todo o resto: agentes, config de integração, tools por agente e liga/desliga
   do gatilho.
+- **O token do MCP tem o papel da conta**, relido a cada chamada, mas não carrega
+  o que é só de OWNER: credencial, conta e exclusão ficam fora do servidor
+  inteiro. As três descrições de `papeis.ts` dizem isso.
 
 ### Regras do projeto
 
@@ -1454,10 +1533,13 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
   Reordenar invalida o cache do prefixo inteiro. Existe teste cobrindo isso.
 - **Toggle de integração é de dois níveis** (`Integration.enabled` ∧
   `AgentIntegration.enabled` + allowlist). Integração desligada não aparece para o
-  modelo — não existe tool que responde "desabilitado".
+  modelo — não existe tool que responde "desabilitado". ⚠ **`allowedTools` vazio
+  é TODAS**, e por isso ninguém grava vazio querendo dizer "nenhuma" (ver o
+  servidor MCP). A regra da allowlist mora em `toolsLiberadas`.
 - **Credenciais nunca em texto plano.** `cifrar`/`decifrar` em `src/lib/crypto.ts`;
   a API devolve só o `hint`.
 - Alterar prompt, modelo ou effort cria uma `AgentVersion`. Editar nome/descrição não.
+  O modelo só é conferido contra o catálogo quando muda.
 
 ### Comandos
 

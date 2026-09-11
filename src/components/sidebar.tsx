@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot,
+  KeyRound,
   LogOut,
   MessagesSquare,
   Plug,
@@ -33,6 +34,7 @@ const SECOES = [
     itens: [
       { href: "/integracoes", label: "Integrações", icone: Plug },
       { href: "/usuarios", label: "Usuários", icone: Users },
+      { href: "/acesso-mcp", label: "Acesso MCP", icone: KeyRound },
     ],
   },
 ];

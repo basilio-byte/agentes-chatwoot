@@ -35,6 +35,40 @@ model User {
   auditLogs     AuditLog[]
   agentesQuePossui  Agent[] @relation("DonoDoAgente")
   agentesQueAlterou Agent[] @relation("UltimaAlteracaoDoAgente")
+  mcpTokens         McpToken[]
+}
+
+/// Token pessoal do servidor MCP (`/api/mcp`): conecta um assistente de I.A. ao
+/// painel com o poder da conta dona dele, e nada além.
+///
+/// ⚠ Guarda o HASH, nunca o token. O do gatilho é cifrado porque é conferido
+/// contra UM agente conhecido pela URL; este é procurado entre os tokens de
+/// todo mundo, e a busca é pelo hash. O texto puro aparece uma vez só, na tela,
+/// no momento em que é gerado.
+///
+/// O papel NÃO mora aqui: é lido da conta a cada requisição. Rebaixar alguém a
+/// Leitura, ou desativar a conta, vale para o token na mesma hora.
+model McpToken {
+  id     String @id @default(cuid())
+  userId String
+
+  /// Onde ele está em uso ("Claude Code no notebook") — é o que quem for
+  /// revogar precisa ler.
+  nome      String
+  tokenHash String @unique
+  /// `seahub_mcp_…a1b2`, para reconhecer sem revelar.
+  hint      String
+
+  createdAt  DateTime  @default(now())
+  /// Gravado no máximo uma vez por minuto: a cada chamada seria uma escrita
+  /// por leitura.
+  lastUsedAt DateTime?
+  /// Revogar não apaga: a auditoria das alterações feitas aponta para este id.
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ---------------------------------------------------------------------------

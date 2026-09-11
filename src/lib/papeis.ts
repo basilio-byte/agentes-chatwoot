@@ -10,6 +10,22 @@ import { UserRole } from "@/generated/prisma/enums";
  * alguém decide a quem entregar uma conta.
  */
 
+/**
+ * A régua dos papéis. Mora aqui, e não em `auth-guard.ts`, porque o MCP precisa
+ * da MESMA régua sem arrastar o Auth.js junto — e régua copiada é régua que
+ * diverge.
+ */
+const PESO: Record<UserRole, number> = {
+  [UserRole.VIEWER]: 0,
+  [UserRole.ADMIN]: 1,
+  [UserRole.OWNER]: 2,
+};
+
+/** O papel alcança o mínimo exigido? */
+export function alcancaPapel(papel: UserRole, minimo: UserRole): boolean {
+  return PESO[papel] >= PESO[minimo];
+}
+
 export type DescricaoDePapel = {
   rotulo: string;
   /** Uma linha, para a dica embaixo do seletor. */
@@ -25,6 +41,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
     pode: [
       "Ver agentes, conversas, execuções e consumo",
       "Abrir o detalhe de uma execução e ler a transcrição",
+      "Conectar um assistente de I.A. pelo MCP, só para consultar",
       "Trocar a própria senha",
     ],
     naoPode: [
@@ -44,6 +61,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Configurar e ligar a leitura de mídia (áudio, imagem, documento)",
       "Ligar e desligar o gatilho HTTP de um agente",
       "Testar no playground",
+      "Operar os agentes por um assistente de I.A. (MCP), com os limites deste papel",
     ],
     naoPode: [
       "Ver ou trocar as credenciais das integrações",
@@ -68,6 +86,9 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
     naoPode: [
       "Desativar a própria conta",
       "Deixar o painel sem nenhum proprietário ativo",
+      // O token do MCP não herda o que é só de proprietário: credencial, conta
+      // e exclusão ficam fora do servidor inteiro, qualquer que seja o dono.
+      "Mexer em credenciais, contas ou excluir agentes pelo MCP — isso fica só no painel",
     ],
   },
 };
