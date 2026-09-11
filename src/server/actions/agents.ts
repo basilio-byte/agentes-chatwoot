@@ -2,28 +2,23 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { z } from "zod";
 import { db } from "@/lib/db";
 import { exigirPapel } from "@/server/auth-guard";
-import { IntegrationProvider, UserRole } from "@/generated/prisma/enums";
-import { EFFORTS, listarModelos } from "@/server/agents/catalogo";
-import { slugUnico } from "@/lib/slug";
+import { UserRole } from "@/generated/prisma/enums";
 import { comFalhaVisivel } from "@/server/actions/falha-visivel";
+import { auditar, autorDaSessao } from "@/server/gestao/autor";
+import {
+  arquivar,
+  atualizarAgente as gravarAgente,
+  criarAgente as cadastrarAgente,
+  definirAtivo,
+  definirEntrada,
+  restaurar,
+  type DadosDoAgente,
+} from "@/server/gestao/agentes";
 
-const agenteSchema = z.object({
-  name: z.string().min(2, "Informe um nome").max(80),
-  description: z.string().max(280).optional().or(z.literal("")),
-  systemPrompt: z.string().min(20, "O prompt precisa de pelo menos 20 caracteres"),
-  // Slug da OpenRouter: "provedor/modelo".
-  model: z
-    .string()
-    .regex(/^[\w.-]+\/[\w.:-]+$/, "Selecione um modelo da lista"),
-  effort: z.enum(EFFORTS),
-  maxTokens: z.coerce.number().int().min(256).max(200000),
-  maxToolIterations: z.coerce.number().int().min(1).max(20),
-  /// Vazio esconde o agente do roster dos colegas — ninguém transfere para ele.
-  routingDescription: z.string().max(400).optional().or(z.literal("")),
-});
+// A regra de cada ação mora em `server/gestao/agentes.ts`, que o MCP também
+// chama. Aqui fica só a porta do painel: papel, formulário e redirecionamento.
 
 export type EstadoFormulario = {
   erro?: string;
@@ -32,8 +27,9 @@ export type EstadoFormulario = {
   camposComErro?: Record<string, string>;
 };
 
-function lerFormulario(formData: FormData) {
-  return agenteSchema.safeParse({
+/** O formulário, cru — quem converte e recusa é o schema do serviço. */
+function lerFormulario(formData: FormData): DadosDoAgente {
+  return {
     name: formData.get("name"),
     description: formData.get("description"),
     systemPrompt: formData.get("systemPrompt"),
@@ -42,37 +38,7 @@ function lerFormulario(formData: FormData) {
     maxTokens: formData.get("maxTokens"),
     maxToolIterations: formData.get("maxToolIterations"),
     routingDescription: formData.get("routingDescription"),
-  });
-}
-
-function erros(issues: z.ZodIssue[]): EstadoFormulario {
-  return {
-    erro: "Confira os campos destacados.",
-    camposComErro: Object.fromEntries(
-      issues.map((i) => [i.path.join("."), i.message]),
-    ),
   };
-}
-
-/**
- * Confere se o slug existe no catálogo da OpenRouter.
- *
- * Se o catálogo caiu para a lista de reserva (API fora do ar), não bloqueia —
- * seria pior impedir a edição de um agente por indisponibilidade externa.
- */
-async function validarModelo(
-  modelId: string,
-): Promise<EstadoFormulario | null> {
-  const modelos = await listarModelos();
-  if (modelos.length <= 5) return null; // lista de reserva: não dá para afirmar
-
-  if (!modelos.some((m) => m.id === modelId)) {
-    return {
-      erro: "Modelo não encontrado no catálogo da OpenRouter.",
-      camposComErro: { model: "Slug inexistente" },
-    };
-  }
-  return null;
 }
 
 /**
@@ -98,66 +64,16 @@ async function criarAgenteImpl(
   formData: FormData,
 ): Promise<EstadoFormulario> {
   const sessao = await exigirPapel(UserRole.ADMIN);
-  const parsed = lerFormulario(formData);
-  if (!parsed.success) return erros(parsed.error.issues);
 
-  const modeloInvalido = await validarModelo(parsed.data.model);
-  if (modeloInvalido) return modeloInvalido;
-
-  const jaExiste = await db.agent.findUnique({
-    where: { name: parsed.data.name },
-  });
-  if (jaExiste) {
-    return {
-      erro: "Já existe um agente com esse nome.",
-      camposComErro: { name: "Nome em uso" },
-    };
-  }
-
-  // A chave nasce do nome, mas não acompanha renomeações: os colegas já
-  // referenciam este agente por ela nos prompts deles.
-  const usadas = (await db.agent.findMany({ select: { key: true } })).map(
-    (a) => a.key,
+  const criado = await cadastrarAgente(
+    lerFormulario(formData),
+    autorDaSessao(sessao),
   );
-
-  const agente = await db.agent.create({
-    data: {
-      ...parsed.data,
-      key: slugUnico(parsed.data.name, usadas),
-      description: parsed.data.description || null,
-      routingDescription: parsed.data.routingDescription || null,
-      ownerId: sessao.user.id,
-      updatedById: sessao.user.id,
-      versions: {
-        create: {
-          version: 1,
-          systemPrompt: parsed.data.systemPrompt,
-          model: parsed.data.model,
-          effort: parsed.data.effort,
-          note: "Versão inicial",
-          createdById: sessao.user.id,
-        },
-      },
-    },
-  });
-
-  // O Chatwoot já nasce ligado: ele é o canal, não uma integração opcional.
-  // Sem o vínculo, o agente responde mas não consegue transferir para colega
-  // nem escalar para humano — e descobrir isso exige ler o código.
-  const chatwoot = await db.integration.findUnique({
-    where: { provider: IntegrationProvider.CHATWOOT },
-    select: { id: true },
-  });
-  if (chatwoot) {
-    await db.agentIntegration.create({
-      data: { agentId: agente.id, integrationId: chatwoot.id, enabled: true },
-    });
+  if (!criado.ok) {
+    return { erro: criado.erro, camposComErro: criado.camposComErro };
   }
 
-  await registrarAuditoria(sessao.user.id, "agent.created", agente.id);
-
-  revalidatePath("/agentes");
-  redirect(`/agentes/${agente.id}`);
+  redirect(`/agentes/${criado.id}`);
 }
 
 export async function atualizarAgente(
@@ -178,64 +94,21 @@ async function atualizarAgenteImpl(
   formData: FormData,
 ): Promise<EstadoFormulario> {
   const sessao = await exigirPapel(UserRole.ADMIN);
-  const parsed = lerFormulario(formData);
-  if (!parsed.success) return erros(parsed.error.issues);
 
-  const modeloInvalido = await validarModelo(parsed.data.model);
-  if (modeloInvalido) return modeloInvalido;
-
-  const atual = await db.agent.findUniqueOrThrow({ where: { id } });
-
-  // Versiona só quando o que define o comportamento muda — evita encher o
-  // histórico com edições de nome ou descrição.
-  const mudouComportamento =
-    atual.systemPrompt !== parsed.data.systemPrompt ||
-    atual.model !== parsed.data.model ||
-    atual.effort !== parsed.data.effort;
-
-  await db.$transaction(async (tx) => {
-    await tx.agent.update({
-      where: { id },
-      data: {
-        ...parsed.data,
-        description: parsed.data.description || null,
-        routingDescription: parsed.data.routingDescription || null,
-        updatedById: sessao.user.id,
-      },
-    });
-
-    if (mudouComportamento) {
-      const ultima = await tx.agentVersion.findFirst({
-        where: { agentId: id },
-        orderBy: { version: "desc" },
-      });
-      await tx.agentVersion.create({
-        data: {
-          agentId: id,
-          version: (ultima?.version ?? 0) + 1,
-          systemPrompt: parsed.data.systemPrompt,
-          model: parsed.data.model,
-          effort: parsed.data.effort,
-          createdById: sessao.user.id,
-        },
-      });
-    }
-  });
-
-  await registrarAuditoria(
-    sessao.user.id,
-    mudouComportamento ? "agent.prompt.updated" : "agent.updated",
+  const gravado = await gravarAgente(
     id,
+    lerFormulario(formData),
+    autorDaSessao(sessao),
   );
-
-  revalidatePath(`/agentes/${id}`);
-  revalidatePath("/agentes");
+  if (!gravado.ok) {
+    return { erro: gravado.erro, camposComErro: gravado.camposComErro };
+  }
 
   // A mensagem NOMEIA o que aconteceu: mudar prompt, modelo ou effort cria uma
   // versão no histórico, e mudar nome ou descrição não. Sem isso, o operador
   // não tem como saber se o que ele mexeu foi o que versionou.
   return {
-    ok: mudouComportamento
+    ok: gravado.mudouComportamento
       ? "Agente salvo. O prompt mudou, então uma nova versão entrou no histórico."
       : "Agente salvo.",
   };
@@ -243,127 +116,55 @@ async function atualizarAgenteImpl(
 
 export async function alternarAtivo(id: string) {
   const sessao = await exigirPapel(UserRole.ADMIN);
-  const agente = await db.agent.findUniqueOrThrow({ where: { id } });
+  const agente = await db.agent.findUniqueOrThrow({
+    where: { id },
+    select: { active: true, archivedAt: true },
+  });
 
   // Arquivado não liga: teria um agente fora da lista principal atendendo
   // cliente. Restaurar primeiro é a ordem certa, e é decisão consciente.
   if (agente.archivedAt && !agente.active) return;
 
-  await db.agent.update({
-    where: { id },
-    data: { active: !agente.active },
-  });
-
-  await registrarAuditoria(
-    sessao.user.id,
-    agente.active ? "agent.deactivated" : "agent.activated",
-    id,
-  );
-
-  revalidatePath("/agentes");
-  revalidatePath(`/agentes/${id}`);
+  await definirAtivo(id, !agente.active, autorDaSessao(sessao));
 }
 
-/**
- * Define o agente de entrada — quem recebe a primeira mensagem e distribui.
- *
- * Só um pode existir. A troca acontece numa transação porque desligar o antigo
- * e ligar o novo em passos separados deixaria uma janela sem entrada nenhuma,
- * e nessa janela quem atende passa a ser a porta, de forma arbitrária.
- * O índice parcial no banco é a garantia final contra dois salvamentos
- * simultâneos.
- */
-export async function definirAgenteDeEntrada(id: string) {
+/** Define o agente de entrada — ver `definirEntrada`. */
+export async function definirAgenteDeEntrada(
+  id: string,
+): Promise<{ aviso?: string }> {
   const sessao = await exigirPapel(UserRole.ADMIN);
-  const agente = await db.agent.findUniqueOrThrow({ where: { id } });
+  const r = await definirEntrada(id, autorDaSessao(sessao));
 
-  await db.$transaction([
-    db.agent.updateMany({
-      where: { isEntry: true, id: { not: id } },
-      data: { isEntry: false },
-    }),
-    db.agent.update({ where: { id }, data: { isEntry: true } }),
-  ]);
-
-  await registrarAuditoria(sessao.user.id, "agent.entry.set", id);
-
-  revalidatePath("/agentes");
-  revalidatePath(`/agentes/${id}`);
-
-  if (!agente.active) {
-    return {
-      aviso:
-        "Definido como entrada, mas o agente está desligado — enquanto isso, quem atende é o agente do bot que recebeu a mensagem.",
-    };
-  }
-  return {};
+  // A tela só sabe mostrar `aviso`; uma recusa que não aparecesse ali seria o
+  // clique que "não faz nada".
+  if ("erro" in r) return { aviso: r.erro };
+  return r.aviso ? { aviso: r.aviso } : {};
 }
 
 export type EstadoArquivo = { ok?: string; erro?: string };
 
-/**
- * Tira o agente de circulação sem perder nada.
- *
- * Desliga na hora — arquivado que continuasse atendendo seria o pior dos dois
- * mundos — e limpa `isEntry`, senão o painel ficaria com um agente de entrada
- * que não atende e o roteamento cairia silenciosamente na porta.
- *
- * Prompt, modelo, integrações, versões e histórico ficam intactos.
- */
+/** Tira o agente de circulação sem perder nada — ver `arquivar`. */
 export async function arquivarAgente(id: string): Promise<EstadoArquivo> {
   const sessao = await exigirPapel(UserRole.ADMIN);
-  const agente = await db.agent.findUniqueOrThrow({ where: { id } });
+  return arquivar(id, autorDaSessao(sessao));
+}
 
-  if (agente.archivedAt) return { erro: "Este agente já está arquivado." };
-
-  await db.agent.update({
-    where: { id },
-    data: {
-      archivedAt: new Date(),
-      active: false,
-      isEntry: false,
-      updatedById: sessao.user.id,
-    },
-  });
-
-  await registrarAuditoria(sessao.user.id, "agent.archived", id);
-  revalidatePath("/agentes");
-  revalidatePath(`/agentes/${id}`);
-
-  if (agente.isEntry) {
-    return {
-      ok: "Arquivado. Ele era o agente de entrada — defina outro, senão quem atende primeiro passa a ser o agente do bot que recebeu a mensagem.",
-    };
-  }
-  return { ok: "Agente arquivado e desligado." };
+/** Devolve o agente para a lista principal, desligado — ver `restaurar`. */
+export async function restaurarAgente(id: string): Promise<EstadoArquivo> {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+  return restaurar(id, autorDaSessao(sessao));
 }
 
 /**
- * Devolve o agente para a lista principal — **desligado**.
- *
- * Voltar a atender é uma segunda decisão: restaurar e religar de uma vez faria
- * um agente antigo voltar a falar com cliente sem ninguém conferir se o prompt
- * ainda faz sentido.
+ * ⚠ Excluir fica SÓ no painel, de propósito: não existe no serviço
+ * compartilhado, e o MCP não o oferece a ninguém. Cascateia para execuções,
+ * versões e custo — um assistente que entendesse mal "limpe os agentes velhos"
+ * apagaria o histórico de cobrança sem volta.
  */
-export async function restaurarAgente(id: string): Promise<EstadoArquivo> {
-  const sessao = await exigirPapel(UserRole.ADMIN);
-
-  await db.agent.update({
-    where: { id },
-    data: { archivedAt: null, active: false, updatedById: sessao.user.id },
-  });
-
-  await registrarAuditoria(sessao.user.id, "agent.restored", id);
-  revalidatePath("/agentes");
-  revalidatePath(`/agentes/${id}`);
-
-  return { ok: "Restaurado, e desligado. Confira o prompt antes de ligar." };
-}
-
 export async function excluirAgente(id: string) {
   const sessao = await exigirPapel(UserRole.ADMIN);
   await db.agent.delete({ where: { id } });
-  await registrarAuditoria(sessao.user.id, "agent.deleted", id);
+  await auditar(autorDaSessao(sessao), "agent.deleted", "Agent", id);
   revalidatePath("/agentes");
   redirect("/agentes");
 }
@@ -383,14 +184,4 @@ export async function impactoDaExclusao(id: string) {
     conversas: agente?._count.conversations ?? 0,
     versoes: agente?._count.versions ?? 0,
   };
-}
-
-async function registrarAuditoria(
-  userId: string,
-  action: string,
-  entityId: string,
-) {
-  await db.auditLog.create({
-    data: { userId, action, entity: "Agent", entityId },
-  });
 }

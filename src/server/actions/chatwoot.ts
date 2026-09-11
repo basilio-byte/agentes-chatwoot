@@ -18,7 +18,9 @@ import {
   salvarSegredosDaConta,
   salvarSegredosDoBot,
 } from "@/server/integrations/chatwoot/credenciais";
-import { lerIdsDeCaixa, MODOS_DE_CAIXA } from "@/server/agents/equipe";
+import { lerIdsDeCaixa } from "@/server/agents/equipe";
+import { autorDaSessao } from "@/server/gestao/autor";
+import { salvarEscopo } from "@/server/gestao/escopo";
 
 export type EstadoEscopo = { ok?: string; erro?: string };
 
@@ -197,68 +199,25 @@ export async function salvarEscopoDoAgente(
   _estado: EstadoEscopo,
   formData: FormData,
 ): Promise<EstadoEscopo> {
-  await exigirPapel(UserRole.ADMIN);
+  const sessao = await exigirPapel(UserRole.ADMIN);
 
-  const modo = String(formData.get("inboxMode") ?? "all");
-  if (!MODOS_DE_CAIXA.includes(modo as (typeof MODOS_DE_CAIXA)[number])) {
-    return { erro: "Modo de caixa inválido." };
-  }
-
-  const ids = lerIdsDeCaixa(String(formData.get("inboxIds") ?? ""));
-  if (modo === "specific" && ids.length === 0) {
-    return {
-      erro: 'Informe pelo menos um id de caixa, ou deixe em "todas as caixas".',
-    };
-  }
-
+  // Aqui só se lê o formulário. Texto que não vira número segue como `NaN` e é
+  // recusado pelo serviço, com a mesma frase e na mesma ordem de antes — a
+  // regra mora em `server/gestao/escopo.ts`, que o MCP também chama.
   const contaBruta = String(formData.get("accountId") ?? "").trim();
-  let accountId: number | null = null;
-  if (contaBruta) {
-    const n = Number.parseInt(contaBruta, 10);
-    if (!Number.isInteger(n) || n <= 0) {
-      return { erro: "O id da conta precisa ser um número positivo." };
-    }
-    accountId = n;
-  }
-
   const minutosBruto = String(formData.get("fallbackMinutos") ?? "").trim();
-  const minutos = minutosBruto ? Number.parseInt(minutosBruto, 10) : null;
-  if (minutosBruto && (!Number.isInteger(minutos) || minutos! < 1)) {
-    return { erro: "Os minutos de espera precisam ser um número a partir de 1." };
-  }
 
-  await db.agent.update({
-    where: { id: agentId },
-    data: {
-      inboxMode: modo,
-      inboxIds: modo === "specific" ? ids : [],
-      fallbackMinutos: minutos,
-      fallbackAtendente: String(formData.get("fallbackAtendente") ?? "").trim() || null,
+  return salvarEscopo(
+    agentId,
+    {
+      inboxMode: String(formData.get("inboxMode") ?? "all"),
+      inboxIds: lerIdsDeCaixa(String(formData.get("inboxIds") ?? "")),
+      accountId: contaBruta ? Number.parseInt(contaBruta, 10) : null,
+      fallbackMinutos: minutosBruto ? Number.parseInt(minutosBruto, 10) : null,
+      fallbackAtendente: String(formData.get("fallbackAtendente") ?? ""),
     },
-  });
-
-  // Só mexe na conta se o bot já existe — sem bot não há token a que associá-la.
-  const bot = await db.agentChatwootBot.findUnique({ where: { agentId } });
-  if (bot) {
-    await db.agentChatwootBot.update({
-      where: { agentId },
-      data: { accountId },
-    });
-  }
-
-  revalidatePath(`/agentes/${agentId}`);
-
-  if (accountId && !bot) {
-    return {
-      ok: "Escopo salvo. A conta só vale depois de cadastrar o bot deste agente.",
-    };
-  }
-  return {
-    ok:
-      modo === "all"
-        ? "Agente atuando em todas as caixas."
-        : `Agente restrito à(s) caixa(s) ${ids.join(", ")}.`,
-  };
+    autorDaSessao(sessao),
+  );
 }
 
 export async function resumoDoBot(agentId: string) {

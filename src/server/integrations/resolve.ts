@@ -3,7 +3,11 @@ import { db } from "@/lib/db";
 import { decifrar } from "@/lib/crypto";
 import { logger } from "@/lib/logger";
 import { obterIntegracao } from "./registry";
-import type { ToolContext, ToolDefinition } from "./types";
+import type {
+  IntegrationDefinition,
+  ToolContext,
+  ToolDefinition,
+} from "./types";
 import type { IntegrationProvider } from "@/generated/prisma/enums";
 
 export type ToolResolvida = {
@@ -68,11 +72,7 @@ export async function resolverToolsDoAgente(
       credential,
     };
 
-    const permitidas = new Set(vinculo.allowedTools);
-    for (const tool of definicao.tools) {
-      // Allowlist vazia = todas as tools da integração.
-      if (permitidas.size > 0 && !permitidas.has(tool.name)) continue;
-
+    for (const tool of toolsLiberadas(definicao, vinculo.allowedTools)) {
       resolvidas.set(tool.name, {
         definicao: tool,
         provider: integration.provider,
@@ -82,6 +82,24 @@ export async function resolverToolsDoAgente(
   }
 
   return resolvidas;
+}
+
+/**
+ * O que a allowlist de um vínculo libera. **Vazia = todas as tools da
+ * integração** — e é por isso que ninguém pode gravar vazio querendo dizer
+ * "nenhuma" (ver `definirFerramentasDoAgente`).
+ *
+ * Exportada para o MCP contar ferramentas de vários agentes sem decifrar
+ * credencial de cada um, com a mesma regra do turno.
+ */
+export function toolsLiberadas(
+  definicao: IntegrationDefinition,
+  allowedTools: string[],
+): ToolDefinition[] {
+  const permitidas = new Set(allowedTools);
+  return definicao.tools.filter(
+    (tool) => permitidas.size === 0 || permitidas.has(tool.name),
+  );
 }
 
 /**

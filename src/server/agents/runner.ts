@@ -3,27 +3,13 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { mensagemDeContextoTemporal } from "@/lib/tempo";
 import { getOpenRouter } from "./openrouter";
-import {
-  estimarCusto,
-  limitarSaida,
-  obterModelo,
-  type UsoTokens,
-} from "./catalogo";
-import {
-  paraFerramentasOpenAI,
-  resolverToolsDoAgente,
-  type ToolResolvida,
-} from "@/server/integrations/resolve";
+import { estimarCusto, limitarSaida, type UsoTokens } from "./catalogo";
+import type { ToolResolvida } from "@/server/integrations/resolve";
 import type {
   SinaisDoTurno,
   SinalDeHandoff,
 } from "@/server/integrations/types";
-import { blocoDeRoster, montarRoster } from "./equipe";
-import {
-  blocoDeConduta,
-  podeEncaminharParaHumano,
-  tipoDeTurno,
-} from "./conduta";
+import { prepararContexto } from "./contexto";
 import {
   comParadaVigiada,
   conferirParada,
@@ -117,9 +103,11 @@ export async function executarAgente(
     where: { id: entrada.agentId },
   });
 
-  const resolvidas = await resolverToolsDoAgente(agente.id);
-  const ferramentas = paraFerramentasOpenAI(resolvidas);
-  const modelo = await obterModelo(agente.model);
+  // Ferramentas e system prompt saem de `contexto.ts`, que o MCP também lê:
+  // mostrar a um assistente o prompt "como o agente o recebe" exige a mesma
+  // conta que o turno faz — ordem das partes e linha de encaminhamento incluídas.
+  const { resolvidas, ferramentas, modelo, enviarFerramentas, systemPrompt } =
+    await prepararContexto(agente, entrada.source, entrada.inboxId);
 
   if (ferramentas.length > 0 && modelo && !modelo.suportaTools) {
     logger.warn(
@@ -127,53 +115,6 @@ export async function executarAgente(
       "modelo não suporta tools — as integrações do agente serão ignoradas neste turno",
     );
   }
-  const enviarFerramentas =
-    ferramentas.length > 0 && (modelo?.suportaTools ?? true);
-
-  // O roster vai DENTRO do system prompt porque é estável entre requisições:
-  // só muda quando alguém mexe na equipe. Se fosse mensagem, ocuparia posição
-  // depois do histórico sem ganho nenhum de cache.
-  const equipe = await db.agent.findMany({
-    // Arquivado não entra na equipe: não roteia, não recebe transferência e
-    // não aparece no prompt de ninguém.
-    where: { archivedAt: null },
-    select: {
-      id: true,
-      key: true,
-      name: true,
-      routingDescription: true,
-      active: true,
-      isEntry: true,
-      inboxMode: true,
-      inboxIds: true,
-    },
-  });
-  const roster = montarRoster(equipe, agente.id, entrada.inboxId);
-
-  // Ordem: PROMPT DO OPERADOR → REGRAS DA CASA → COLEGAS.
-  //
-  // As Regras da Casa vêm DEPOIS do prompt do operador porque dizem "as
-  // instruções acima" — é essa dêixis que faz as regras de escopo e de
-  // fonte-de-verdade funcionarem, já que as duas se definem por exclusão do
-  // que o operador escreveu. E vêm ANTES do roster porque, depois dele, "as
-  // instruções acima" passaria a incluir a lista de colegas, autorizando o
-  // agente a tratar o assunto dos outros como se fosse escopo dele.
-  const systemPrompt =
-    agente.systemPrompt +
-    blocoDeConduta({
-      tipo: tipoDeTurno(entrada.source),
-      // Fato do turno, não preferência: sem como entregar a conversa a uma
-      // pessoa, o bloco não manda o agente prometer que vai passar. Conta
-      // também `enviarFerramentas` — modelo sem suporte a tools zera o envio
-      // com a allowlist intacta, e prometer transferência sem ferramenta
-      // nenhuma no request é o sintoma que este bloco combate.
-      podeEncaminhar: podeEncaminharParaHumano({
-        handoffEnabled: agente.handoffEnabled,
-        temToolDeHandoff: resolvidas.has("transferir_para_humano"),
-        ferramentasVaoNoRequest: enviarFerramentas,
-      }),
-    }) +
-    blocoDeRoster(roster, agente.name);
 
   const sinais: SinaisDoTurno = {};
 

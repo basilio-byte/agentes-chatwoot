@@ -14,6 +14,8 @@ import {
   removerAgendador,
   sincronizarAgendador,
 } from "@/server/queue/agendamento";
+import { autorDaSessao } from "@/server/gestao/autor";
+import { definirAgendamento } from "@/server/gestao/agendamentos";
 
 export type EstadoAgendamento = {
   ok?: string;
@@ -193,59 +195,8 @@ export async function alternarAgendamento(
   ligar: boolean,
 ): Promise<EstadoAgendamento> {
   const sessao = await exigirPapel(UserRole.ADMIN);
-
-  const schedule = await db.agentSchedule.findUnique({
-    where: { id },
-    include: { agent: { select: { id: true, active: true, archivedAt: true } } },
-  });
-  if (!schedule) return { erro: "Agendamento não encontrado." };
-
-  if (ligar) {
-    const veredito = validarFrequencia(schedule.cron);
-    if (!veredito.pode) {
-      return { erro: `Não dá para ligar: ${veredito.erro}` };
-    }
-    // Ligar o agendamento de um agente desligado criaria disparos que só
-    // servem para virar "pulado" — melhor dizer isso do que fingir que ligou.
-    if (!schedule.agent.active || schedule.agent.archivedAt) {
-      return {
-        erro: "O agente está desligado ou arquivado. Ligue o agente antes — senão o agendamento dispara e não faz nada.",
-      };
-    }
-  }
-
-  await db.agentSchedule.update({
-    where: { id },
-    data: {
-      enabled: ligar,
-      ...(ligar
-        ? { pausadoAutomaticamenteEm: null, pausadoAutomaticamenteMotivo: null, falhasConsecutivas: 0 }
-        : {}),
-    },
-  });
-
-  try {
-    if (ligar) await sincronizarAgendador(schedule);
-    else await removerAgendador(id);
-  } catch (erro) {
-    return {
-      erro: `Estado salvo, mas o relógio não respondeu: ${
-        erro instanceof Error ? erro.message : "falha no Redis"
-      }. A reconciliação do worker acerta no próximo boot.`,
-    };
-  }
-
-  await db.auditLog.create({
-    data: {
-      userId: sessao.user.id,
-      action: ligar ? "schedule.enabled" : "schedule.disabled",
-      entity: "AgentSchedule",
-      entityId: id,
-    },
-  });
-
-  revalidatePath(`/agentes/${schedule.agent.id}`);
-  return { ok: ligar ? "Agendamento ligado." : "Agendamento desligado." };
+  // A regra mora em `server/gestao/agendamentos.ts`, que o MCP também chama.
+  return definirAgendamento(id, ligar, autorDaSessao(sessao));
 }
 
 export async function excluirAgendamento(

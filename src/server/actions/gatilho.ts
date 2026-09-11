@@ -6,6 +6,8 @@ import { cifrar } from "@/lib/crypto";
 import { exigirPapel } from "@/server/auth-guard";
 import { UserRole } from "@/generated/prisma/enums";
 import { gerarToken } from "@/server/gatilho/token";
+import { autorDaSessao } from "@/server/gestao/autor";
+import { definirGatilho } from "@/server/gestao/gatilho";
 
 export type EstadoGatilho = {
   ok?: string;
@@ -104,28 +106,8 @@ export async function gerarOuRotacionarToken(
  */
 export async function alternarGatilho(agentId: string, ligar: boolean) {
   const sessao = await exigirPapel(UserRole.ADMIN);
-
-  const trigger = await db.agentTrigger.findUnique({ where: { agentId } });
-  if (!trigger) return;
-
-  await db.agentTrigger.update({
-    where: { agentId },
-    data: {
-      enabled: ligar,
-      ...(ligar
-        ? { pausadoAutomaticamenteEm: null, pausadoAutomaticamenteMotivo: null }
-        : {}),
-    },
-  });
-
-  await db.auditLog.create({
-    data: {
-      userId: sessao.user.id,
-      action: ligar ? "agent.trigger.enabled" : "agent.trigger.disabled",
-      entity: "Agent",
-      entityId: agentId,
-    },
-  });
-
-  revalidatePath(`/agentes/${agentId}`);
+  // A regra (e a auditoria) mora em `server/gestao/gatilho.ts`, que o MCP
+  // também chama. Sem gatilho gerado não há o que ligar — e a tela nem oferece
+  // o botão, então a recusa não tem onde aparecer.
+  await definirGatilho(agentId, ligar, autorDaSessao(sessao));
 }
