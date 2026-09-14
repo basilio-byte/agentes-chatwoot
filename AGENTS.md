@@ -1298,6 +1298,16 @@ havia ninguém vendo o tempo passar.
   agente, faz os pendentes serem descartados sem agir.
 - **Precisão de cerca de 1 minuto**: roda no relógio do vigia, isolado da
   escalada — falha num não cala o outro.
+- ⚠ **O prazo da equipe só registra DEPOIS de atribuir, e as tools de
+  atribuição mandavam encerrar o turno.** `atribuir_para_atendente`,
+  `atribuir_por_rodizio` e `transferir_para_humano` devolviam "Encerre o turno
+  sem escrever mais nada", e o modelo obedece o retorno da ferramenta antes do
+  prompt: em 14/09/2026 Salas de Reunião atribuiu e pulou o registro no CRM
+  Comercial que o prompt mandava fazer "no mesmo turno". Todo prazo da equipe
+  escrito em prompt seria pulado do mesmo jeito, sem erro. Hoje as três dizem
+  para não escrever mais nada ao cliente e fazer só o que as instruções mandam
+  logo depois de atribuir. Continuar o turno não fala por cima de ninguém: com
+  dono humano, o worker já não envia texto (`podeAgir` antes de enviar).
 - **O que sobra de risco**, e está aceito: a janela de milissegundos entre ler e
   agir; e, no prazo de EQUIPE, a pessoa que atende fora do Chatwoot (telefone)
   sem escrever nada perde a conversa no vencimento — é o que a regra pede.

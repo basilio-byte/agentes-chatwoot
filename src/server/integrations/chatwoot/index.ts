@@ -283,7 +283,7 @@ export const chatwootIntegration: IntegrationDefinition = {
       name: "atribuir_para_atendente",
       categoria: "Atendimento",
       description:
-        "Entrega o atendimento a uma PESSOA específica da equipe, pelo nome. A partir daí quem responde é ela — a IA para nesta conversa. Use quando o fluxo define um responsável fixo. Se qualquer pessoa da equipe serve, use transferir_para_humano. Depois de chamar, encerre o turno.",
+        "Entrega o atendimento a uma PESSOA específica da equipe, pelo nome. A partir daí quem responde é ela — a IA para nesta conversa. Use quando o fluxo define um responsável fixo. Se qualquer pessoa da equipe serve, use transferir_para_humano. Depois de chamar, não escreva mais nada ao cliente: faça só o que as suas instruções mandam logo depois de atribuir (como um registro ou um prazo) e encerre o turno.",
       requiresConfirmation: true,
       inputSchema: z.object({
         atendente: z
@@ -375,7 +375,7 @@ export const chatwootIntegration: IntegrationDefinition = {
           atribuido: true,
           para: nome,
           observacao:
-            "O cliente já foi avisado e a pessoa assumiu. Encerre o turno sem escrever mais nada.",
+            "O cliente já foi avisado e a pessoa assumiu. Não escreva mais nada ao cliente. Se as suas instruções mandam fazer algo logo depois de atribuir (como um registro ou um prazo), faça agora; senão, encerre o turno.",
         };
       },
     },
@@ -384,7 +384,7 @@ export const chatwootIntegration: IntegrationDefinition = {
       name: "atribuir_por_rodizio",
       categoria: "Atendimento",
       description:
-        "Entrega o atendimento à próxima pessoa de um rodízio, alternando entre os nomes informados. Use quando o fluxo diz que a dupla ou o trio reveza os clientes. O sistema lembra quem recebeu por último. Depois de chamar, encerre o turno.",
+        "Entrega o atendimento à próxima pessoa de um rodízio, alternando entre os nomes informados. Use quando o fluxo diz que a dupla ou o trio reveza os clientes. O sistema lembra quem recebeu por último. Depois de chamar, não escreva mais nada ao cliente: faça só o que as suas instruções mandam logo depois de atribuir (como um registro ou um prazo) e encerre o turno.",
       requiresConfirmation: true,
       inputSchema: z.object({
         rodizio: z
@@ -502,7 +502,7 @@ export const chatwootIntegration: IntegrationDefinition = {
           atribuido: true,
           para: nome,
           observacao:
-            "O cliente já foi avisado e a pessoa assumiu. Encerre o turno sem escrever mais nada.",
+            "O cliente já foi avisado e a pessoa assumiu. Não escreva mais nada ao cliente. Se as suas instruções mandam fazer algo logo depois de atribuir (como um registro ou um prazo), faça agora; senão, encerre o turno.",
         };
       },
     },
@@ -641,7 +641,7 @@ export const chatwootIntegration: IntegrationDefinition = {
     {
       name: "transferir_para_humano",
       description:
-        "Passa o atendimento para uma pessoa da equipe. Use quando não souber responder com certeza, quando o cliente pedir, ou em assunto sensível (cobrança, cancelamento, reclamação). Depois de chamar, não continue respondendo.",
+        "Passa o atendimento para uma pessoa da equipe. Use quando não souber responder com certeza, quando o cliente pedir, ou em assunto sensível (cobrança, cancelamento, reclamação). Depois de chamar, não escreva mais nada ao cliente: faça só o que as suas instruções mandam logo depois de transferir (como um registro ou um prazo) e encerre o turno.",
       inputSchema: transferirSchema,
       requiresConfirmation: false,
       async execute(entrada, ctx) {
@@ -741,8 +741,8 @@ export const chatwootIntegration: IntegrationDefinition = {
         logger.info({ conversa, motivo, dono }, "conversa transferida para humano");
 
         return dono
-          ? `Transferido para ${dono} e o cliente já foi avisado. Encerre o turno sem escrever mais nada.`
-          : "Transferido para a fila da equipe e o cliente já foi avisado. Encerre o turno sem escrever mais nada.";
+          ? `Transferido para ${dono} e o cliente já foi avisado. Não escreva mais nada ao cliente. Se as suas instruções mandam fazer algo logo depois de transferir (como um registro ou um prazo), faça agora; senão, encerre o turno.`
+          : "Transferido para a fila da equipe e o cliente já foi avisado. Não escreva mais nada ao cliente. Se as suas instruções mandam fazer algo logo depois de transferir (como um registro ou um prazo), faça agora; senão, encerre o turno.";
       },
     },
   ],
