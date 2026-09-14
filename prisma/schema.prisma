@@ -164,6 +164,7 @@ model Agent {
   chatwootBot   AgentChatwootBot?
   trigger       AgentTrigger?
   schedules     AgentSchedule[]
+  prazos        PrazoDeConversa[]
 
   handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
   handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
@@ -373,6 +374,12 @@ enum IntegrationProvider {
   /// atravessa Drive e Docs na mesma tool. A separação que o operador vê vem
   /// de `categoria` e da allowlist, que é onde ela custa zero.
   GOOGLE
+  /// Prazos da conversa: o agente registra "se ninguém responder em N minutos,
+  /// faça X", e o vigia do worker executa conferindo o Chatwoot ao vivo. Sem
+  /// credencial. Provider próprio, e não tool a mais do Chatwoot, para ser
+  /// OPT-IN por agente: tool nova no Chatwoot apareceria para todo agente com
+  /// as ferramentas dele liberadas, como aconteceu com a chamada interna.
+  PRAZOS
 }
 
 enum IntegrationStatus {
@@ -768,6 +775,66 @@ model Rodizio {
   ultimo    String?
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
+}
+
+/// De quem se espera a resposta.
+enum PrazoTipo {
+  /// Uma pessoa da equipe acabou de receber a conversa.
+  EQUIPE
+  /// O bot fez uma pergunta ao cliente.
+  CLIENTE
+}
+
+enum PrazoStatus {
+  PENDENTE
+  /// Pego por uma volta do vigia. Trava contra duas execuções do mesmo prazo.
+  EXECUTANDO
+  EXECUTADO
+  /// A conferência ao vivo mostrou que não cabe agir (alguém respondeu,
+  /// outra pessoa assumiu, conversa resolvida) — ou um prazo novo substituiu.
+  CANCELADO
+  /// Não agiu por razão do sistema: tarde demais, integração desligada, sem
+  /// credencial.
+  DESCARTADO
+  FALHOU
+}
+
+/// Prazo de uma conversa: "se ninguém responder em N minutos, faça X".
+///
+/// Registrado pelo agente (integração PRAZOS) e executado pelo vigia, que
+/// confere a conversa AO VIVO no Chatwoot antes de agir. Ver
+/// `src/server/prazos/`. Um só PENDENTE por conversa e tipo: índice parcial
+/// `PrazoDeConversa_um_pendente`, na migration.
+model PrazoDeConversa {
+  id                     String      @id @default(cuid())
+  chatwootConversationId Int
+  /// Agente que registrou. Outro agente assumir a conversa derruba o prazo.
+  agentId                String
+  /// Dono do bot pelo qual a conversa entrou: a credencial que o vigia usa.
+  portaAgentId           String
+  tipo                   PrazoTipo
+  status                 PrazoStatus @default(PENDENTE)
+  minutos                Int
+  venceEm                DateTime
+  /// Maior id de mensagem da conversa quando o prazo nasceu. "Respondeu" é
+  /// existir mensagem com id maior — id, e não relógio, porque a resposta do
+  /// próprio bot no mesmo turno chega depois da chamada da ferramenta.
+  referenciaMensagemId   Int
+  /// EQUIPE: quem era o dono quando o prazo nasceu.
+  donoId                 Int?
+  donoNome               String?
+  /// O que fazer no vencimento: `AcaoDoPrazo` em `prazos/decisao.ts`.
+  acao                   Json
+  /// Por que o agente registrou. Vai na nota interna.
+  motivo                 String      @db.Text
+  resultado              String?     @db.Text
+  criadoEm               DateTime    @default(now())
+  finalizadoEm           DateTime?
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([status, venceEm])
+  @@index([chatwootConversationId, tipo, status])
 }
 
 model AuditLog {

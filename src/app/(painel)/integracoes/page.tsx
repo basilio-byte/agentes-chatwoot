@@ -23,6 +23,7 @@ import { ZapSignConfigForm } from "@/components/zapsign-config";
 import { OpenAIConfigForm } from "@/components/openai-config";
 import { LeiturasDeMidia } from "@/components/leituras-de-midia";
 import { DocumentosConfigForm } from "@/components/documentos-config";
+import { PrazosConfigForm } from "@/components/prazos-config";
 import { GoogleConfigForm } from "@/components/google-config";
 import {
   Building2,
@@ -32,6 +33,7 @@ import {
   ListChecks,
   MessagesSquare,
   Table2,
+  Timer,
 } from "lucide-react";
 import { Abas } from "@/components/abas";
 import { Aviso, Badge, Card, PageHeader } from "@/components/ui";
@@ -92,6 +94,11 @@ export default async function IntegracoesPage({
   );
   const toolsDocumentos =
     obterIntegracao(IntegrationProvider.DOCUMENTOS)?.tools.length ?? 0;
+  const prazos = registros.find(
+    (i) => i.provider === IntegrationProvider.PRAZOS,
+  );
+  const toolsPrazos =
+    obterIntegracao(IntegrationProvider.PRAZOS)?.tools.length ?? 0;
   const agentesComMidia = openai
     ? await db.agentIntegration.count({
         where: { integrationId: openai.id, enabled: true },
@@ -448,6 +455,47 @@ export default async function IntegracoesPage({
                       : ""}
                   </Aviso>
                 ) : null}
+              </Card>
+            ),
+          },
+          {
+            id: "prazos",
+            rotulo: "Prazos",
+            icone: <Timer size={14} aria-hidden />,
+            contador: toolsPrazos,
+            conteudo: (
+              <Card className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="font-medium">Prazos da conversa</h2>
+                  {prazos?.enabled ? (
+                    <Badge tone="success">ligada</Badge>
+                  ) : (
+                    <Badge>desligada</Badge>
+                  )}
+                </div>
+
+                <p className="text-sm text-muted">
+                  O agente registra um prazo numa conversa do Chatwoot — “se
+                  ninguém da equipe responder em 10 minutos, passe para outra
+                  pessoa”, “se o cliente não responder em 1 hora, pergunte se
+                  ainda precisa de ajuda” — e o worker confere os prazos de
+                  minuto em minuto. O agente recebe {toolsPrazos} ferramenta(s)
+                  quando esta integração está ligada para ele.
+                </p>
+
+                <Aviso>
+                  Antes de agir, o sistema confere a conversa{" "}
+                  <strong>ao vivo</strong> no Chatwoot. O prazo cai sozinho se
+                  alguém da equipe escrever (inclusive nota interna), se outra
+                  pessoa assumir, se o cliente responder ou se a conversa for
+                  resolvida. Desligar aqui faz os prazos pendentes não agirem
+                  mais.
+                </Aviso>
+
+                <PrazosConfigForm
+                  habilitada={prazos?.enabled ?? false}
+                  somenteLeitura={!editavel}
+                />
               </Card>
             ),
           },

@@ -1251,6 +1251,64 @@ prompt de quem atende.
 - `requiresConfirmation: true` é **rótulo de "escreve" na tela**, como em toda
   tool — o agente acionado costuma gravar em sistema externo.
 
+#### Prazos da conversa: quando ninguém responde
+
+Integração `PRAZOS` — sem credencial, desligada por padrão, **opt-in por
+agente** — com duas tools: `prazo_resposta_da_equipe` e
+`prazo_resposta_do_cliente`. O agente registra; o vigia executa. Módulos em
+`src/server/prazos/`, com a decisão pura e testada em `decisao.ts`.
+
+Nasceu de três promessas que os prompts faziam e o sistema não tinha como
+cumprir (14/09/2026): "se Wellen Kelly ou Alan não responderem em 10 min, passe
+para o Diego", "se o lead parar de responder por 10 min, passe para o Arthur" e
+"se o cliente sumir por 1 h, pergunte se precisa de ajuda". O agente só roda
+quando o cliente escreve, e depois de atribuir a uma pessoa fica mudo — não
+havia ninguém vendo o tempo passar.
+
+- **Provider próprio, e não tool a mais do Chatwoot.** Tool nova no Chatwoot
+  aparece para todo agente com as ferramentas dele liberadas — foi o que
+  aconteceu com a chamada interna. Aqui só enxerga quem tem a integração ligada
+  na própria tela.
+- ⚠ **A garantia pedida pelo usuário: nunca se meter em atendimento de pessoa.**
+  No vencimento, o vigia trava o prazo, lê o Chatwoot AO VIVO (conversa, dono e
+  mensagens) e só então decide:
+  - **EQUIPE** age só se o dono ainda é a MESMA pessoa e nenhuma mensagem de
+    pessoa da equipe — **inclusive nota interna** — veio depois do registro.
+    Ação: reatribui e deixa nota interna com o motivo. Nada vai ao cliente, e o
+    bot não volta a conduzir (decisão do usuário: "Diego assume, mas o bot deixa
+    uma nota interna registrando o motivo").
+  - **CLIENTE** age só se a conversa ainda é do bot pela mesma `podeAgir` de
+    toda resposta, o mesmo agente é o dono no banco, e nem o cliente nem alguém
+    da equipe escreveu depois. Ação: UMA mensagem de retomada, ou aviso e
+    atribuição, na mesma ordem de `atribuir_para_atendente`.
+  - A dúvida pende para não agir: mensagem de saída sem remetente conhecido
+    conta como pessoa, e dono de tipo desconhecido conta como pessoa.
+- ⚠ **"Depois" é por id de mensagem, não por relógio.** A resposta do próprio
+  bot no mesmo turno é enviada depois da chamada da tool; comparando horário,
+  ela derrubaria todo prazo de cliente.
+- **O remetente vem de `sender.type`** na listagem de mensagens (`user`,
+  `agent_bot`, `contact`) — conferido na fonte do Chatwoot, onde os relatórios
+  medem o primeiro atendimento humano pelo mesmo campo.
+- **Um pendente por conversa e tipo**, garantido pelo índice parcial
+  `PrazoDeConversa_um_pendente`. Registrar de novo substitui o anterior — é
+  assim que o prazo "zera a cada resposta".
+- **Tarde demais, descarta.** Worker fora do ar faz o prazo ser visto atrasado;
+  passou do próprio prazo (piso de 10 min) depois do vencimento, não age.
+- **Desligar é botão de parada.** Integração desligada, na tela global ou na do
+  agente, faz os pendentes serem descartados sem agir.
+- **Precisão de cerca de 1 minuto**: roda no relógio do vigia, isolado da
+  escalada — falha num não cala o outro.
+- **O que sobra de risco**, e está aceito: a janela de milissegundos entre ler e
+  agir; e, no prazo de EQUIPE, a pessoa que atende fora do Chatwoot (telefone)
+  sem escrever nada perde a conversa no vencimento — é o que a regra pede.
+
+⚠ **O vigia antigo passou a conferir o Chatwoot ao vivo antes de escalar**
+(`queue/escalada.ts`, 14/09/2026). Antes ele confiava só no banco: se uma pessoa
+tinha assumido e o webhook de conta não chegou, ele mandava "Desculpe a demora"
+por cima dela e trocava o dono. Agora: dono humano ao vivo, marca `HUMAN` sem
+mandar nada; resolvida ou adiada, só zera `aguardandoDesde`; leitura que falha,
+tenta de novo no minuto seguinte — na dúvida, não fala.
+
 #### Arquivar é diferente de desligar
 
 `Agent.archivedAt` é um terceiro estado, não um sinônimo de `active: false`.

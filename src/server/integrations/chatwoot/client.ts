@@ -419,6 +419,12 @@ export type MensagemChatwoot = {
   private?: boolean;
   created_at?: number;
   /**
+   * Quem escreveu: `user` (pessoa da equipe), `agent_bot` (robô) ou `contact`
+   * (cliente). Mensagem de atividade vem sem remetente. É o que os prazos da
+   * conversa usam para saber se alguém da equipe já respondeu.
+   */
+  sender?: { type?: string | null } | null;
+  /**
    * Anexos da mensagem: áudio, imagem, documento, localização.
    *
    * Tipado como `unknown[]` aqui de propósito — quem entende o formato é

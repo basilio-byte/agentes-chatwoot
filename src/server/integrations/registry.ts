@@ -7,6 +7,7 @@ import { documentosIntegration } from "@/server/documentos";
 import { googleIntegration } from "./google";
 import { openaiIntegration } from "./openai";
 import { zapsignIntegration } from "./zapsign";
+import { prazosIntegration } from "./prazos";
 
 /**
  * Registro central de integrações.
@@ -37,6 +38,9 @@ const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = 
   // três lugares — e o primeiro esquecido falharia sozinho, com os outros dois
   // funcionando. Quem separa Sheets de Docs para o operador é `categoria`.
   [googleIntegration.provider]: googleIntegration,
+  // Sem credencial e sem terceiro: o agente registra um prazo na conversa e o
+  // vigia executa. Provider próprio para ser opt-in por agente.
+  [prazosIntegration.provider]: prazosIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {

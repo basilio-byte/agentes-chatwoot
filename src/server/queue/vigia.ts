@@ -4,6 +4,8 @@ import { ConversationStatus } from "@/generated/prisma/enums";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
 import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
+import { executarPrazosVencidos } from "@/server/prazos/executar";
+import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
 /**
@@ -15,7 +17,8 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  * produzem erro nenhum: só silêncio, e o cliente esperando sem saber.
  *
  * Roda de minuto em minuto no worker e entrega a uma pessoa toda conversa em
- * que o cliente esperou além do tempo configurado.
+ * que o cliente esperou além do tempo configurado. No mesmo relógio, executa os
+ * prazos que os agentes registraram (`prazos/executar.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -43,8 +46,7 @@ export async function vigiarEsperas(agora = Date.now()): Promise<number> {
     if (!esperouDemais(conversa, minutos, agora)) continue;
 
     try {
-      await escalar(conversa, minutos);
-      escaladas++;
+      if (await escalar(conversa, minutos)) escaladas++;
     } catch (erro) {
       // Uma conversa que não deu para escalar não pode impedir as outras.
       logger.error(
@@ -65,7 +67,8 @@ type Parada = {
   agent: { name: string; fallbackAtendente: string | null } | null;
 };
 
-async function escalar(conversa: Parada, minutos: number) {
+/** `true` se escalou; `false` se a conversa ao vivo mostrou que não cabia. */
+async function escalar(conversa: Parada, minutos: number): Promise<boolean> {
   // Sem a porta não há credencial para falar com o Chatwoot. Marca como humana
   // mesmo assim: o cliente ao menos deixa de esperar por um bot que não vem.
   const cliente = conversa.portaAgentId
@@ -75,6 +78,34 @@ async function escalar(conversa: Parada, minutos: number) {
   const conversaId = conversa.chatwootConversationId;
 
   if (cliente) {
+    // ⚠ Confere o Chatwoot AO VIVO antes de falar. O banco pode estar atrasado
+    // — o webhook de conta que registra "uma pessoa assumiu" pode não ter
+    // chegado —, e escalar por cima de quem já está atendendo mandaria
+    // "desculpe a demora" e tiraria a conversa dessa pessoa. Se a leitura
+    // falhar, a exceção sobe e o vigia tenta de novo no minuto seguinte: na
+    // dúvida, não fala.
+    const veredito = vereditoDaEscalada(await cliente.obterConversa(conversaId));
+    if (!veredito.escalar) {
+      if (!veredito.resolvida && veredito.donoHumano) {
+        await entregarAoHumano(
+          conversaId,
+          `vigia: ${veredito.motivo} — não escalou por cima`,
+        );
+      } else {
+        // Resolvida ou adiada: ninguém espera o bot numa conversa em que ele não
+        // pode agir. O corte de resolução segue com o webhook e o worker.
+        await db.conversation.updateMany({
+          where: { chatwootConversationId: conversaId },
+          data: { aguardandoDesde: null },
+        });
+      }
+      logger.info(
+        { conversa: conversaId, motivo: veredito.motivo },
+        "vigia não escalou: a conversa já tinha mudado no Chatwoot",
+      );
+      return false;
+    }
+
     const nota = [
       `⚠️ O cliente está esperando há mais de ${minutos} minuto(s) e o agente` +
         ` "${conversa.agent?.name ?? "?"}" não respondeu.`,
@@ -118,15 +149,25 @@ async function escalar(conversa: Parada, minutos: number) {
     { conversa: conversaId, minutos },
     "conversa escalada por espera do cliente",
   );
+  return true;
 }
 
 export function iniciarVigia(): NodeJS.Timeout {
   const rodar = async () => {
+    // As duas tarefas são independentes de propósito: falha nos prazos não pode
+    // calar a escalada que já existia, nem o contrário.
     try {
       const n = await vigiarEsperas();
       if (n > 0) logger.warn({ escaladas: n }, "vigia escalou conversas paradas");
     } catch (erro) {
       logger.error({ erro }, "vigia falhou");
+    }
+
+    try {
+      const rodada = await executarPrazosVencidos();
+      if (rodada.vistos > 0) logger.info(rodada, "prazos da conversa conferidos");
+    } catch (erro) {
+      logger.error({ erro }, "prazos da conversa falharam");
     }
   };
 
