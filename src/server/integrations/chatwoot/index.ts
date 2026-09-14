@@ -1,11 +1,20 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { IntegrationProvider } from "@/generated/prisma/enums";
+import { IntegrationProvider, RunSource } from "@/generated/prisma/enums";
 import type { IntegrationDefinition } from "../types";
 import { chatwootConfigSchema } from "./config";
 import { clienteDoAgente } from "./credenciais";
 import { montarRoster, resolverDestino } from "@/server/agents/equipe";
+import { ehInterrupcao } from "@/server/agents/cancelamento";
+import {
+  conversaDaChamada,
+  falhaDaChamada,
+  mensagemDaChamada,
+  NOME_DA_FERRAMENTA,
+  resolverAgenteInterno,
+  resultadoDaChamada,
+} from "@/server/agents/chamada-interna";
 import { resolverAtendente } from "./atendentes";
 import { proximoDoRodizio } from "./rodizio";
 import { entregarAoHumano } from "./resolucao";
@@ -135,6 +144,117 @@ export const chatwootIntegration: IntegrationDefinition = {
           observacao:
             "O cliente será avisado e o colega assume agora. Encerre seu turno.",
         };
+      },
+    },
+
+    {
+      // Ver `agents/chamada-interna.ts`: por que isto não é transferência, e
+      // quem pode ser acionado.
+      name: NOME_DA_FERRAMENTA,
+      categoria: "Atendimento",
+      description:
+        "Aciona um agente INTERNO da equipe (como o de CRM) em segundo plano: ele executa o pedido agora e o resultado volta para você, sem passar a conversa e sem o cliente ver nada. Use só quando as suas instruções mandarem acionar esse agente, no momento que elas indicarem, e depois siga o seu fluxo.",
+      // Rótulo de "escreve" na tela: o agente acionado costuma gravar em
+      // sistema externo (o CRM de Atendimentos cria task no ClickUp).
+      requiresConfirmation: true,
+      inputSchema: z.object({
+        agente: z
+          .string()
+          .min(2)
+          .describe("A chave do agente interno, exatamente como nas suas instruções."),
+        pedido: z
+          .string()
+          .min(10)
+          .describe(
+            "O que ele deve fazer e todos os dados de que precisa, um por linha. Ele recebe isto e a conversa com o cliente — nada do que você pensou.",
+          ),
+      }),
+      async execute(entrada, ctx) {
+        const { agente: termo, pedido } = entrada as {
+          agente: string;
+          pedido: string;
+        };
+
+        // Profundidade um. O agente acionado nem recebe esta ferramenta
+        // (`contexto.ts` a tira), e a recusa aqui cobre quem chegar por outro
+        // caminho — uma cadeia de chamadas internas não passa pelas travas do
+        // laço, que só contam transferências.
+        if (ctx.source === RunSource.INTERNO) {
+          return falhaDaChamada({
+            agente: termo,
+            erro: "Um agente acionado em segundo plano não aciona outro.",
+          });
+        }
+
+        const equipe = await db.agent.findMany({
+          // Arquivado saiu de circulação: não é acionado nem em segundo plano.
+          where: { archivedAt: null },
+          select: { id: true, key: true, name: true, active: true },
+        });
+
+        const alvo = resolverAgenteInterno(equipe, termo, ctx.agentId);
+        if (alvo.tipo === "recusado") {
+          return {
+            ...falhaDaChamada({ agente: termo, erro: alvo.erro }),
+            ...(alvo.chavesValidas ? { chavesValidas: alvo.chavesValidas } : {}),
+          };
+        }
+
+        const chamador = equipe.find((a) => a.id === ctx.agentId);
+
+        // Import tardio: o runner resolve as tools pelo registry, que carrega
+        // este módulo — importar o runner no topo fecharia o ciclo na carga.
+        const { executarAgente } = await import("@/server/agents/runner");
+
+        try {
+          const resultado = await executarAgente({
+            agentId: alvo.agente.id,
+            source: RunSource.INTERNO,
+            // A conversa inteira, com o que o cliente acabou de mandar — ver
+            // `conversaDaChamada`.
+            historico: conversaDaChamada(ctx.historico, ctx.mensagem),
+            mensagem: mensagemDaChamada({
+              deNome: chamador?.name ?? "um colega",
+              pedido,
+            }),
+            conversationId: ctx.conversationId,
+            chatwootConversationId: ctx.chatwootConversationId,
+            // A porta de quem acionou: o agente interno quase nunca tem bot, e
+            // a nota interna dele precisa sair pelo canal da conversa.
+            canalAgentId: ctx.canalAgentId ?? ctx.agentId,
+          });
+
+          logger.info(
+            { de: chamador?.key, para: alvo.agente.key, runId: resultado.runId },
+            "agente acionado em segundo plano",
+          );
+
+          return resultadoDaChamada({
+            agente: alvo.agente.name,
+            resposta: resultado.resposta,
+            runId: resultado.runId,
+            atingiuLimite: resultado.atingiuLimiteDeIteracoes,
+          });
+        } catch (erro) {
+          // O runner anota o runId no erro antes de relançar: é o que deixa
+          // achar a execução que falhou em Execuções.
+          const runId = (erro as { runId?: string }).runId ?? null;
+          logger.error(
+            { de: chamador?.key, para: alvo.agente.key, runId, erro },
+            "chamada interna falhou",
+          );
+
+          // Devolvida como resultado, e não relançada: a falha do serviço
+          // interno não pode derrubar o atendimento de quem acionou, que segue
+          // o fluxo dele (e entrega o cliente a uma pessoa) sem o registro.
+          return falhaDaChamada({
+            agente: alvo.agente.name,
+            erro: ehInterrupcao(erro)
+              ? "A execução do agente foi interrompida no painel."
+              : `O agente falhou: ${erro instanceof Error ? erro.message : String(erro)}`,
+            runId,
+          });
+        }
       },
     },
 

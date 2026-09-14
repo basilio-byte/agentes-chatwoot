@@ -26,4 +26,9 @@ export const ONDE_RODA: Record<RunSource, "painel" | "worker"> = {
   // não a fila.
   [RunSource.PLAYGROUND]: "painel",
   [RunSource.MESA]: "painel",
+  // A chamada interna roda dentro do turno de quem acionou: no worker quando
+  // veio do atendimento, no painel quando veio do playground ou da mesa. Sem
+  // saber qual, fica do lado que nunca encerra um turno vivo — julgada só pela
+  // idade. O preço é o zumbi de um worker morto esperar essa idade para fechar.
+  [RunSource.INTERNO]: "painel",
 };

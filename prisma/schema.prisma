@@ -545,6 +545,16 @@ enum RunSource {
   /// cumprida mesmo que o assunto não apareça nas instruções acima". Na mesa
   /// o corpo dessa mensagem é o texto extraído do documento de um terceiro.
   MESA
+
+  /// Chamada interna: outro agente acionou este em segundo plano, no meio do
+  /// próprio turno, e o resultado volta para quem acionou — sem passar a
+  /// conversa e sem o cliente ver nada (`agents/chamada-interna.ts`).
+  ///
+  /// Origem própria por dois motivos. O prompt: nenhuma cauda existente é
+  /// verdade aqui — a de conversa manda confirmar com o cliente antes de
+  /// registrar, e a de gatilho manda escrever para a equipe. E o dinheiro: em
+  /// /consumo o serviço interno aparece separado do atendimento que o acionou.
+  INTERNO
 }
 
 enum RunStatus {

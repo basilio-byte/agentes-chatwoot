@@ -24,6 +24,7 @@ export const ROTULO_DA_FONTE: Record<RunSource, string> = {
   [RunSource.PLAYGROUND]: "Playground",
   [RunSource.SCHEDULE]: "Agendamento",
   [RunSource.MESA]: "Mesa do agente",
+  [RunSource.INTERNO]: "Chamada interna",
 };
 
 /** O que veio na URL, quando é uma origem de verdade. Senão, sem filtro. */

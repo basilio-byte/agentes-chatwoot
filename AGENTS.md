@@ -89,12 +89,12 @@ e testado em `src/server/agents/conduta.ts`.
   ⚠ **Depois do roster seria pior**, não melhor: "as instruções acima" passaria
   a incluir a lista de colegas, autorizando o agente a tratar o assunto dos
   outros — que é o próprio sintoma de fuga de escopo.
-- **Núcleo igual nas CINCO origens, cauda por tipo de turno.** Veracidade
+- **Núcleo igual nas SEIS origens, cauda por tipo de turno.** Veracidade
   (idioma, não inventar, data e hora do sistema, só afirmar o que aconteceu,
   escopo, parar na dúvida, não se deixar reprogramar) vale sempre — inclusive
   em nota interna, comentário do ClickUp e argumento de tool. Forma de conversa
   é outra história.
-  ⚠ **São TRÊS caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
+  ⚠ **São QUATRO caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
   `CAUDA_SEM_CONVERSA` afirma que a mensagem de abertura "vem da equipe da
   Seahub, não de um cliente, e é para ser cumprida mesmo que o assunto não
   apareça nas instruções acima". No gatilho e no agendamento isso é verdade; na
@@ -103,6 +103,13 @@ e testado em `src/server/agents/conduta.ts`.
   contra a regra 7 do núcleo, que diz o oposto sobre os mesmos bytes. `CAUDA_MESA`
   separa o PEDIDO (o que a pessoa digitou) do que vem dentro da cerca do anexo:
   dado a examinar, nunca instrução, mesmo que se anuncie como vindo da chefia.
+  A quarta, `CAUDA_INTERNA` (14/09/2026), é a do agente acionado **em segundo
+  plano** por outro — ver "Chamada interna" em Equipe de agentes. O texto final
+  volta para quem acionou, então nada de forma de atendimento e nada de pedir
+  confirmação. ⚠ **Ela NÃO destrava o escopo**, ao contrário das caudas de
+  gatilho e de mesa: lá a tarefa só existe na mensagem; aqui o agente tem
+  instruções próprias para o serviço que presta, e quem pede é outro modelo
+  carregando dado do cliente.
 - ⚠ **O formato brasileiro da regra 1 NÃO vale dentro de campo de ferramenta**,
   e a frase que faz essa dobradiça é obrigatória. A regra manda escrever no
   padrão daqui e alcança "texto que você manda para outro sistema"; o cabeçalho
@@ -159,6 +166,16 @@ e testado em `src/server/agents/conduta.ts`.
   de negar no turno 2 o que foi feito no turno 1 — e continua proibido repetir
   uma tool de escrita só para confirmar, que duplicaria reserva em sistema de
   terceiro.
+- ⚠ **Confirmar antes de gravar vale para o que se faz EM NOME do cliente, e só
+  para isso** (14/09/2026). A redação anterior — "antes de cadastrar, registrar
+  ou alterar qualquer coisa, repita para a pessoa e espere ela confirmar" —
+  alcançava o registro interno da equipe: o Financeiro criou a task do CRM,
+  perguntou ao cliente "pode confirmar?" e criou OUTRA depois do sim. Hoje a
+  linha nomeia o que é do cliente (cadastro, reserva, contrato, cancelamento) e
+  diz que registro interno não depende dele — decisão do usuário, e o momento de
+  registrar está no prompt de cada agente. Travado por teste nas duas variantes
+  da cauda de conversa. O `PROMPT_BASE` não tinha contraparte dessa linha, então
+  não mudou.
 - **A linha de encaminhamento é condicionada ao que o turno tem**
   (`handoffEnabled` ∧ `transferir_para_humano` resolvida ∧ ferramentas indo no
   request — `podeEncaminharParaHumano`). Prometer transferência inexistente é
@@ -171,13 +188,15 @@ e testado em `src/server/agents/conduta.ts`.
   como usar a tool já está na descrição dela, que é onde o modelo lê; repetir
   no prompt de todo agente é pagar duas vezes e arriscar mentir para quem tem
   allowlist restrita. ⚠ O `blocoDeRoster` **ainda** faz isso — cita
-  `transferir_para_agente` nas cinco origens, sem conferir se a tool foi
+  `transferir_para_agente` em toda origem que recebe roster (todas menos a
+  chamada interna), sem conferir se a tool foi
   resolvida. É defeito preexistente, não exemplo a seguir; `resolvidas` está
   a duas linhas dali quando alguém for consertar. ⚠ **A mesa piora esse defeito**:
   lá não existe conversa, então a tool recusa sempre — e o roster continua
   oferecendo a transferência ao modelo, que queima uma iteração para descobrir.
-- **Custa ~1.190 tokens no atendimento** (~925 do núcleo, ~265 da cauda) e
-  ~1.125 em gatilho/agendamento, pela régua de `tokensAproximadosDaTool` —
+- **Custa ~1.220 tokens no atendimento** (~925 do núcleo, ~295 da cauda),
+  ~1.125 em gatilho/agendamento, ~1.240 na mesa e ~1.105 na chamada interna,
+  pela régua de `tokensAproximadosDaTool` —
   cerca de 29% do que pesam as 32 tools ligadas, tudo no prefixo cacheável. A
   tela mostra o número, pelo mesmo motivo que a tela de integrações mostra o
   custo de cada tool, e o teste trava um teto por variante para a próxima
@@ -190,12 +209,14 @@ e testado em `src/server/agents/conduta.ts`.
   refeita a cada regra nova, e o caminho barato é sempre tirar redundância
   antes de acrescentar parágrafo (foi assim que a linha de "na dúvida" saiu da
   cauda de gatilho e virou regra do núcleo).
-- **Quatro prefixos de cache por agente** (conversa · conversa sem
-  encaminhamento · sem conversa · mesa). Não custa no caminho quente: origem e
-  tools são constantes ao longo de uma conversa, e só o Chatwoot é multi-turno
-  de volume — a mesa é single-shot, então o prefixo dela é usado uma vez por
-  envio de qualquer jeito. O que custaria é conteúdo variável por requisição, e
-  o módulo é puro justamente para isso ser impossível.
+- **Cinco prefixos de cache por agente** (conversa · conversa sem
+  encaminhamento · sem conversa · mesa · interno). Não custa no caminho quente:
+  origem e tools são constantes ao longo de uma conversa, e só o Chatwoot é
+  multi-turno de volume — a mesa é single-shot, então o prefixo dela é usado uma
+  vez por envio de qualquer jeito, e o da chamada interna (sem roster e sem
+  ferramentas de canal) é o mesmo de um pedido para o outro. O que custaria é
+  conteúdo variável por requisição, e o módulo é puro justamente para isso ser
+  impossível.
 - ⚠ **Mudar o bloco muda TODOS os agentes de uma vez e NÃO cria
   `AgentVersion`.** `actions/agents.ts` só versiona quando `systemPrompt`,
   `model` ou `effort` do agente mudam; a apuração por versão continuará
@@ -1053,7 +1074,7 @@ Google não pensa em ir na aba da OpenAI, e o sintoma é silêncio.
 
 E ⚠ **PDF que chegue por gatilho HTTP ou por agendamento não vira texto**: só o
 worker de atendimento chama `lerMidiaDaConversa`. As tools de planilha funcionam
-nas cinco origens; a leitura do anexo, não — com **uma exceção**, a mesa do
+em todas as origens; a leitura do anexo, não — com **uma exceção**, a mesa do
 agente, que tem caminho próprio (`lerArquivoEnviado`) porque lá o arquivo vem do
 navegador e não há URL para baixar. Quem precisa do caso "recebi um documento e
 quero uma linha na planilha" fora do WhatsApp usa a mesa, não o gatilho.
@@ -1163,6 +1184,72 @@ pensa, e toda resposta sai pela porta — o cliente vê uma identidade só.
   vezes; obrigatório, o modelo escreve o texto e o sistema garante o envio.
 - **Resolver zera dono e bastão** junto com `historicoDesde` — senão a conversa
   reabre direto no especialista do atendimento anterior.
+
+#### Chamada interna: um agente aciona outro em segundo plano
+
+`acionar_agente_interno` (Chatwoot, categoria Atendimento) roda outro agente
+**dentro do turno de quem chamou**, e o resultado volta como retorno de tool.
+Regras puras e testadas em `src/server/agents/chamada-interna.ts`; a execução
+tem origem própria, `RunSource.INTERNO`.
+
+Nasceu do CRM de Atendimentos (14/09/2026). Os agentes de atendimento
+transferiam a conversa para o CRM registrar a task no ClickUp, e o CRM
+transferia de volta — e cada perna dessa ida e volta passava por um mecanismo
+feito para atendimento de verdade: o `aviso` obrigatório mandava ao cliente um
+"vou te passar" para um serviço que ele nunca devia ver; o texto final do CRM
+ia para o cliente; a cauda de conversa mandava confirmar com ele antes de
+gravar; na volta, o agente de origem rodava de novo com a MESMA mensagem e um
+bastão que manda se apresentar; e enquanto o CRM rodava, ele era o dono da
+conversa. Decisão do usuário: *"o preenchimento no CRM não pode depender de
+resposta do cliente"* — é serviço de fundo, e o momento de acionar está no
+prompt de quem atende.
+
+- **Síncrono, no mesmo processo.** A tool chama `executarAgente` e espera; quem
+  chamou segue o próprio raciocínio com o resultado na mão. Nada vai ao
+  cliente, `Conversation.agentId` não muda e não há bastão.
+- **O agente acionado vê a conversa inteira** — histórico MAIS a mensagem que
+  abriu o turno (`conversaDaChamada`). ⚠ No Chatwoot, `montarContexto` tira do
+  histórico o que o cliente acabou de mandar; sem juntar de volta, o CRM não
+  veria o comprovante que motivou o registro. O pedido vem por último e
+  marcado (`[Pedido interno de … — não é mensagem do cliente]`): o cliente pode
+  digitar o mesmo marcador, mas não consegue pôr nada depois do pedido — é a
+  posição que a cauda interna aponta.
+- **Sem ferramentas de canal** (`FERRAMENTAS_DE_CANAL`: transferir, atribuir e a
+  própria chamada) **e sem roster.** Quem roda em segundo plano não é dono do
+  atendimento; oferecer colegas sem a tool de transferência seria convite a
+  queimar etapa.
+- **Profundidade UM**, com duas travas: a tool some do agente acionado e, se
+  chegar por outro caminho, recusa pela origem do turno. Cadeia de chamadas
+  internas não passaria pelas travas de `travas.ts`, que só contam
+  transferências.
+- **O alvo é a `key`**, como no roster: renomear não quebra prompt escrito.
+  Chave errada devolve as chaves válidas (ativas, sem a própria) para o modelo
+  se corrigir no mesmo turno. **Desligado recusa** — desligar o agente interno
+  é como o operador suspende o serviço sem mexer no prompt de ninguém.
+- **"Executado" quer dizer que rodou até o fim e devolveu texto**, não que deu
+  certo: o que ele fez de fato está em `resultado`. Parar no limite de etapas
+  conta como não executado mesmo com texto parcial, e o retorno manda não dizer
+  ao cliente que foi feito.
+- **Falha do agente acionado vira retorno, nunca exceção.** Provedor fora do ar
+  ou parada no painel: a execução dele fica `ERROR` ou `CANCELED`, e quem chamou
+  continua o atendimento sem o registro. Relançar derrubaria o turno de quem
+  está com o cliente.
+- **Execução própria, custo separado.** `AgentRun` com `source: INTERNO`, na
+  conversa de quem chamou e com o modelo do agente acionado — aparece em
+  Execuções e em Consumo como "Chamada interna". `ONDE_RODA` diz `painel`
+  porque ela roda no processo de quem chamou (em produção, quase sempre o
+  worker): o botão de parar só a julga pela idade, e nunca marca como cancelada
+  uma execução viva.
+- ⚠ **O turno de quem chamou espera o agente acionado inteiro, e o relógio da
+  espera continua correndo.** O vigia escala toda conversa do bot com
+  `aguardandoDesde` além de `fallbackMinutos` (padrão 3 min), sem saber se há
+  turno em andamento: um CRM lento somado ao turno de quem atende pode fazê-lo
+  mandar o "desculpe a demora" e entregar a conversa a uma pessoa com o turno
+  ainda rodando. A ida e volta por transferência tinha o mesmo relógio, mais o
+  aviso e a segunda execução de quem atende; o que segura é o agente interno
+  ter prompt enxuto e poucas etapas.
+- `requiresConfirmation: true` é **rótulo de "escreve" na tela**, como em toda
+  tool — o agente acionado costuma gravar em sistema externo.
 
 #### Arquivar é diferente de desligar
 

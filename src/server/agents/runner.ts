@@ -247,6 +247,9 @@ export async function executarAgente(
             conversationId: entrada.conversationId,
             chatwootConversationId: entrada.chatwootConversationId,
             canalAgentId: entrada.canalAgentId,
+            source: entrada.source,
+            historico: entrada.historico,
+            mensagem: entrada.mensagem,
             sinais,
             registro: toolCalls,
           }),
@@ -349,6 +352,9 @@ async function executarTool(args: {
   conversationId?: string;
   chatwootConversationId?: number;
   canalAgentId?: string;
+  source: RunSource;
+  historico?: MensagemHistorico[];
+  mensagem: string;
   sinais: SinaisDoTurno;
   registro: ToolCallRegistrado[];
 }): Promise<OpenAI.Chat.Completions.ChatCompletionToolMessageParam> {
@@ -410,6 +416,12 @@ async function executarTool(args: {
       chatwootConversationId: args.chatwootConversationId,
       canalAgentId: args.canalAgentId,
       sinais: args.sinais,
+      // Só a chamada interna lê os três: a origem para recusar profundidade
+      // maior que um, e histórico e mensagem para o agente acionado consultar a
+      // conversa inteira — a mensagem nova do cliente não está no histórico.
+      source: args.source,
+      historico: args.historico,
+      mensagem: args.mensagem,
     });
     return finalizar({ saida, isError: false, input: validacao.data });
   } catch (erro) {

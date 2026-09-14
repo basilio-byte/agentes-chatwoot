@@ -32,6 +32,13 @@ describe("ONDE_RODA", () => {
     expect(ONDE_RODA[RunSource.PLAYGROUND]).toBe("painel");
   });
 
+  it("a chamada interna é julgada só pela idade", () => {
+    // Ela roda dentro do turno de quem acionou — no worker ou no painel. Julgada
+    // pelo batimento do worker, "parar" encerraria como CANCELED uma chamada
+    // viva vinda do playground enquanto o worker reinicia.
+    expect(ONDE_RODA[RunSource.INTERNO]).toBe("painel");
+  });
+
   it("as origens que passam pela fila continuam sendo do worker", () => {
     // O outro lado do erro: marcar uma destas como "painel" faria o painel
     // nunca fechar a execução zumbi de um worker que morreu.

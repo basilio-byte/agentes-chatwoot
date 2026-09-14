@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { IntegrationProvider } from "@/generated/prisma/enums";
+import type { IntegrationProvider, RunSource } from "@/generated/prisma/enums";
 
 /**
  * Contrato único de integração.
@@ -62,6 +62,23 @@ export type ToolContext = {
   chatwootConversationId?: number;
   /** Objeto compartilhado do turno: a tool escreve, o worker lê depois. */
   sinais?: SinaisDoTurno;
+  /**
+   * Origem do turno de quem chamou a tool. A chamada interna usa para recusar
+   * profundidade maior que um: agente acionado em segundo plano não aciona outro.
+   */
+  source?: RunSource;
+  /**
+   * A conversa que o turno recebeu, em texto puro. Só a chamada interna lê: o
+   * agente acionado em segundo plano consulta a mesma conversa que quem o
+   * acionou está atendendo.
+   */
+  historico?: { role: "user" | "assistant"; content: string }[];
+  /**
+   * A mensagem que abriu o turno. Também só a chamada interna lê, e pelo mesmo
+   * motivo: no Chatwoot, o que o cliente acabou de mandar NÃO está em
+   * `historico` — `montarContexto` separa as mensagens novas do fim.
+   */
+  mensagem?: string;
 };
 
 export type ToolDefinition<TInput = unknown> = {

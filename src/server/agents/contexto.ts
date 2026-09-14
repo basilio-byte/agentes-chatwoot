@@ -12,6 +12,7 @@ import {
   podeEncaminharParaHumano,
   tipoDeTurno,
 } from "./conduta";
+import { semFerramentasDeCanal } from "./chamada-interna";
 
 /**
  * O que o modelo recebe antes da primeira mensagem: ferramentas e system prompt.
@@ -47,7 +48,13 @@ export async function prepararContexto(
   source: RunSource,
   inboxId?: number | null,
 ): Promise<ContextoDoTurno> {
-  const resolvidas = await resolverToolsDoAgente(agente.id);
+  const tipo = tipoDeTurno(source);
+
+  // Chamada interna: sem ferramenta que fale com o cliente ou passe a conversa
+  // de mãos. Quem roda em segundo plano não é dono do atendimento — ver
+  // `chamada-interna.ts`.
+  const todas = await resolverToolsDoAgente(agente.id);
+  const resolvidas = tipo === "interno" ? semFerramentasDeCanal(todas) : todas;
   const ferramentas = paraFerramentasOpenAI(resolvidas);
   const modelo = await obterModelo(agente.model);
   const enviarFerramentas =
@@ -56,22 +63,31 @@ export async function prepararContexto(
   // O roster vai DENTRO do system prompt porque é estável entre requisições:
   // só muda quando alguém mexe na equipe. Se fosse mensagem, ocuparia posição
   // depois do histórico sem ganho nenhum de cache.
-  const equipe = await db.agent.findMany({
-    // Arquivado não entra na equipe: não roteia, não recebe transferência e
-    // não aparece no prompt de ninguém.
-    where: { archivedAt: null },
-    select: {
-      id: true,
-      key: true,
-      name: true,
-      routingDescription: true,
-      active: true,
-      isEntry: true,
-      inboxMode: true,
-      inboxIds: true,
-    },
-  });
-  const roster = montarRoster(equipe, agente.id, inboxId);
+  //
+  // Na chamada interna ele não vai: sem ferramenta de transferência, oferecer
+  // colegas seria convite a queimar uma etapa numa tool que ele não tem.
+  const roster =
+    tipo === "interno"
+      ? []
+      : montarRoster(
+          await db.agent.findMany({
+            // Arquivado não entra na equipe: não roteia, não recebe
+            // transferência e não aparece no prompt de ninguém.
+            where: { archivedAt: null },
+            select: {
+              id: true,
+              key: true,
+              name: true,
+              routingDescription: true,
+              active: true,
+              isEntry: true,
+              inboxMode: true,
+              inboxIds: true,
+            },
+          }),
+          agente.id,
+          inboxId,
+        );
 
   // Ordem: PROMPT DO OPERADOR → REGRAS DA CASA → COLEGAS.
   //
@@ -82,7 +98,7 @@ export async function prepararContexto(
   // instruções acima" passaria a incluir a lista de colegas, autorizando o
   // agente a tratar o assunto dos outros como se fosse escopo dele.
   const conduta = blocoDeConduta({
-    tipo: tipoDeTurno(source),
+    tipo,
     // Fato do turno, não preferência: sem como entregar a conversa a uma
     // pessoa, o bloco não manda o agente prometer que vai passar. Conta
     // também `enviarFerramentas` — modelo sem suporte a tools zera o envio
