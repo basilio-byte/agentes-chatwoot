@@ -12,6 +12,7 @@ import {
   falhaDaChamada,
   mensagemDaChamada,
   NOME_DA_FERRAMENTA,
+  recusaDoPedido,
   resolverAgenteInterno,
   resultadoDaChamada,
 } from "@/server/agents/chamada-interna";
@@ -166,7 +167,7 @@ export const chatwootIntegration: IntegrationDefinition = {
           .string()
           .min(10)
           .describe(
-            "O que ele deve fazer e todos os dados de que precisa, um por linha. Ele recebe isto e a conversa com o cliente — nada do que você pensou.",
+            "O que ele deve fazer e todos os dados de que precisa, um por linha e sem parágrafo (linha longa demais é recusada). Ele recebe isto e a conversa com o cliente — nada do que você pensou.",
           ),
       }),
       async execute(entrada, ctx) {
@@ -185,6 +186,11 @@ export const chatwootIntegration: IntegrationDefinition = {
             erro: "Um agente acionado em segundo plano não aciona outro.",
           });
         }
+
+        // Pedido degenerado não chega ao agente interno: volta para quem
+        // chamou reescrever, no mesmo turno. Ver `recusaDoPedido`.
+        const recusa = recusaDoPedido({ agente: termo, pedido });
+        if (recusa) return recusa;
 
         const equipe = await db.agent.findMany({
           // Arquivado saiu de circulação: não é acionado nem em segundo plano.

@@ -4,8 +4,10 @@ import {
   conversaDaChamada,
   falhaDaChamada,
   FERRAMENTAS_DE_CANAL,
+  MAIOR_LINHA_DO_PEDIDO,
   mensagemDaChamada,
   NOME_DA_FERRAMENTA,
+  recusaDoPedido,
   resolverAgenteInterno,
   resultadoDaChamada,
   semFerramentasDeCanal,
@@ -17,6 +19,43 @@ const EQUIPE = [
   { id: "a3", key: "agente-crm-comercial", name: "CRM Comercial", active: false },
   { id: "a4", key: "agente-financeiro", name: "Financeiro", active: true },
 ];
+
+describe("pedido degenerado não chega ao agente interno", () => {
+  it("⚠ recusa a linha gigante de 15/09 e manda reescrever, não seguir", () => {
+    // O pedido real tinha 1.168 caracteres numa linha só, no lugar das linhas
+    // "Campo: valor" — e a task do CRM nasceu sem descrição.
+    const degenerado =
+      "Nome do cliente: (não informado ainda - " + "pedir ao cliente ".repeat(70) + ")";
+
+    const r = recusaDoPedido({ agente: "agente-crm-comercial", pedido: degenerado });
+
+    expect(r?.executado).toBe(false);
+    expect(r?.execucao).toBeNull();
+    expect(r?.observacao).toContain("Reescreva");
+    // A observação de falha comum manda seguir adiante — o modelo pularia o
+    // registro em vez de reescrever.
+    expect(r?.observacao).not.toBe(
+      falhaDaChamada({ agente: "x", erro: "y" }).observacao,
+    );
+  });
+
+  it("aceita o pedido normal, inclusive com resumo no limite", () => {
+    const normal = [
+      "Nome do cliente: Estelita Barreto",
+      "Telefone do cliente: +558494569952",
+      `Resumo: ${"x".repeat(MAIOR_LINHA_DO_PEDIDO - "Resumo: ".length)}`,
+    ].join("\n");
+
+    expect(recusaDoPedido({ agente: "a", pedido: normal })).toBeNull();
+  });
+
+  it("aceita todos os campos numa linha curta — o agente interno entende", () => {
+    const umaLinha =
+      "Nome do cliente: Dawyd Telefone do cliente: E-mail: Produto: Auditório Tipo de Atendimento: Reserva de Salas";
+
+    expect(recusaDoPedido({ agente: "a", pedido: umaLinha })).toBeNull();
+  });
+});
 
 describe("quem roda em segundo plano não mexe na conversa", () => {
   it("perde as ferramentas que falam com o cliente ou passam a conversa", () => {

@@ -1301,6 +1301,12 @@ prompt de quem atende.
   ou parada no painel: a execução dele fica `ERROR` ou `CANCELED`, e quem chamou
   continua o atendimento sem o registro. Relançar derrubaria o turno de quem
   está com o cliente.
+- ⚠ **Pedido com linha acima de 700 caracteres volta sem executar**
+  (`recusaDoPedido`). Em 15/09/2026, Salas de Reunião (kimi, effort none) mandou
+  ao CRM um parágrafo de 1.168 caracteres no lugar das linhas "Campo: valor"; a
+  maior linha legítima medida em 152 campos de texto foi 579. A recusa manda
+  reescrever uma vez e NÃO usa `falhaDaChamada`, cuja observação manda seguir
+  para o passo seguinte — o modelo pularia o registro.
 - **Execução própria, custo separado.** `AgentRun` com `source: INTERNO`, na
   conversa de quem chamou e com o modelo do agente acionado — aparece em
   Execuções e em Consumo como "Chamada interna". `ONDE_RODA` diz `painel`

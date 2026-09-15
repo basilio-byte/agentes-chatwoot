@@ -232,3 +232,41 @@ export function falhaDaChamada(args: {
     observacao: OBSERVACAO_NAO_EXECUTADO,
   };
 }
+
+/**
+ * Maior linha aceita num pedido interno.
+ *
+ * Em 15/09/2026, Salas de Reunião (kimi, effort none) mandou ao CRM Comercial um
+ * pedido que era um parágrafo de 1.168 caracteres numa linha só, no lugar das
+ * linhas "Campo: valor" que o prompt pedia, e a task nasceu sem descrição. A
+ * maior linha legítima em 152 campos de texto livre das tools de atendimento,
+ * nos mesmos dias, foi 579: 700 pega o degenerado sem barrar resumo comprido.
+ *
+ * NÃO pega o pedido com todos os campos numa linha curta (09:18 do mesmo dia):
+ * esse o agente interno entende, e recusá-lo custaria mais que aceitá-lo.
+ */
+export const MAIOR_LINHA_DO_PEDIDO = 700;
+
+/**
+ * A recusa de um pedido fora do formato, ou `null` se ele serve.
+ *
+ * ⚠ Não usa `falhaDaChamada`: a observação dela manda seguir para o passo
+ * seguinte, e o modelo obedece o retorno da ferramenta — pularia o registro em
+ * vez de reescrever o pedido. Esta manda reescrever UMA vez e só então seguir.
+ */
+export function recusaDoPedido(args: {
+  agente: string;
+  pedido: string;
+}): ResultadoDaChamada | null {
+  const maior = Math.max(0, ...args.pedido.split("\n").map((linha) => linha.trim().length));
+  if (maior <= MAIOR_LINHA_DO_PEDIDO) return null;
+
+  return {
+    executado: false,
+    agente: args.agente,
+    erro: `O pedido tem uma linha com ${maior} caracteres (o máximo é ${MAIOR_LINHA_DO_PEDIDO}) e não foi enviado.`,
+    execucao: null,
+    observacao:
+      'Nada foi executado. Reescreva o pedido só com as linhas que as suas instruções pedem, uma por linha, no formato "Campo: valor" — valor que você não sabe fica vazio depois dos dois-pontos, sem explicação — e chame de novo uma vez. Se for recusado de novo, siga as suas instruções a partir do passo seguinte.',
+  };
+}
