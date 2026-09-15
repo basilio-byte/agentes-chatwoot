@@ -2,7 +2,7 @@ import type OpenAI from "openai";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { mensagemDeContextoTemporal } from "@/lib/tempo";
-import { getOpenRouter } from "./openrouter";
+import { getOpenRouter, PREFERENCIA_DE_PROVEDOR } from "./openrouter";
 import { estimarCusto, limitarSaida, type UsoTokens } from "./catalogo";
 import type { ToolResolvida } from "@/server/integrations/resolve";
 import type {
@@ -80,6 +80,7 @@ const USO_ZERADO: UsoTokens = {
 type ParametrosOpenRouter = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
   usage?: { include: boolean };
   reasoning?: { effort: "low" | "medium" | "high" };
+  provider?: { sort: "price" | "throughput" | "latency" };
 };
 
 /** A OpenRouter devolve o custo real da requisição quando `usage.include` é true. */
@@ -187,6 +188,8 @@ export async function executarAgente(
         ...(enviarFerramentas ? { tools: ferramentas } : {}),
         // Faz a OpenRouter devolver o custo real da chamada em `usage.cost`.
         usage: { include: true },
+        // Provedor mais rápido, não o mais barato — ver `PREFERENCIA_DE_PROVEDOR`.
+        provider: PREFERENCIA_DE_PROVEDOR,
         // `effort` só existe em modelo com raciocínio; mandar para os outros é
         // erro de parâmetro em alguns provedores.
         ...(agente.effort !== "none" && (modelo?.suportaReasoning ?? false)

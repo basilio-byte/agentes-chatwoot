@@ -48,6 +48,16 @@ modelos `anthropic/*` como padrão.
   `usage.cost`. É ele que vai para `AgentRun.costUsd`.
 - `reasoning: { effort }` só é enviado se o modelo declarar suporte e o effort não
   for `none`.
+- ⚠ **`provider: { sort: "throughput" }` vai em toda chamada** (decisão do
+  usuário em 15/09/2026, `PREFERENCIA_DE_PROVEDOR`). Sem preferência, a
+  OpenRouter escolhe o provedor com peso pelo inverso do quadrado do PREÇO; o
+  kimi-k2.6 tem 21 provedores, vários comprimidos (int4/fp4) e alguns
+  degradados, e o mais barato levava as chamadas. Deu respostas de 219 s e
+  478 s numa ida só ao modelo — acima dos 3 min do vigia, inclusive na porta de
+  entrada. Priorizar vazão custa até ~1,7× por chamada (estimado: de ~US$ 17
+  para no máximo ~US$ 28 no mês). `allow_fallbacks` fica no padrão, e excluir
+  quantização ficou para depois de medir. Só vai para a OpenRouter: a OpenAI
+  direta da leitura de mídia não aceita o campo.
 - **Exceção única: mídia.** Transcrição de áudio e leitura de imagem/documento
   falam com a **OpenAI direta** (`src/server/integrations/openai/`), porque
   `/audio/transcriptions` não existe na OpenRouter. Mesmo SDK, outra `baseURL`,

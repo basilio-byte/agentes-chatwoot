@@ -42,3 +42,18 @@ export function getOpenRouter(): OpenAI {
 export function openrouterConfigurada(): boolean {
   return Boolean(env().OPENROUTER_API_KEY);
 }
+
+/**
+ * Como a OpenRouter escolhe o provedor de cada chamada: pelo mais RÁPIDO.
+ *
+ * ⚠ Sem isto, ela sorteia entre os provedores estáveis com peso pelo inverso do
+ * quadrado do preço — o mais barato leva quase tudo. O kimi-k2.6 tem 21
+ * provedores, vários comprimidos (int4/fp4) e alguns degradados, e em 14 e
+ * 15/09/2026 uma ida só ao modelo levou 219 s e 478 s, acima dos 3 minutos do
+ * vigia, uma delas na porta de entrada. Decisão do usuário em 15/09/2026:
+ * priorizar vazão, aceitando pagar até ~1,7× por chamada.
+ *
+ * Os fallbacks continuam no padrão (ligados): se o mais rápido falhar, outro
+ * atende. Excluir quantização ficou para depois de medir o efeito disto.
+ */
+export const PREFERENCIA_DE_PROVEDOR = { sort: "throughput" } as const;
