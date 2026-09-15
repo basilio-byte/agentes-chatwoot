@@ -37,6 +37,7 @@ import type {
 import {
   mensagensCandidatas,
   montarContexto,
+  montarContextoDeRetomada,
 } from "@/server/integrations/chatwoot/historico";
 import { ehInterrupcao } from "@/server/agents/cancelamento";
 import { contextoDeMidia } from "@/server/integrations/openai/credenciais";
@@ -54,6 +55,7 @@ import {
 import { entregarAoHumano, marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import {
   mensagemDeBastao,
+  mensagemDeRetomada,
   resolverAgenteAtivo,
   type AgenteRoteavel,
 } from "@/server/agents/equipe";
@@ -322,7 +324,12 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
     log,
   });
 
-  const contexto = montarContexto(comMidia, conversa?.historicoDesde);
+  // A conversa voltou para o agente e ele ainda não falou: o turno roda mesmo
+  // sem mensagem nova do cliente. Sem isto, a volta morria aqui em "nada novo"
+  // — a última fala costuma ser o "já te encaminhei" — e a venda parava calada.
+  const contexto = conversa?.retomadaPendente
+    ? montarContextoDeRetomada(comMidia, conversa.historicoDesde)
+    : montarContexto(comMidia, conversa?.historicoDesde);
 
   if (!contexto) {
     log.info("nada novo do cliente para responder");
@@ -362,14 +369,21 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
   registrarVisita(estado, ativo.id);
 
   // Bastão só vale para quem ele endereça: se o dono mudou por fora, o resumo
-  // antigo não deve entrar no prompt de outro agente.
+  // antigo não deve entrar no prompt de outro agente. Conversa que VOLTOU para
+  // o agente leva a instrução de retomada no lugar do bastão de passagem, que
+  // mandaria se apresentar como quem acabou de chegar.
   let bastao =
     conversa?.handoffParaAgentId === ativo.id
-      ? mensagemDeBastao({
-          deNome: conversa?.handoffDeNome,
-          motivo: conversa?.handoffMotivo,
-          resumo: conversa?.handoffResumo,
-        })
+      ? conversa?.retomadaEm
+        ? mensagemDeRetomada({
+            deNome: conversa?.handoffDeNome,
+            motivo: conversa?.handoffMotivo,
+          })
+        : mensagemDeBastao({
+            deNome: conversa?.handoffDeNome,
+            motivo: conversa?.handoffMotivo,
+            resumo: conversa?.handoffResumo,
+          })
       : null;
 
   /** Verdade sobre o turno: só vira true depois de um envio confirmado. */
@@ -437,10 +451,12 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
           log,
         );
 
-        // Respondeu: ninguém mais está esperando, o vigia pode soltar esta.
+        // Respondeu: ninguém mais está esperando, o vigia pode soltar esta. Se
+        // a conversa tinha voltado para o agente, a retomada aconteceu — o
+        // próximo turno volta a exigir mensagem nova do cliente.
         await db.conversation.updateMany({
           where: { chatwootConversationId },
-          data: { lastMessageAt: new Date(), aguardandoDesde: null },
+          data: { lastMessageAt: new Date(), aguardandoDesde: null, retomadaPendente: false },
         });
 
         log.info(
@@ -724,6 +740,10 @@ async function registrarPassagem(args: {
       handoffDeNome: de.name,
       handoffMotivo: handoff.motivo ?? null,
       handoffResumo: handoff.resumo ?? null,
+      // O colega chega por passagem normal: a instrução de retomada era de
+      // quem recebeu a conversa de volta, e no bastão dele diria a coisa errada.
+      retomadaEm: null,
+      retomadaPendente: false,
     },
   });
 

@@ -26,6 +26,12 @@ export type TipoDoPrazo = "EQUIPE" | "CLIENTE";
 export type AcaoDoPrazo =
   /** EQUIPE: ninguém da equipe respondeu — outra pessoa assume. Nada vai ao cliente. */
   | { tipo: "reatribuir"; atendente: string }
+  /**
+   * EQUIPE: ninguém da equipe respondeu — a conversa volta para o agente que
+   * registrou o prazo, e ele retoma o atendimento sozinho, sem o cliente
+   * precisar escrever.
+   */
+  | { tipo: "voltar_para_o_agente" }
   /** CLIENTE: o cliente parou de responder — UMA mensagem de retomada. */
   | { tipo: "mensagem"; texto: string }
   /** CLIENTE: o cliente parou de responder — uma pessoa assume, com aviso. */

@@ -4,6 +4,7 @@ import {
   blocoDeRoster,
   lerIdsDeCaixa,
   mensagemDeBastao,
+  mensagemDeRetomada,
   montarRoster,
   resolverAgenteAtivo,
   resolverDestino,
@@ -262,5 +263,37 @@ describe("mensagemDeBastao", () => {
 
     expect(m).toContain("menu inicial");
     expect(m).toContain("repetir pergunta já respondida");
+  });
+});
+
+describe("mensagemDeRetomada", () => {
+  it("diz quem não respondeu e que o atendimento agora é do agente", () => {
+    const m = mensagemDeRetomada({
+      deNome: "Wellen Kelly",
+      motivo: "Wellen Kelly ou Alan não responderam o cliente em 10 minutos",
+    });
+
+    expect(m).toContain("voltou para você");
+    expect(m).toContain("Wellen Kelly não respondeu");
+    expect(m).toContain("Motivo registrado: Wellen Kelly ou Alan");
+    expect(m).toContain("conduz sozinho");
+  });
+
+  it("⚠ não manda se apresentar — o agente já estava na conversa", () => {
+    // O bastão de passagem manda se apresentar porque o cliente acabou de ser
+    // avisado da troca. Na volta ninguém avisou nada, e apresentar-se de novo
+    // soaria como outro atendente chegando.
+    const m = mensagemDeRetomada({ deNome: "Alan" });
+
+    expect(m).not.toContain("apresentando");
+    expect(m).toContain("Não recomece");
+    expect(m).toContain("menu inicial");
+  });
+
+  it("sem o nome da pessoa, a frase não fica com buraco", () => {
+    const m = mensagemDeRetomada({});
+
+    expect(m).toContain("a pessoa da equipe não respondeu");
+    expect(m).not.toContain("Motivo registrado");
   });
 });

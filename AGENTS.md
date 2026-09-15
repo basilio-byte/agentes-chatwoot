@@ -1489,6 +1489,35 @@ havia ninguém vendo o tempo passar.
 - **O que sobra de risco**, e está aceito: a janela de milissegundos entre ler e
   agir; e, no prazo de EQUIPE, a pessoa que atende fora do Chatwoot (telefone)
   sem escrever nada perde a conversa no vencimento — é o que a regra pede.
+- **O prazo da equipe também DEVOLVE a conversa ao agente**
+  (`acao: "voltar_para_o_agente"`, 15/09/2026). Pedido do usuário para Vendedor
+  EV e Salas de Reunião: o vendedor não respondeu em 10 min, e o agente atende e
+  vende sozinho — antes o Diego assumia. As travas do vencimento são as mesmas
+  do `reatribuir` (que continua existindo, e nele o bot segue sem voltar a
+  conduzir); muda o que acontece depois:
+  - ⚠ **Banco antes do Chatwoot** (`devolverAoAgente`: BOT, dono, `retomadaEm`,
+    `retomadaPendente` e o relógio da espera aceso). Se tirar a pessoa falhar
+    depois, worker e vigia conferem ao vivo, veem gente dona e devolvem a
+    conversa a ela. Na ordem inversa, a conversa ficaria sem dono no Chatwoot e
+    presa como humana aqui: ninguém atenderia e ninguém vigiaria.
+  - **Confere ao vivo depois de tirar a pessoa.** Atribuição automática da
+    caixa, ou alguém assumindo no mesmo segundo, deixa gente dona: a volta é
+    cancelada, com nota, e o agente não fala por cima.
+  - ⚠ **O turno roda SEM mensagem nova do cliente.** `montarContexto` exige
+    entrada do cliente no fim da conversa, e a última fala é o "já te
+    encaminhei": a volta morria em "nada novo" e a venda parava calada. Com
+    `retomadaPendente`, `montarContextoDeRetomada` põe a conversa no histórico
+    e usa uma entrada marcada como não sendo do cliente. A marca mora no BANCO,
+    não no job: o job da conversa é substituído quando o cliente escreve.
+  - **Instrução de retomada no lugar do bastão de passagem**
+    (`mensagemDeRetomada`), em todo turno do atendimento. O bastão manda se
+    apresentar como quem chega; aqui o agente já estava na conversa e o cliente
+    não foi avisado de nada. Transferir a um colega zera a retomada, e ele
+    recebe a passagem normal.
+  - **Uma volta por atendimento** (`jaVoltouParaOAgente`, pelos prazos
+    executados depois do corte do histórico). A segunda seria pingue-pongue: o
+    agente entrega de novo, o prazo devolve de novo, e ninguém fecha a venda.
+  - **Agente desligado não retoma**: a conversa fica com a pessoa, com nota.
 
 ⚠ **O vigia antigo passou a conferir o Chatwoot ao vivo antes de escalar**
 (`queue/escalada.ts`, 14/09/2026). Antes ele confiava só no banco: se uma pessoa

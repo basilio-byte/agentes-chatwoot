@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { montarContexto } from "./historico";
+import {
+  MENSAGEM_DE_RETOMADA,
+  montarContexto,
+  montarContextoDeRetomada,
+} from "./historico";
 import type { MensagemChatwoot } from "./client";
 
 function msg(
@@ -119,5 +123,62 @@ describe("montagem do contexto da conversa", () => {
       content: "resposta 99",
     });
     expect(c!.mensagem).toBe("última");
+  });
+});
+
+describe("contexto da retomada: o atendimento voltou para o agente", () => {
+  it("⚠ conversa parada numa fala nossa vira turno, com a marcação de retomada", () => {
+    // O caso comum: a última fala é o "já te encaminhei". Pelo contexto de
+    // sempre não há nada novo, e a venda parava calada.
+    const mensagens = [
+      msg(1, 0, "quero reservar uma sala amanhã às 14h"),
+      msg(2, 1, "Já te encaminhei para nossa equipe! Me informa o seu e-mail?"),
+    ];
+
+    expect(montarContexto(mensagens)).toBeNull();
+
+    const c = montarContextoDeRetomada(mensagens);
+    expect(c!.mensagem).toBe(MENSAGEM_DE_RETOMADA);
+    expect(c!.historico).toEqual([
+      { role: "user", content: "quero reservar uma sala amanhã às 14h" },
+      {
+        role: "assistant",
+        content: "Já te encaminhei para nossa equipe! Me informa o seu e-mail?",
+      },
+    ]);
+  });
+
+  it("o cliente escreveu durante a espera: a mensagem dele é a entrada, como sempre", () => {
+    const c = montarContextoDeRetomada([
+      msg(1, 0, "quero reservar"),
+      msg(2, 1, "Me informa o seu e-mail?"),
+      msg(3, 0, "maria@exemplo.com"),
+    ]);
+
+    expect(c!.mensagem).toBe("maria@exemplo.com");
+  });
+
+  it("nota interna e atividade não entram na conversa retomada", () => {
+    const c = montarContextoDeRetomada([
+      msg(1, 0, "quero reservar"),
+      msg(2, 1, "⏱️ A conversa voltou para o agente", { private: true }),
+      msg(3, 2, "Conversa atribuída a Wellen Kelly"),
+      msg(4, 1, "Já te encaminhei!"),
+    ]);
+
+    expect(c!.historico.map((m) => m.content)).toEqual([
+      "quero reservar",
+      "Já te encaminhei!",
+    ]);
+  });
+
+  it("respeita o corte do histórico e não inventa conversa vazia", () => {
+    const corte = new Date("2026-09-15T12:00:00Z");
+    const antesDoCorte = Math.floor(corte.getTime() / 1000) - 60;
+
+    expect(montarContextoDeRetomada([])).toBeNull();
+    expect(
+      montarContextoDeRetomada([msg(1, 1, "antiga", { created_at: antesDoCorte })], corte),
+    ).toBeNull();
   });
 });

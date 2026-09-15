@@ -84,3 +84,44 @@ export function montarContexto(
 
   return { historico, mensagem: novas.join("\n") };
 }
+
+/**
+ * A entrada do turno de retomada quando o cliente não escreveu nada novo.
+ *
+ * O turno precisa de uma mensagem de usuário, e a conversa parou numa fala
+ * nossa ou da equipe. Marcada como não sendo do cliente, na mesma lógica do
+ * pedido interno: o cliente pode digitar o mesmo texto, mas não consegue pôr
+ * nada DEPOIS dela, que é a posição que conta.
+ */
+export const MENSAGEM_DE_RETOMADA =
+  "[Retomada do atendimento pelo sistema — não é mensagem do cliente. Ele não escreveu nada depois da última mensagem acima.]";
+
+/**
+ * Contexto do turno em que o atendimento VOLTOU para o agente.
+ *
+ * Com mensagem do cliente ainda sem resposta, é o contexto de sempre. Sem ela —
+ * o caso comum, porque a última fala costuma ser o "já te encaminhei" —, a
+ * conversa inteira vira histórico e a entrada é a marcação de retomada. Sem
+ * isto, o worker encerrava o turno com "nada novo do cliente" e a volta não
+ * acontecia: a venda parava em silêncio.
+ */
+export function montarContextoDeRetomada(
+  mensagens: MensagemChatwoot[],
+  historicoDesde?: Date | null,
+): ContextoConversa | null {
+  const normal = montarContexto(mensagens, historicoDesde);
+  if (normal) return normal;
+
+  const uteis = mensagensCandidatas(mensagens, historicoDesde).filter(
+    (m) => (m.content ?? "").trim().length > 0,
+  );
+  if (uteis.length === 0) return null;
+
+  return {
+    historico: uteis.slice(-LIMITE_HISTORICO).map((m) => ({
+      role: m.message_type === 0 ? ("user" as const) : ("assistant" as const),
+      content: (m.content ?? "").trim(),
+    })),
+    mensagem: MENSAGEM_DE_RETOMADA,
+  };
+}

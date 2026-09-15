@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { PrazoStatus, type PrazoTipo } from "@/generated/prisma/enums";
+import { PrazoStatus, PrazoTipo } from "@/generated/prisma/enums";
 import type { AcaoDoPrazo } from "./decisao";
 
 /**
@@ -55,4 +55,37 @@ export async function registrarPrazo(args: {
       },
     });
   });
+}
+
+/**
+ * A conversa já voltou para o agente neste atendimento?
+ *
+ * Uma volta só. A segunda viraria pingue-pongue: o agente entrega de novo, o
+ * prazo devolve de novo, e o cliente fica indo e vindo sem ninguém fechar a
+ * venda. "Neste atendimento" é depois do último corte do histórico — resolver e
+ * reabrir começa outro.
+ */
+export async function jaVoltouParaOAgente(
+  chatwootConversationId: number,
+): Promise<boolean> {
+  const conversa = await db.conversation.findUnique({
+    where: { chatwootConversationId },
+    select: { historicoDesde: true },
+  });
+
+  const executados = await db.prazoDeConversa.findMany({
+    where: {
+      chatwootConversationId,
+      tipo: PrazoTipo.EQUIPE,
+      status: PrazoStatus.EXECUTADO,
+      ...(conversa?.historicoDesde
+        ? { finalizadoEm: { gte: conversa.historicoDesde } }
+        : {}),
+    },
+    select: { acao: true },
+  });
+
+  return executados.some(
+    (p) => (p.acao as { tipo?: unknown } | null)?.tipo === "voltar_para_o_agente",
+  );
 }

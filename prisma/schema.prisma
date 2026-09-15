@@ -553,6 +553,16 @@ model Conversation {
   /// não distingue "cliente esperando" de "conversa ativa".
   aguardandoDesde DateTime?
 
+  /// O atendimento VOLTOU para o agente: a pessoa da equipe não respondeu a
+  /// tempo (prazo da equipe com `voltar_para_o_agente`). Com o bastão endereçado
+  /// a ele, a instrução de retomada entra no lugar da de passagem, em todo turno
+  /// do atendimento. Zerado ao resolver e ao transferir para outro agente.
+  retomadaEm       DateTime?
+  /// O agente ainda não falou depois da volta: o worker roda o turno mesmo sem
+  /// mensagem nova do cliente. Zerado na primeira resposta enviada, ao
+  /// transferir, ao entregar a uma pessoa e ao resolver.
+  retomadaPendente Boolean   @default(false)
+
   /// Agente dono do bot pelo qual a conversa entrou. Quem precisa falar com o
   /// Chatwoot fora de um turno (o vigia) não teria outro jeito de achar a
   /// credencial certa.

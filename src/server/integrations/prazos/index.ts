@@ -10,7 +10,7 @@ import { clienteDoAgente } from "../chatwoot/credenciais";
 import { resolverAtendente } from "../chatwoot/atendentes";
 import { humanidadeDoDono, podeAgir } from "../chatwoot/regras";
 import { referenciaDasMensagens } from "@/server/prazos/decisao";
-import { registrarPrazo } from "@/server/prazos/registrar";
+import { jaVoltouParaOAgente, registrarPrazo } from "@/server/prazos/registrar";
 
 /**
  * Prazos da conversa — o agente registra, o vigia executa.
@@ -54,7 +54,7 @@ export const prazosIntegration: IntegrationDefinition = {
       name: "prazo_resposta_da_equipe",
       categoria: "Prazos",
       description:
-        "Registra um prazo para a EQUIPE responder. Use logo depois de entregar a conversa a uma pessoa, e só quando as suas instruções mandarem esperar a resposta dela: se ninguém da equipe escrever nesta conversa em N minutos, o sistema passa a conversa para a pessoa indicada e deixa nota interna com o motivo. Se alguém da equipe escrever antes (inclusive nota interna), outra pessoa assumir ou a conversa for resolvida, o prazo cai sozinho. Nada é enviado ao cliente.",
+        'Registra um prazo para a EQUIPE responder. Use logo depois de entregar a conversa a uma pessoa, e só quando as suas instruções mandarem esperar a resposta dela. Se ninguém da equipe escrever nesta conversa em N minutos, o sistema faz UMA coisa, sempre com nota interna: passa a conversa para a pessoa indicada (acao "reatribuir") ou devolve a conversa a VOCÊ, que retoma o atendimento sozinho sem o cliente precisar escrever (acao "voltar_para_o_agente"). Se alguém da equipe escrever antes (inclusive nota interna), outra pessoa assumir ou a conversa for resolvida, o prazo cai sozinho. Nada é enviado ao cliente no registro.',
       requiresConfirmation: true,
       inputSchema: z.object({
         minutos: z
@@ -63,20 +63,42 @@ export const prazosIntegration: IntegrationDefinition = {
           .min(1)
           .max(240)
           .describe("Quantos minutos esperar, a partir de agora."),
+        acao: z
+          .enum(["reatribuir", "voltar_para_o_agente"])
+          .optional()
+          .describe(
+            'O que acontece se ninguém responder. "reatribuir" (padrão): passa para reatribuirPara. "voltar_para_o_agente": a conversa volta para você.',
+          ),
         reatribuirPara: z
           .string()
           .min(2)
-          .describe("Quem assume se ninguém responder — o nome como está no Chatwoot."),
+          .optional()
+          .describe(
+            'Só com acao "reatribuir": quem assume se ninguém responder — o nome como está no Chatwoot.',
+          ),
         motivo: z
           .string()
           .min(5)
           .describe("Por que o prazo existe, em uma frase. Vai na nota interna se ele vencer."),
       }),
       async execute(entrada, ctx) {
-        const args = entrada as { minutos: number; reatribuirPara: string; motivo: string };
+        const args = entrada as {
+          minutos: number;
+          acao?: "reatribuir" | "voltar_para_o_agente";
+          reatribuirPara?: string;
+          motivo: string;
+        };
+        const voltar = args.acao === "voltar_para_o_agente";
 
         const fora = foraDoAtendimento(ctx);
         if (fora) return { registrado: false, erro: fora };
+
+        if (!voltar && !args.reatribuirPara?.trim()) {
+          return {
+            registrado: false,
+            erro: 'Informe reatribuirPara, ou use acao "voltar_para_o_agente" para a conversa voltar para você.',
+          };
+        }
 
         const porta = ctx.canalAgentId ?? ctx.agentId;
         const cliente = await clienteDoAgente(porta);
@@ -98,30 +120,40 @@ export const prazosIntegration: IntegrationDefinition = {
           };
         }
 
-        const destino = resolverAtendente(args.reatribuirPara, atendentes);
-        if (destino.tipo === "nenhum") {
-          return {
-            registrado: false,
-            erro: `Não achei "${args.reatribuirPara}" na equipe.`,
-            atendentes: destino.disponiveis,
-          };
-        }
-        if (destino.tipo === "ambiguo") {
-          return {
-            registrado: false,
-            erro: `"${args.reatribuirPara}" corresponde a mais de uma pessoa. Use o nome completo.`,
-            candidatos: destino.candidatos,
-          };
-        }
-        if (destino.atendente.id === aoVivo.assigneeId) {
-          return {
-            registrado: false,
-            erro: "Essa pessoa já é a dona da conversa — o prazo não teria para quem passar.",
-          };
+        let nomeDestino: string | null = null;
+        if (voltar) {
+          if (await jaVoltouParaOAgente(conversa)) {
+            return {
+              registrado: false,
+              erro: 'Esta conversa já voltou para você uma vez neste atendimento, e não volta de novo. Se as suas instruções mandarem esperar a equipe outra vez, use acao "reatribuir" com reatribuirPara.',
+            };
+          }
+        } else {
+          const destino = resolverAtendente(args.reatribuirPara!, atendentes);
+          if (destino.tipo === "nenhum") {
+            return {
+              registrado: false,
+              erro: `Não achei "${args.reatribuirPara}" na equipe.`,
+              atendentes: destino.disponiveis,
+            };
+          }
+          if (destino.tipo === "ambiguo") {
+            return {
+              registrado: false,
+              erro: `"${args.reatribuirPara}" corresponde a mais de uma pessoa. Use o nome completo.`,
+              candidatos: destino.candidatos,
+            };
+          }
+          if (destino.atendente.id === aoVivo.assigneeId) {
+            return {
+              registrado: false,
+              erro: "Essa pessoa já é a dona da conversa — o prazo não teria para quem passar.",
+            };
+          }
+          nomeDestino = destino.atendente.name?.trim() || args.reatribuirPara!;
         }
 
         const dono = atendentes.find((a) => a.id === aoVivo.assigneeId);
-        const nomeDestino = destino.atendente.name?.trim() || args.reatribuirPara;
         const prazo = await registrarPrazo({
           tipo: PrazoTipo.EQUIPE,
           chatwootConversationId: conversa,
@@ -131,14 +163,18 @@ export const prazosIntegration: IntegrationDefinition = {
           referenciaMensagemId: referenciaDasMensagens(mensagens),
           donoId: aoVivo.assigneeId,
           donoNome: dono?.name?.trim() ?? null,
-          acao: { tipo: "reatribuir", atendente: nomeDestino },
+          acao: voltar
+            ? { tipo: "voltar_para_o_agente" }
+            : { tipo: "reatribuir", atendente: nomeDestino! },
           motivo: args.motivo,
         });
 
         return {
           registrado: true,
           venceEm: formatarData(prazo.venceEm),
-          observacao: `Se ninguém da equipe escrever nesta conversa até lá, ela passa para ${nomeDestino}, com nota interna. Nada aparece para o cliente. Siga as suas instruções.`,
+          observacao: voltar
+            ? "Se ninguém da equipe escrever nesta conversa até lá, ela volta para você, com nota interna, e o sistema te aciona para retomar o atendimento sozinho — sem o cliente precisar escrever. Nada aparece para o cliente agora. Siga as suas instruções."
+            : `Se ninguém da equipe escrever nesta conversa até lá, ela passa para ${nomeDestino}, com nota interna. Nada aparece para o cliente. Siga as suas instruções.`,
         };
       },
     },

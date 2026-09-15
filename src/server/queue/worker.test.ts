@@ -802,3 +802,113 @@ describe("execução interrompida no painel", () => {
     await expect(processarAtendimento(job())).rejects.toThrow("provedor fora do ar");
   });
 });
+
+const { MENSAGEM_DE_RETOMADA } = await import("@/server/integrations/chatwoot/historico");
+
+/**
+ * A conversa VOLTOU para o agente: o vendedor não respondeu no prazo e o prazo
+ * da equipe a devolveu. O cliente não escreveu nada novo — a última fala é o
+ * "já te encaminhei" —, e mesmo assim o agente precisa retomar a venda. Estamos
+ * lidando com venda: silêncio aqui é cliente perdido.
+ */
+describe("atendimento que voltou para o agente", () => {
+  const voltou = () => {
+    Object.assign(conversa, {
+      agentId: "reservas",
+      handoffParaAgentId: "reservas",
+      handoffDeNome: "Wellen Kelly",
+      handoffMotivo: "Wellen Kelly ou Alan não responderam o cliente em 10 minutos",
+      retomadaEm: new Date("2026-09-15T15:10:00Z"),
+      retomadaPendente: true,
+    });
+    statusChatwoot = { status: "open", assigneeId: null };
+    mensagensDoChatwoot = [
+      { id: 1, message_type: 0, content: "quero reservar uma sala amanhã às 14h", private: false },
+      {
+        id: 2,
+        message_type: 1,
+        content: "Já te encaminhei para nossa equipe! Me informa o seu e-mail?",
+        private: false,
+      },
+      { id: 3, message_type: 1, content: "⏱️ A conversa voltou para o agente", private: true },
+    ];
+  };
+
+  it("⚠ roda sem mensagem nova do cliente, e a resposta chega a ele", async () => {
+    voltou();
+    respostasDoModelo = [{ resposta: "Oi! Para você não esperar, eu mesmo sigo com a sua reserva." }];
+
+    await processarAtendimento(job());
+
+    expect(agentesQueRodaram).toEqual(["reservas"]);
+    expect(mensagensRecebidasPeloAgente).toEqual([MENSAGEM_DE_RETOMADA]);
+    expect(publicas()).toEqual(["Oi! Para você não esperar, eu mesmo sigo com a sua reserva."]);
+  });
+
+  it("leva a instrução de retomada, e não o bastão de passagem", async () => {
+    voltou();
+
+    await processarAtendimento(job());
+
+    expect(bastoesRecebidos[0]).toContain("voltou para você");
+    expect(bastoesRecebidos[0]).toContain("Wellen Kelly");
+    expect(bastoesRecebidos[0]).not.toContain("apresentando");
+  });
+
+  it("a primeira resposta encerra a retomada pendente e para o relógio", async () => {
+    voltou();
+
+    await processarAtendimento(job());
+
+    expect(conversa.retomadaPendente).toBe(false);
+    expect(conversa.aguardandoDesde).toBeNull();
+    // Continua sabendo, nos turnos seguintes, que a venda é dele.
+    expect(conversa.retomadaEm).not.toBeNull();
+  });
+
+  it("sem retomada pendente, conversa parada numa fala nossa não gera turno", async () => {
+    // A regra de sempre continua: sem mensagem nova, responder seria falar sozinho.
+    voltou();
+    conversa.retomadaPendente = false;
+
+    await processarAtendimento(job());
+
+    expect(agentesQueRodaram).toEqual([]);
+    expect(publicas()).toEqual([]);
+  });
+
+  it("nos turnos seguintes, a instrução de retomada continua valendo", async () => {
+    voltou();
+    conversa.retomadaPendente = false;
+    mensagensDoChatwoot.push({ id: 4, message_type: 0, content: "maria@exemplo.com", private: false });
+
+    await processarAtendimento(job());
+
+    expect(mensagensRecebidasPeloAgente).toEqual(["maria@exemplo.com"]);
+    expect(bastoesRecebidos[0]).toContain("voltou para você");
+  });
+
+  it("pessoa assumiu antes do turno: o agente não fala e a retomada cai", async () => {
+    voltou();
+    statusChatwoot = { status: "open", assigneeId: 11, assigneeTipo: "User" };
+
+    await processarAtendimento(job());
+
+    expect(agentesQueRodaram).toEqual([]);
+    expect(publicas()).toEqual([]);
+    expect(conversa.status).toBe("HUMAN");
+    expect(conversa.retomadaPendente).toBe(false);
+  });
+
+  it("transferir depois da volta: o colega recebe o bastão normal", async () => {
+    voltou();
+    respostasDoModelo = [passarPara("documentos"), { resposta: "Oi, sou de documentos." }];
+
+    await processarAtendimento(job());
+
+    expect(agentesQueRodaram).toEqual(["reservas", "documentos"]);
+    expect(bastoesRecebidos[1]).toContain("Você assumiu este atendimento");
+    expect(conversa.retomadaEm).toBeNull();
+    expect(conversa.retomadaPendente).toBe(false);
+  });
+});

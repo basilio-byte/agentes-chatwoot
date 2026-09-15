@@ -5,7 +5,12 @@ import { IntegrationProvider, PrazoStatus } from "@/generated/prisma/enums";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
-import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
+import { humanidadeDoDono } from "@/server/integrations/chatwoot/regras";
+import {
+  devolverAoAgente,
+  entregarAoHumano,
+} from "@/server/integrations/chatwoot/resolucao";
+import { agendarAtendimento } from "@/server/queue/atendimento";
 import { decidirPrazo, type AcaoDoPrazo } from "./decisao";
 
 /**
@@ -20,8 +25,15 @@ import { decidirPrazo, type AcaoDoPrazo } from "./decisao";
 
 const POR_RODADA = 50;
 
+/**
+ * Espera antes do turno de retomada: o bastante para a nota interna da volta
+ * chegar ao Chatwoot antes da primeira fala do agente.
+ */
+const ESPERA_DA_RETOMADA_S = 2;
+
 const acaoSchema = z.discriminatedUnion("tipo", [
   z.object({ tipo: z.literal("reatribuir"), atendente: z.string().min(1) }),
+  z.object({ tipo: z.literal("voltar_para_o_agente") }),
   z.object({ tipo: z.literal("mensagem"), texto: z.string().min(1) }),
   z.object({
     tipo: z.literal("atribuir"),
@@ -153,7 +165,7 @@ async function tratar(
     cliente.listarMensagens(conversaId),
     db.conversation.findUnique({
       where: { chatwootConversationId: conversaId },
-      select: { agentId: true },
+      select: { agentId: true, chatwootInboxId: true },
     }),
   ]);
 
@@ -180,11 +192,18 @@ async function tratar(
     case "descartar":
       return { status: PrazoStatus.DESCARTADO, resultado: decisao.motivo };
     case "executar":
-      return agir(cliente, prazo, acao.data);
+      return agir(cliente, prazo, acao.data, {
+        inboxId: aoVivo.inboxId ?? conversaNoBanco?.chatwootInboxId ?? null,
+      });
   }
 }
 
-async function agir(cliente: ChatwootClient, prazo: Prazo, acao: AcaoDoPrazo): Promise<Fim> {
+async function agir(
+  cliente: ChatwootClient,
+  prazo: Prazo,
+  acao: AcaoDoPrazo,
+  conversa: { inboxId: number | null },
+): Promise<Fim> {
   const conversaId = prazo.chatwootConversationId;
 
   switch (acao.tipo) {
@@ -216,6 +235,97 @@ async function agir(cliente: ChatwootClient, prazo: Prazo, acao: AcaoDoPrazo): P
       );
       await entregarAoHumano(conversaId, `prazo vencido: reatribuída a ${nome}`);
       return { status: PrazoStatus.EXECUTADO, resultado: `reatribuída a ${nome}` };
+    }
+
+    case "voltar_para_o_agente": {
+      const antes = prazo.donoNome ?? "a pessoa atribuída";
+      const agente = await db.agent.findUnique({
+        where: { id: prazo.agentId },
+        select: { name: true, active: true, archivedAt: true },
+      });
+
+      // Agente desligado é o operador suspendendo o serviço: a conversa fica
+      // com quem está, e a nota diz por que ninguém a tirou de lá.
+      if (!agente?.active || agente.archivedAt) {
+        await notaInterna(
+          cliente,
+          conversaId,
+          `⏱️ Ninguém da equipe respondeu em ${prazo.minutos} min desde a atribuição a ${antes}, mas o agente que ia retomar o atendimento está desligado — a conversa continua com ${antes}.`,
+        );
+        return {
+          status: PrazoStatus.FALHOU,
+          resultado: "agente desligado ou arquivado — conversa não devolvida",
+        };
+      }
+      if (conversa.inboxId == null) {
+        return {
+          status: PrazoStatus.FALHOU,
+          resultado: "caixa de entrada da conversa desconhecida — conversa não devolvida",
+        };
+      }
+
+      // Banco ANTES do Chatwoot. Se tirar a pessoa falhar depois disto, o
+      // worker e o vigia conferem ao vivo, veem gente como dona e devolvem a
+      // conversa a ela. Na ordem inversa, uma falha no banco deixaria a
+      // conversa sem dono no Chatwoot e presa como humana aqui — ninguém
+      // atenderia e ninguém vigiaria.
+      const mudou = await devolverAoAgente(conversaId, {
+        agentId: prazo.agentId,
+        deNome: prazo.donoNome,
+        motivo: prazo.motivo,
+      });
+      if (mudou === 0) {
+        return {
+          status: PrazoStatus.FALHOU,
+          resultado: "conversa não existe no banco — não devolvida",
+        };
+      }
+
+      await cliente.desatribuir(conversaId);
+
+      // Tirar a pessoa pode não bastar: atribuição automática da caixa, ou
+      // alguém assumindo no mesmo segundo. Com gente dona da conversa, ela é
+      // dessa pessoa — o agente não retoma por cima.
+      const depois = await cliente.obterConversa(conversaId);
+      if (depois.assigneeId != null && humanidadeDoDono(depois.assigneeTipo) !== false) {
+        await entregarAoHumano(
+          conversaId,
+          "prazo vencido, mas a conversa ficou com uma pessoa ao ser devolvida",
+        );
+        await notaInterna(
+          cliente,
+          conversaId,
+          `⏱️ Ninguém da equipe respondeu em ${prazo.minutos} min desde a atribuição a ${antes}. Tentei devolver a conversa ao agente ${agente.name}, mas ela ficou com uma pessoa — o agente não retomou.`,
+        );
+        return {
+          status: PrazoStatus.CANCELADO,
+          resultado: "ao devolver, a conversa ficou com uma pessoa",
+        };
+      }
+
+      // O turno antes da nota: se enfileirar falhar, o prazo termina como
+      // falha sem uma nota dizendo que o agente retomou. O vigia ainda enxerga
+      // a conversa, que ficou do bot com o cliente esperando.
+      await agendarAtendimento(
+        {
+          chatwootConversationId: conversaId,
+          agentId: prazo.portaAgentId,
+          inboxId: conversa.inboxId,
+        },
+        ESPERA_DA_RETOMADA_S,
+      );
+      await notaInterna(
+        cliente,
+        conversaId,
+        [
+          `⏱️ Ninguém da equipe respondeu em ${prazo.minutos} min desde a atribuição a ${antes}. A conversa voltou para o agente ${agente.name}, que segue o atendimento sozinho.`,
+          `Motivo registrado pelo agente: ${prazo.motivo}`,
+        ].join("\n"),
+      );
+      return {
+        status: PrazoStatus.EXECUTADO,
+        resultado: `devolvida ao agente ${agente.name}`,
+      };
     }
 
     case "mensagem": {

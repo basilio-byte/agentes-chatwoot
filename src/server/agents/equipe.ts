@@ -217,3 +217,30 @@ export function mensagemDeBastao(bastao: {
     "de pedir de novo o que o cliente já informou. Use o resumo acima.",
   ].join("\n");
 }
+
+/**
+ * Instrução dos turnos em que o atendimento VOLTOU para o agente.
+ *
+ * Não é o bastão de passagem: lá o cliente acabou de ser avisado de que mudaria
+ * de atendente, e quem chega se apresenta. Aqui ninguém avisou o cliente de nada
+ * — a pessoa da equipe só não respondeu —, e o agente já estava na conversa.
+ * Vale em todo turno do mesmo atendimento, para ele não esquecer que a venda
+ * agora é dele e é registrada como tal.
+ */
+export function mensagemDeRetomada(retomada: {
+  deNome?: string | null;
+  motivo?: string | null;
+}): string {
+  const quem = retomada.deNome?.trim() || "a pessoa da equipe";
+
+  return [
+    `Este atendimento voltou para você: ${quem} não respondeu o cliente a tempo, e o sistema tirou a conversa dessa pessoa.`,
+    ...(retomada.motivo?.trim() ? [`Motivo registrado: ${retomada.motivo.trim()}`] : []),
+    "",
+    "Daqui até o fim você conduz sozinho, seguindo as suas instruções para quando",
+    "o atendimento volta para você. O cliente não foi avisado da troca.",
+    "",
+    "Não recomece: nada de menu inicial, de repetir pergunta já respondida, nem",
+    "de pedir de novo o que o cliente já informou. Siga de onde a conversa parou.",
+  ].join("\n");
+}

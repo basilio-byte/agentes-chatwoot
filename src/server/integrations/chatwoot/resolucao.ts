@@ -34,6 +34,9 @@ export async function marcarResolvida(chatwootConversationId: number) {
       handoffResumo: null,
       handoffMotivo: null,
       handoffDeNome: null,
+      // A volta ao agente vale para ESTE atendimento: reabriu, começa do zero.
+      retomadaEm: null,
+      retomadaPendente: false,
     },
   });
 }
@@ -60,8 +63,44 @@ export async function entregarAoHumano(
       // Daqui em diante quem deve resposta é uma pessoa, e o vigia não cobra
       // pessoa. Sem zerar, ele escalaria de novo o que já foi escalado.
       aguardandoDesde: null,
+      // Nem o turno de retomada: com gente dona da conversa, ele não roda mais.
+      retomadaPendente: false,
     },
   });
+}
+
+/**
+ * Devolve a conversa ao agente que registrou o prazo da equipe. **Única porta**
+ * para esse estado, como `entregarAoHumano` é para o oposto.
+ *
+ * O bastão passa a dizer para quem a conversa voltou e por quê, e a retomada
+ * pendente é o que faz o worker rodar o agente sem mensagem nova do cliente. O
+ * relógio da espera acende, porque o cliente está esperando: se o turno não
+ * sair, o vigia enxerga esta conversa como enxerga qualquer outra sem resposta.
+ *
+ * Devolve quantas linhas mudaram. Zero é conversa que não existe no nosso banco,
+ * e quem chama não pode seguir como se tivesse devolvido.
+ */
+export async function devolverAoAgente(
+  chatwootConversationId: number,
+  volta: { agentId: string; deNome: string | null; motivo: string },
+): Promise<number> {
+  const agora = new Date();
+  const { count } = await db.conversation.updateMany({
+    where: { chatwootConversationId },
+    data: {
+      status: ConversationStatus.BOT,
+      agentId: volta.agentId,
+      handoffParaAgentId: volta.agentId,
+      handoffDeNome: volta.deNome,
+      handoffMotivo: volta.motivo,
+      handoffResumo: null,
+      retomadaEm: agora,
+      retomadaPendente: true,
+      aguardandoDesde: agora,
+    },
+  });
+  return count;
 }
 
 /**
