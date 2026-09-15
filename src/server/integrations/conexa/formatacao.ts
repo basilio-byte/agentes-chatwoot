@@ -26,17 +26,51 @@ export function ehCobrancaPendente(status: unknown) {
   return String(status ?? "").toLowerCase() === STATUS_PENDENTE;
 }
 
-export function formatarCliente(bruto: Bruto) {
+/** Lista de texto do Conexa (e-mails, telefones), sem itens vazios. */
+function lista(v: unknown) {
+  if (!Array.isArray(v)) return undefined;
+  const itens = v.map((x) => String(x ?? "").trim()).filter(Boolean);
+  return itens.length ? itens : undefined;
+}
+
+/**
+ * O que identifica um cliente numa lista de resultados — sem contato.
+ *
+ * Buscar por nome devolve até 25 homônimos; mandar e-mail e telefone de todos
+ * para o modelo seria espalhar dado de quem não está na conversa. Contato só em
+ * `formatarCliente`, que é de UM cliente já escolhido.
+ */
+export function formatarClienteResumo(bruto: Bruto) {
   return {
     id: numero(bruto.customerId ?? bruto.id),
-    nome: texto(bruto.name ?? bruto.tradeName),
-    razaoSocial: texto(bruto.legalName),
-    cpf: texto(bruto.cpf),
-    cnpj: texto(bruto.cnpj),
-    email: texto(bruto.email),
-    telefone: texto(bruto.phone ?? bruto.cellphone),
-    ativo: bruto.isActive ?? bruto.active,
+    nome: texto(bruto.name),
+    nomeFantasia: texto(bruto.tradeName),
+    ativo: bruto.isActive,
     unidade: numero(bruto.companyId),
+  };
+}
+
+/**
+ * Um cliente inteiro, como `GET /customer/:id` devolve.
+ *
+ * ⚠ **Documento e contato vêm ANINHADOS**: `naturalPerson.cpf`,
+ * `legalPerson.cnpj`, e e-mail e telefone em listas (`emailsMessage`,
+ * `phones`). Esta função lia `cpf`, `email` e `phone` no topo até 15/09/2026 e
+ * devolvia só id e nome — o agente não tinha o documento de um cliente que
+ * acabara de achar PELO documento.
+ */
+export function formatarCliente(bruto: Bruto) {
+  const pf = (bruto.naturalPerson ?? {}) as Bruto;
+  const pj = (bruto.legalPerson ?? {}) as Bruto;
+  return {
+    ...formatarClienteResumo(bruto),
+    cpf: texto(pf.cpf),
+    cnpj: texto(pj.cnpj),
+    emails: lista(bruto.emailsMessage),
+    emailsFinanceiros: lista(bruto.emailsFinancialMessages),
+    celular: texto(bruto.cellNumber),
+    telefones: lista(bruto.phones),
+    bloqueado: bruto.isBlocked,
   };
 }
 

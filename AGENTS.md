@@ -689,6 +689,55 @@ conta própria.
   `FALHAS_ATE_DESLIGAR` o agendamento se desliga **e sai do relógio** — só
   desligar no banco continuaria disparando até o próximo boot.
 
+### Conexa: armadilhas da API v2
+
+Achadas no primeiro uso real (09/09 a 15/09/2026), depois de semanas de teste
+com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada em
+`conexa/entrada.ts`, a de volta em `formatacao.ts`, e a ligação com as tools em
+`ferramentas.test.ts`.
+
+- ⚠ **Documento e contato são ANINHADOS e em lista.** `POST`/`PATCH /customer`
+  querem `naturalPerson.cpf`, `legalPerson.cnpj`, `emailsMessage[]` e
+  `phones[]`; `cpf`, `email` e `phone` no topo dão `400 "field does not
+  exist"`. Até 15/09/2026 nenhum cliente foi criado por agente, e
+  `conexa_ver_cliente` devolvia só id e nome, porque lia os mesmos campos no
+  topo.
+- ⚠ **Filtro de data e corpo usam formatos diferentes.** `GET /room/bookings`
+  exige `bookingDateTimeFrom` em W3C (`2026-09-15T00:00:00-03:00`); criar
+  reserva manda `date: "2026-09-15"` e `startTime: "16:00"`. A tool aceita o dia
+  e converte pelo relógio de São Paulo (`w3cEmSaoPaulo`).
+- ⚠ **A agenda é lida para concluir que um horário está LIVRE, então não pode
+  vir cortada.** A tool pedia 25 reservas e jogava fora o `hasNext`: em
+  14/09/2026 o dia veio com exatamente 25, e o agente ofereceu ao cliente
+  horários deduzidos de uma lista incompleta. Agora percorre as páginas até
+  `TETO_DA_AGENDA` e, acima dele, devolve `completa: false` proibindo concluir
+  disponibilidade.
+- ⚠ **Não existe `GET /rooms`, e "não está no cadastro" NÃO é "não existe".**
+  Com o cadastro de salas vazio, a mensagem antiga fez o agente confessar ao
+  cliente que tinha inventado uma sala que estava na agenda que ele acabara de
+  ler — pediu desculpas, escreveu "inventei" na nota e transferiu para o colega
+  errado. `salaOuErro` diz que falta configuração e aponta o caminho que
+  funciona sem cadastro: o `salaId` que toda reserva listada traz.
+- **Agenda vazia filtrada por sala lembra que número errado também volta
+  vazio.** "Sala 03" não é `roomId` 3, e uma sala que não existe tem agenda
+  vazia — que se lê como livre o dia todo.
+- ⚠ **Escrita que falha no servidor não é "não gravou".** `criar_reserva` e
+  `criar_cliente` só relançam 4xx, que é recusa antes de aplicar; 5xx, timeout e
+  queda de rede devolvem `resultado: "indeterminado"` mandando conferir antes de
+  repetir. Senão o modelo corrige, chama de novo e reserva a mesma sala duas
+  vezes. Mesma doutrina das escritas do Google Sheets.
+- **`criar_reserva` lê a reserva de volta** e devolve a sala e o horário que o
+  Conexa gravou: é isso que vai na confirmação ao cliente, nunca o que o agente
+  pediu.
+- ⚠ **`emailsMessage` e `phones` são substituídos inteiros no PATCH** — quarta
+  aparição do campo de terceiro que apaga ao escrever. `atualizar_cliente` lê,
+  acrescenta e grava.
+- **Unidade do Conexa é EMPRESA, não prédio.** As da Seahub são `SEAHUB
+  COWORKING` e `SEATECH`; "Seaway", "Sebrae" e "Ayrton Senna" não existem ali, e
+  a descrição do parâmetro diz isso ao modelo.
+- **A busca não devolve contato.** Por nome, volta até 25 homônimos; e-mail,
+  telefone e documento só em `conexa_ver_cliente`, de um cliente escolhido.
+
 ### ClickUp: armadilhas da API v2
 
 Todas cobertas por teste em `src/server/integrations/clickup/client.test.ts` —

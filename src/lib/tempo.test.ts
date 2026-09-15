@@ -6,7 +6,35 @@ import {
   mensagemDeContextoTemporal,
   primeiroDiaDoMes,
   somarDias,
+  w3cEmSaoPaulo,
 } from "./tempo";
+
+describe("instante no formato W3C de São Paulo", () => {
+  it("escreve a hora daqui, com o deslocamento", () => {
+    expect(w3cEmSaoPaulo(new Date("2026-09-15T03:00:00Z"))).toBe(
+      "2026-09-15T00:00:00-03:00",
+    );
+  });
+
+  it("não vira o dia pelo UTC", () => {
+    // 01:30 UTC do dia 16 ainda é 22:30 do dia 15 aqui.
+    expect(w3cEmSaoPaulo(new Date("2026-09-16T01:30:00Z"))).toBe(
+      "2026-09-15T22:30:00-03:00",
+    );
+  });
+
+  it("descarta os milissegundos em vez de arredondar para o segundo seguinte", () => {
+    // O fim do dia é "23:59:59"; arredondar para cima o jogaria no dia seguinte.
+    expect(w3cEmSaoPaulo(new Date("2026-09-15T02:59:59.999Z"))).toBe(
+      "2026-09-14T23:59:59-03:00",
+    );
+  });
+
+  it("representa o mesmo instante que recebeu", () => {
+    const instante = new Date("2026-12-31T23:15:00Z");
+    expect(Date.parse(w3cEmSaoPaulo(instante))).toBe(instante.getTime());
+  });
+});
 
 describe("hora de São Paulo", () => {
   it("converte de UTC para o fuso de São Paulo", () => {

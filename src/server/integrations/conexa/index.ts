@@ -3,15 +3,21 @@ import { IntegrationProvider } from "@/generated/prisma/enums";
 import type { IntegrationDefinition, ToolContext } from "../types";
 import {
   conexaConfigSchema,
-  resolverSala,
   resolverUnidade,
+  salaOuErro,
   type ConexaConfig,
 } from "./config";
-import { ConexaClient } from "./client";
+import { ConexaApiError, ConexaClient, juntarPaginas } from "./client";
+import {
+  corpoDeAtualizacao,
+  corpoDeClienteNovo,
+  periodoDaAgenda,
+} from "./entrada";
 import {
   acrescentarAnotacao,
   carimboDaAnotacao,
   formatarCliente,
+  formatarClienteResumo,
   formatarCobranca,
   formatarContrato,
   formatarPlano,
@@ -25,6 +31,36 @@ import { agoraEmSaoPaulo } from "@/lib/tempo";
 
 /** Teto por resposta: lista longa só gasta token sem ajudar o modelo. */
 const LIMITE = 25;
+
+/**
+ * A agenda é a exceção ao `LIMITE`: ela é lida para concluir que um horário está
+ * LIVRE, e para isso não pode faltar reserva nenhuma. Percorre as páginas até o
+ * teto e, acima dele, diz que a lista não veio inteira.
+ */
+const POR_PAGINA_DA_AGENDA = 50;
+export const TETO_DA_AGENDA = 100;
+
+/**
+ * A API recusou ANTES de aplicar? Só um 4xx garante isso.
+ *
+ * ⚠ 5xx, timeout e queda de rede não dizem se a escrita entrou, e o runner
+ * entrega a exceção ao modelo como resultado de tool comum — o que o ensina a
+ * corrigir e chamar de novo. Numa reserva, é a mesma sala reservada duas vezes;
+ * num cadastro, o cliente duplicado. Mesma doutrina das escritas do Google
+ * Sheets: na dúvida, "indeterminado" e mandar conferir.
+ */
+function ehRecusaDaApi(erro: unknown) {
+  return erro instanceof ConexaApiError && erro.status >= 400 && erro.status < 500;
+}
+
+function escritaIndeterminada(erro: unknown, comoConferir: string) {
+  const motivo = erro instanceof Error ? erro.message : String(erro);
+  return {
+    resultado: "indeterminado",
+    erro: `O Conexa não confirmou a gravação (${motivo.slice(0, 200)}). Ela PODE ter entrado.`,
+    comoSeguir: `NÃO repita a chamada. ${comoConferir}`,
+  };
+}
 
 function contexto(ctx: ToolContext): {
   cliente: ConexaClient;
@@ -58,7 +94,7 @@ const unidadeSchema = z
   .string()
   .optional()
   .describe(
-    "Nome da unidade cadastrada (ex.: \"Natal\"). Omita se houver só uma.",
+    "Empresa cadastrada na configuração do Conexa — NÃO é o endereço: Seaway, Sebrae e Ayrton Senna não são unidades aqui. Omita para usar a primeira empresa cadastrada.",
   );
 
 export const conexaIntegration: IntegrationDefinition = {
@@ -80,7 +116,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_buscar_cliente",
       categoria: "Clientes",
       description:
-        "Procura um cliente no ERP por CPF, CNPJ ou nome. Use ANTES de criar contrato, cobrança ou reserva — quase tudo no Conexa precisa do id do cliente.",
+        "Procura um cliente no ERP por CPF, CNPJ ou nome. Use ANTES de criar contrato, cobrança ou reserva — quase tudo no Conexa precisa do id do cliente. Devolve id e nome; documento e contato ficam em conexa_ver_cliente.",
       inputSchema: z.object({
         cpf: z.string().optional().describe("Só os números."),
         cnpj: z.string().optional().describe("Só os números."),
@@ -116,7 +152,7 @@ export const conexaIntegration: IntegrationDefinition = {
         return {
           encontrados: itens.length,
           temMais,
-          clientes: itens.map((c) => semVazios(formatarCliente(c))),
+          clientes: itens.map((c) => semVazios(formatarClienteResumo(c))),
         };
       },
     },
@@ -139,12 +175,15 @@ export const conexaIntegration: IntegrationDefinition = {
         "Cadastra um cliente novo no ERP. Use só depois de conferir com conexa_buscar_cliente que ele ainda não existe — cadastro duplicado bagunça cobrança e contrato.",
       requiresConfirmation: true,
       inputSchema: z.object({
-        nome: z.string().min(3).describe("Nome da pessoa ou nome fantasia."),
-        razaoSocial: z.string().optional(),
-        cpf: z.string().optional().describe("Só os números."),
-        cnpj: z.string().optional().describe("Só os números."),
+        nome: z
+          .string()
+          .min(3)
+          .describe("Nome da pessoa; numa empresa, o nome fantasia."),
+        razaoSocial: z.string().optional().describe("Só para empresa (CNPJ)."),
+        cpf: z.string().optional().describe("Pessoa física. Só os números."),
+        cnpj: z.string().optional().describe("Empresa. Só os números."),
         email: z.string().optional(),
-        telefone: z.string().optional(),
+        telefone: z.string().optional().describe("Com DDD."),
         unidade: unidadeSchema,
       }),
       async execute(entrada, ctx) {
@@ -153,34 +192,46 @@ export const conexaIntegration: IntegrationDefinition = {
         const unidade = unidadeOuErro(args.unidade, config);
         if ("erro" in unidade) return unidade;
 
-        if (!args.cpf && !args.cnpj) {
-          return { erro: "O Conexa exige CPF ou CNPJ para cadastrar." };
+        const montado = corpoDeClienteNovo({
+          companyId: unidade.companyId,
+          nome: args.nome ?? "",
+          razaoSocial: args.razaoSocial,
+          cpf: args.cpf,
+          cnpj: args.cnpj,
+          email: args.email,
+          telefone: args.telefone,
+        });
+        if ("erro" in montado) return montado;
+
+        let id: number;
+        try {
+          ({ id } = await cliente.criarCliente(montado.corpo));
+        } catch (erro) {
+          if (ehRecusaDaApi(erro)) throw erro;
+          return escritaIndeterminada(
+            erro,
+            "Procure antes com conexa_buscar_cliente pelo CPF ou CNPJ: cadastrar de novo às cegas pode duplicar o cliente.",
+          );
         }
 
-        const { id } = await cliente.criarCliente(
-          semVazios({
-            companyId: unidade.companyId,
-            name: args.nome,
-            legalName: args.razaoSocial,
-            cpf: args.cpf?.replace(/\D/g, ""),
-            cnpj: args.cnpj?.replace(/\D/g, ""),
-            email: args.email,
-            phone: args.telefone,
-          }),
-        );
-        return { criado: true, clienteId: id };
+        return {
+          criado: true,
+          clienteId: id,
+          ...(montado.avisos.length ? { avisos: montado.avisos } : {}),
+        };
       },
     },
     {
       name: "conexa_atualizar_cliente",
       categoria: "Clientes",
-      description: "Corrige dados de um cliente que já existe.",
+      description:
+        "Corrige dados de um cliente que já existe. E-mail e telefone são ACRESCENTADOS aos que o cadastro já tem — nada é apagado.",
       requiresConfirmation: true,
       inputSchema: z.object({
         clienteId: z.number().int().positive(),
         nome: z.string().optional(),
         email: z.string().optional(),
-        telefone: z.string().optional(),
+        telefone: z.string().optional().describe("Com DDD."),
       }),
       async execute(entrada, ctx) {
         const args = entrada as {
@@ -190,11 +241,23 @@ export const conexaIntegration: IntegrationDefinition = {
           telefone?: string;
         };
         const { cliente } = contexto(ctx);
-        await cliente.atualizarCliente(
-          args.clienteId,
-          semVazios({ name: args.nome, email: args.email, phone: args.telefone }),
-        );
-        return { atualizado: true };
+
+        // ⚠ Ler IMEDIATAMENTE antes de escrever: `emailsMessage` e `phones` são
+        // listas que o PATCH substitui inteiras, e a equipe cadastra ali à mão.
+        const atual: Record<string, unknown> =
+          args.email || args.telefone ? await cliente.obterCliente(args.clienteId) : {};
+        const { corpo, avisos } = corpoDeAtualizacao(atual, args);
+
+        if (!Object.keys(corpo).length) {
+          return {
+            atualizado: false,
+            erro: "Nada para gravar: informe nome, e-mail ou um telefone válido.",
+            ...(avisos.length ? { avisos } : {}),
+          };
+        }
+
+        await cliente.atualizarCliente(args.clienteId, corpo);
+        return { atualizado: true, ...(avisos.length ? { avisos } : {}) };
       },
     },
 
@@ -641,12 +704,23 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_listar_reservas",
       categoria: "Reservas de sala",
       description:
-        "Reservas já feitas. Serve também para ver DISPONIBILIDADE: o Conexa não tem consulta de horário livre, então liste o que já está ocupado na sala e no dia.",
+        "Reservas já feitas. Serve também para ver DISPONIBILIDADE: o Conexa não tem consulta de horário livre, então liste o que já está ocupado na sala e no dia. Só conclua que um horário está livre se a resposta vier com completa: true. Reserva com status cancelled ou billedCancelled não ocupa mais o horário.",
       inputSchema: z.object({
-        sala: z.string().optional().describe("Nome da sala cadastrada."),
+        sala: z
+          .string()
+          .optional()
+          .describe(
+            "O salaId de uma reserva listada (ex.: 2107) ou o nome cadastrado na configuração. NÃO use o número do nome da sala: \"Sala 03\" não é 3.",
+          ),
         clienteId: z.number().int().positive().optional(),
-        de: z.string().optional().describe("Início do período, AAAA-MM-DD."),
-        ate: z.string().optional().describe("Fim do período, AAAA-MM-DD."),
+        de: z
+          .string()
+          .optional()
+          .describe("Início do período: o dia, AAAA-MM-DD (vale o dia inteiro, horário de São Paulo)."),
+        ate: z
+          .string()
+          .optional()
+          .describe("Fim do período: o dia, AAAA-MM-DD (inclui o dia inteiro)."),
       }),
       async execute(entrada, ctx) {
         const args = entrada as {
@@ -657,30 +731,57 @@ export const conexaIntegration: IntegrationDefinition = {
         };
         const { cliente, config } = contexto(ctx);
 
-        const { roomId, nomes } = resolverSala(args.sala, config);
-        if (args.sala && !roomId) {
-          return { erro: `"${args.sala}" não é uma sala cadastrada.`, salasDisponiveis: nomes };
-        }
+        const sala = salaOuErro(args.sala, config);
+        if ("erro" in sala) return sala;
+        const periodo = periodoDaAgenda(args.de, args.ate);
+        if ("erro" in periodo) return periodo;
 
-        const { itens } = await cliente.listarReservas({
-          roomId,
-          customerId: args.clienteId,
-          bookingDateTimeFrom: args.de,
-          bookingDateTimeTo: args.ate,
-          limit: LIMITE,
-        });
-        return itens.map((r) => semVazios(formatarReserva(r)));
+        const { itens, completo } = await juntarPaginas(
+          ({ offset, limit }) =>
+            cliente.listarReservas({
+              roomId: sala.roomId,
+              customerId: args.clienteId,
+              bookingDateTimeFrom: periodo.de,
+              bookingDateTimeTo: periodo.ate,
+              limit,
+              offset,
+            }),
+          { porPagina: POR_PAGINA_DA_AGENDA, teto: TETO_DA_AGENDA },
+        );
+        const reservas = itens.map((r) => semVazios(formatarReserva(r)));
+
+        if (!completo) {
+          return {
+            total: reservas.length,
+            completa: false,
+            aviso: `Há mais reservas no período do que as ${reservas.length} mostradas. NÃO conclua que um horário está livre por esta lista: consulte de novo filtrando pela sala (salaId) e por um período menor.`,
+            reservas,
+          };
+        }
+        if (sala.roomId && !reservas.length) {
+          return {
+            total: 0,
+            completa: true,
+            aviso: `Nenhuma reserva na sala ${sala.roomId} no período. Isso só quer dizer "livre" se ${sala.roomId} for um salaId que apareceu na agenda — um número de sala errado também volta vazio.`,
+            reservas,
+          };
+        }
+        return { total: reservas.length, completa: true, reservas };
       },
     },
     {
       name: "conexa_criar_reserva",
       categoria: "Reservas de sala",
       description:
-        "Reserva uma sala. Confira antes com conexa_listar_reservas se o horário está livre — o Conexa não avisa sobre conflito de forma clara.",
+        "Reserva uma sala. Confira antes com conexa_listar_reservas se o horário está livre — o Conexa não avisa sobre conflito de forma clara. O retorno traz a sala e o horário que o Conexa gravou: é isso que se confirma ao cliente.",
       requiresConfirmation: true,
       inputSchema: z.object({
         clienteId: z.number().int().positive(),
-        sala: z.string().describe("Nome da sala cadastrada."),
+        sala: z
+          .string()
+          .describe(
+            "O salaId de uma reserva listada (ex.: 2107) ou o nome cadastrado na configuração. NÃO use o número do nome da sala: \"Sala 03\" não é 3.",
+          ),
         data: z.string().describe("AAAA-MM-DD."),
         inicio: z.string().describe("HH:MM."),
         fim: z.string().describe("HH:MM."),
@@ -704,26 +805,42 @@ export const conexaIntegration: IntegrationDefinition = {
         };
         const { cliente, config } = contexto(ctx);
 
-        const { roomId, nomes } = resolverSala(args.sala, config);
-        if (!roomId) {
-          // Não existe endpoint que liste salas: o nome vem do cadastro do
-          // painel, e sem ele o agente não tem como descobrir o id sozinho.
-          return {
-            erro: `"${args.sala}" não é uma sala cadastrada.`,
-            salasDisponiveis: nomes,
-          };
+        const sala = salaOuErro(args.sala, config);
+        if ("erro" in sala) return sala;
+        if (!sala.roomId) return { erro: "Informe a sala da reserva." };
+
+        let id: number;
+        try {
+          ({ id } = await cliente.criarReserva({
+            customerId: args.clienteId,
+            roomId: sala.roomId,
+            date: args.data,
+            startTime: args.inicio,
+            finalTime: args.fim,
+            personId: args.solicitanteId,
+            notes: args.observacoes,
+          }));
+        } catch (erro) {
+          if (ehRecusaDaApi(erro)) throw erro;
+          return escritaIndeterminada(
+            erro,
+            "Confira antes com conexa_listar_reservas, filtrando pela sala e pelo dia: reservar de novo às cegas pode ocupar a mesma sala duas vezes.",
+          );
         }
 
-        const { id } = await cliente.criarReserva({
-          customerId: args.clienteId,
-          roomId,
-          date: args.data,
-          startTime: args.inicio,
-          finalTime: args.fim,
-          personId: args.solicitanteId,
-          notes: args.observacoes,
-        });
-        return { criada: true, reservaId: id };
+        // Quem diz o que foi gravado é o Conexa, não o pedido: é daqui que saem
+        // a sala e o horário da confirmação ao cliente.
+        try {
+          const reserva = semVazios(formatarReserva(await cliente.obterReserva(id)));
+          return { criada: true, reserva };
+        } catch {
+          return {
+            criada: true,
+            reservaId: id,
+            aviso:
+              "A reserva foi criada, mas não consegui ler de volta o que o Conexa gravou. Confira com conexa_ver_reserva antes de dizer sala e horário ao cliente.",
+          };
+        }
       },
     },
     {
@@ -745,7 +862,12 @@ export const conexaIntegration: IntegrationDefinition = {
       requiresConfirmation: true,
       inputSchema: z.object({
         reservaId: z.number().int().positive(),
-        sala: z.string().optional(),
+        sala: z
+          .string()
+          .optional()
+          .describe(
+            "O salaId de uma reserva listada (ex.: 2107) ou o nome cadastrado na configuração. NÃO use o número do nome da sala: \"Sala 03\" não é 3.",
+          ),
         data: z.string().optional().describe("AAAA-MM-DD."),
         inicio: z.string().optional().describe("HH:MM."),
         fim: z.string().optional().describe("HH:MM."),
@@ -760,15 +882,13 @@ export const conexaIntegration: IntegrationDefinition = {
         };
         const { cliente, config } = contexto(ctx);
 
-        const { roomId, nomes } = resolverSala(args.sala, config);
-        if (args.sala && !roomId) {
-          return { erro: `"${args.sala}" não é uma sala cadastrada.`, salasDisponiveis: nomes };
-        }
+        const sala = salaOuErro(args.sala, config);
+        if ("erro" in sala) return sala;
 
         await cliente.alterarReserva(
           args.reservaId,
           semVazios({
-            roomId,
+            roomId: sala.roomId,
             date: args.data,
             startTime: args.inicio,
             finalTime: args.fim,

@@ -121,6 +121,26 @@ export function inicioDoDiaEmSaoPaulo(dia: string) {
   return instante;
 }
 
+/**
+ * `2026-09-15T00:00:00-03:00` — o instante lido no relógio de São Paulo, com o
+ * deslocamento escrito junto (formato W3C, o `Y-m-d\TH:i:sP` das APIs em PHP).
+ *
+ * ⚠ `toISOString()` não serve: devolve UTC com `Z`, e um filtro "do dia 15"
+ * mandado assim começaria às 21h do dia 14 no horário daqui. O deslocamento sai
+ * do `Intl`, pelo mesmo motivo de `deslocamentoDeSaoPaulo`.
+ */
+export function w3cEmSaoPaulo(instante: Date) {
+  const deslocamento = deslocamentoDeSaoPaulo(instante);
+  const segundoCheio = Math.floor(instante.getTime() / 1000) * 1000;
+  const relogio = new Date(segundoCheio + deslocamento).toISOString().slice(0, 19);
+
+  const minutos = Math.round(Math.abs(deslocamento) / 60_000);
+  const sinal = deslocamento < 0 ? "-" : "+";
+  const hh = String(Math.floor(minutos / 60)).padStart(2, "0");
+  const mm = String(minutos % 60).padStart(2, "0");
+  return `${relogio}${sinal}${hh}:${mm}`;
+}
+
 /** Soma dias no calendário de São Paulo — `2026-08-11` + 1 = `2026-08-12`. */
 export function somarDias(dia: string, dias: number) {
   const [ano, mes, data] = dia.split("-").map(Number);

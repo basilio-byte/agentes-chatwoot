@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConexaApiError, ConexaClient } from "./client";
-import { conexaConfigSchema, resolverSala, resolverUnidade } from "./config";
+import { ConexaApiError, ConexaClient, juntarPaginas } from "./client";
+import {
+  conexaConfigSchema,
+  resolverSala,
+  resolverUnidade,
+  salaOuErro,
+} from "./config";
 
 /**
  * Testes de contrato: travam método, rota, query e corpo de cada chamada.
@@ -272,5 +277,90 @@ describe("resolver unidade e sala por nome", () => {
     // Reservar na sala errada por omissão é pior que pedir a sala.
     expect(resolverSala("Sala Executiva", config).roomId).toBe(4140);
     expect(resolverSala(undefined, config).roomId).toBeUndefined();
+  });
+});
+
+/**
+ * "Não achei no cadastro" virou "a sala não existe" na cabeça do agente, e ele
+ * confessou ao cliente ter inventado uma sala real (14/09/2026). A recusa tem de
+ * dizer o motivo verdadeiro e o caminho que funciona.
+ */
+describe("salaOuErro", () => {
+  const semSalas = conexaConfigSchema.parse({
+    baseUrl: "https://seahub.conexa.app/index.php/api/v2",
+  });
+
+  it("cadastro vazio: diz que falta configuração, não que a sala não existe", () => {
+    const r = salaOuErro("Sala Ariano", semSalas) as { erro: string; comoResolver: string };
+
+    expect(r.erro).toContain("vazio");
+    expect(r.erro).toContain("NÃO quer dizer que a sala não existe");
+    expect(r.comoResolver).toContain("salaId");
+  });
+
+  it("nome fora do cadastro devolve os nomes que existem, sem negar a sala", () => {
+    const r = salaOuErro("Sala Ariano", config) as { erro: string; salasCadastradas: string[] };
+
+    expect(r.salasCadastradas).toEqual(["Sala Executiva"]);
+    expect(r.erro).toContain("NÃO quer dizer que a sala não existe");
+  });
+
+  it("o salaId da agenda funciona sem cadastro nenhum", () => {
+    expect(salaOuErro("2107", semSalas)).toEqual({ roomId: 2107 });
+    expect(salaOuErro(2107, semSalas)).toEqual({ roomId: 2107 });
+  });
+
+  it("sem sala pedida, sem filtro", () => {
+    expect(salaOuErro(undefined, semSalas)).toEqual({ roomId: undefined });
+  });
+});
+
+/**
+ * Parar na primeira página em silêncio foi o defeito da agenda de salas: lista
+ * cortada lida como agenda completa.
+ */
+describe("juntarPaginas", () => {
+  /** Uma listagem falsa com páginas destes tamanhos, na ordem. */
+  const listagem = (tamanhos: number[]) => {
+    const pedidos: { offset: number; limit: number }[] = [];
+    const buscar = async (p: { offset: number; limit: number }) => {
+      pedidos.push(p);
+      const i = pedidos.length - 1;
+      const n = Math.min(tamanhos[i] ?? 0, p.limit);
+      return {
+        itens: Array.from({ length: n }, (_, k) => p.offset + k),
+        temMais: i < tamanhos.length - 1,
+      };
+    };
+    return { buscar, pedidos };
+  };
+
+  it("junta todas as páginas e avança o offset pelo que já veio", async () => {
+    const { buscar, pedidos } = listagem([50, 50, 7]);
+
+    const r = await juntarPaginas(buscar, { porPagina: 50, teto: 500 });
+
+    expect(r.completo).toBe(true);
+    expect(r.itens).toHaveLength(107);
+    expect(pedidos.map((p) => p.offset)).toEqual([0, 50, 100]);
+  });
+
+  it("no teto, para e diz que não está completo", async () => {
+    const { buscar, pedidos } = listagem([50, 50, 50]);
+
+    const r = await juntarPaginas(buscar, { porPagina: 50, teto: 80 });
+
+    expect(r.completo).toBe(false);
+    expect(r.itens).toHaveLength(80);
+    // A última página pede só o que falta para o teto.
+    expect(pedidos.map((p) => p.limit)).toEqual([50, 30]);
+  });
+
+  it("página vazia dizendo que há mais não vira laço sem fim", async () => {
+    const buscar = async () => ({ itens: [] as number[], temMais: true });
+
+    const r = await juntarPaginas(buscar, { porPagina: 50, teto: 100 });
+
+    expect(r).toEqual({ itens: [], completo: false });
   });
 });

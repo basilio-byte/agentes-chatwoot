@@ -113,3 +113,41 @@ export function resolverSala(
   const achada = config.salas.find((s) => s.nome.trim().toLowerCase() === alvo);
   return { roomId: achada?.roomId, nomes };
 }
+
+/**
+ * A sala pedida, ou uma recusa que diz a verdade sobre o motivo.
+ *
+ * ⚠ **"Não achei no cadastro" NÃO é "não existe".** Não há `GET /rooms`, então o
+ * cadastro é a única lista de nomes que temos — e ele pode estar vazio, como
+ * estava em produção em 14/09/2026. A mensagem antiga ("não é uma sala
+ * cadastrada", com a lista de opções vazia) fez o agente concluir que tinha
+ * inventado uma sala que aparecia na própria agenda do Conexa: pediu desculpas
+ * ao cliente, escreveu "inventei" na nota da equipe e transferiu para o colega
+ * errado. É a armadilha da lista vazia do Google — vazio pede configuração.
+ *
+ * O caminho que funciona sem cadastro é o id: toda reserva listada traz
+ * `salaId`, e `resolverSala` já aceita número.
+ */
+export function salaOuErro(
+  termo: string | number | undefined,
+  config: ConexaConfig,
+):
+  | { roomId?: number }
+  | { erro: string; salasCadastradas?: string[]; comoResolver: string } {
+  const { roomId, nomes } = resolverSala(termo, config);
+  if (roomId || termo === undefined || termo === "") return { roomId };
+
+  if (!nomes.length) {
+    return {
+      erro: `Não dá para achar a sala pelo nome "${termo}": o cadastro de salas da configuração do Conexa está vazio. Isso NÃO quer dizer que a sala não existe.`,
+      comoResolver:
+        "Use o número em salaId que aparece nas reservas de conexa_listar_reservas.",
+    };
+  }
+  return {
+    erro: `"${termo}" não está no cadastro de salas da configuração do Conexa. Isso NÃO quer dizer que a sala não existe.`,
+    salasCadastradas: nomes,
+    comoResolver:
+      "Use um dos nomes cadastrados, ou o número em salaId que aparece nas reservas de conexa_listar_reservas.",
+  };
+}

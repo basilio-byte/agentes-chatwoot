@@ -28,6 +28,33 @@ export type Pagina<T> = {
   temMais: boolean;
 };
 
+/**
+ * Percorre as páginas de uma listagem até o fim, ou até o teto.
+ *
+ * ⚠ **Parar na primeira página em silêncio foi defeito em produção.** A agenda
+ * de salas pedia 25 reservas e jogava fora o `hasNext`: em 14/09/2026 o dia
+ * seguinte voltou com exatamente 25, e o agente ofereceu ao cliente horários
+ * "livres" deduzidos de uma lista cortada. Quando o teto morde, `completo` diz
+ * isso — e quem chama tem de repassar ao modelo.
+ */
+export async function juntarPaginas<T>(
+  buscar: (pagina: { offset: number; limit: number }) => Promise<Pagina<T>>,
+  { porPagina, teto }: { porPagina: number; teto: number },
+): Promise<{ itens: T[]; completo: boolean }> {
+  const itens: T[] = [];
+  while (itens.length < teto) {
+    const pagina = await buscar({
+      offset: itens.length,
+      limit: Math.min(porPagina, teto - itens.length),
+    });
+    itens.push(...pagina.itens);
+    if (!pagina.temMais) return { itens, completo: true };
+    // Página vazia dizendo que há mais seria laço sem fim: conta como incompleta.
+    if (!pagina.itens.length) return { itens, completo: false };
+  }
+  return { itens, completo: false };
+}
+
 type Filtros = Record<string, unknown>;
 
 export class ConexaClient {
@@ -341,6 +368,7 @@ export class ConexaClient {
     bookingDateTimeFrom?: string;
     bookingDateTimeTo?: string;
     limit?: number;
+    offset?: number;
   }) {
     const { companyId, customerId, roomId, ...resto } = filtros;
     return this.listar<Record<string, unknown>>("/room/bookings", {
