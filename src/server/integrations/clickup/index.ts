@@ -13,8 +13,14 @@ import {
   paraTimestampDoFimDoDia,
   resolverMembro,
 } from "./formatacao";
-import { nomesDisponiveis, prepararCampos } from "./campos";
-import { PRIORIDADES, type ClickUpSpace, type ClickUpUsuario } from "./tipos";
+import { nomesDisponiveis, prepararCampos, resolverCampo } from "./campos";
+import { mesmoTelefone, variacoesDoTelefone } from "./telefone";
+import {
+  PRIORIDADES,
+  type ClickUpSpace,
+  type ClickUpTarefa,
+  type ClickUpUsuario,
+} from "./tipos";
 
 /** Teto por resposta: lista longa demais só gasta token sem ajudar o modelo. */
 const LIMITE_RESULTADOS = 25;
@@ -470,6 +476,156 @@ export const clickupIntegration: IntegrationDefinition = {
           total: filtradas.length,
           truncado: filtradas.length > LIMITE_RESULTADOS,
           tarefas: filtradas.slice(0, LIMITE_RESULTADOS).map(formatarTarefa),
+        };
+      },
+    },
+
+    {
+      name: "clickup_buscar_tarefas_por_telefone",
+      categoria: "Tarefas",
+      description:
+        "Procura tarefas pelo telefone do cliente gravado num campo das listas informadas (padrão: CELULAR). Passe o número como vier — com ou sem +55, espaço ou o nono dígito: as variações de formato são testadas aqui, numa chamada só, e o número gravado em cada tarefa é conferido. Devolve da tarefa mais recente para a mais antiga (pela criação), com lista, status e datas. Sem resultado quer dizer que nenhuma tarefa DESSAS listas tem o número naquele campo, não que o cliente não exista.",
+      inputSchema: z.object({
+        telefone: z.string().min(8).describe("Telefone do cliente, em qualquer formato."),
+        listas: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(5)
+          .describe('Listas onde procurar: apelido cadastrado ("CRM Comercial") ou id.'),
+        campo: z
+          .string()
+          .optional()
+          .describe("Nome do campo de telefone. Omita para usar CELULAR."),
+        ultimosDias: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe("Só tarefas criadas ou atualizadas nos últimos N dias. Omita para qualquer data."),
+      }),
+      async execute(entrada, ctx) {
+        const args = entrada as {
+          telefone: string;
+          listas: string[];
+          campo?: string;
+          ultimosDias?: number;
+        };
+        const { cliente, config } = contexto(ctx);
+
+        const variacoes = variacoesDoTelefone(args.telefone);
+        if (variacoes.length === 0) {
+          return {
+            erro: `"${args.telefone}" não parece um telefone brasileiro com DDD — nada foi buscado.`,
+          };
+        }
+        const nomeDoCampo = args.campo?.trim() || "CELULAR";
+
+        // O campo é resolvido por lista: o mesmo nome pode ter id diferente em
+        // cada uma. Listas que dividem o campo vão juntas na mesma consulta.
+        const listasPorCampo = new Map<string, string[]>();
+        for (const termo of new Set(args.listas)) {
+          const { listaId, apelidos } = resolverLista(termo, config);
+          if (!listaId) {
+            return { erro: `Lista "${termo}" não encontrada.`, listasCadastradas: apelidos };
+          }
+          const { fields } = await cliente.listarCamposPersonalizados(listaId);
+          const achado = resolverCampo(nomeDoCampo, fields);
+          if (achado.tipo !== "achado") {
+            return {
+              erro: `A lista "${termo}" não tem um campo "${nomeDoCampo}" único — nada foi buscado.`,
+              camposDisponiveis: nomesDisponiveis(fields),
+            };
+          }
+          listasPorCampo.set(achado.campo.id, [
+            ...(listasPorCampo.get(achado.campo.id) ?? []),
+            listaId,
+          ]);
+        }
+
+        const consultas = [...listasPorCampo].flatMap(([campoId, listIds]) =>
+          variacoes.map((valor) => ({ campoId, listIds, valor })),
+        );
+        const achadas = new Map<string, { tarefa: ClickUpTarefa; gravadoComo: string }>();
+        // Voltaram da busca, mas o número gravado nelas não é este.
+        const comOutroNumero = new Set<string>();
+        const semOCampo = new Set<string>();
+
+        // De quatro em quatro: são até dezesseis formatos por campo, e o limite
+        // de requisições do token é dividido com todo o atendimento.
+        for (let i = 0; i < consultas.length; i += 4) {
+          await Promise.all(
+            consultas.slice(i, i + 4).map(async ({ campoId, listIds, valor }) => {
+              const { tasks } = await cliente.buscarTarefas(config.teamId, {
+                listIds,
+                spaceIds:
+                  config.spaceIdsPermitidos.length > 0
+                    ? config.spaceIdsPermitidos
+                    : undefined,
+                incluirFechadas: true,
+                camposPersonalizados: [{ field_id: campoId, operator: "=", value: valor }],
+              });
+              // O filtro casa trecho do texto e, com id de campo que não
+              // reconhece, é ignorado sem erro. Quem decide é o número gravado
+              // na task, nunca o fato de ela ter voltado.
+              for (const tarefa of tasks) {
+                if (achadas.has(tarefa.id)) continue;
+                const gravado = tarefa.custom_fields?.find((c) => c.id === campoId)?.value;
+                if (typeof gravado !== "string") {
+                  semOCampo.add(tarefa.id);
+                } else if (mesmoTelefone(gravado, args.telefone)) {
+                  achadas.set(tarefa.id, { tarefa, gravadoComo: gravado });
+                } else {
+                  comOutroNumero.add(tarefa.id);
+                }
+              }
+            }),
+          );
+        }
+
+        // A janela é conta de data, e conta de data não fica para o modelo.
+        const limite = args.ultimosDias ? Date.now() - args.ultimosDias * 86_400_000 : null;
+        const todas = [...achadas.values()].sort(
+          (a, b) => Number(b.tarefa.date_created ?? 0) - Number(a.tarefa.date_created ?? 0),
+        );
+        const ordenadas =
+          limite === null
+            ? todas
+            : todas.filter(
+                ({ tarefa }) =>
+                  Math.max(Number(tarefa.date_created ?? 0), Number(tarefa.date_updated ?? 0)) >=
+                  limite,
+              );
+        const foraDaJanela = todas.length - ordenadas.length;
+
+        return {
+          total: ordenadas.length,
+          tarefas: ordenadas.slice(0, LIMITE_RESULTADOS).map(({ tarefa, gravadoComo }) => ({
+            ...formatarTarefa(tarefa),
+            criadaEm: deTimestamp(tarefa.date_created),
+            atualizadaEm: deTimestamp(tarefa.date_updated),
+            // Diagnóstico: como o número estava gravado na task.
+            telefoneGravadoComo: gravadoComo,
+          })),
+          ...(foraDaJanela > 0 ? { foraDaJanela } : {}),
+          ...(comOutroNumero.size + semOCampo.size > 0
+            ? {
+                descartadas: {
+                  comOutroNumero: comOutroNumero.size,
+                  semOCampoNaResposta: semOCampo.size,
+                },
+              }
+            : {}),
+          ...(ordenadas.length === 0
+            ? {
+                observacao:
+                  semOCampo.size > 0
+                    ? "O ClickUp devolveu tarefas sem o valor do campo para conferir, e por segurança nenhuma foi considerada. Não grave nada com base nesta busca."
+                    : foraDaJanela > 0
+                      ? `Há ${foraDaJanela} tarefa(s) com esse telefone, mas nenhuma criada ou atualizada nos últimos ${args.ultimosDias} dias. Não grave nada nelas.`
+                      : "Nenhuma tarefa dessas listas tem esse telefone no campo. Não conclua que o cliente não existe em outro lugar.",
+              }
+            : {}),
         };
       },
     },

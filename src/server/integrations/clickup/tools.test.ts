@@ -152,3 +152,108 @@ describe("preencher campos numa tarefa existente", () => {
     expect(chamadas.some((c) => c.method === "POST")).toBe(false);
   });
 });
+
+describe("buscar tarefas por telefone", () => {
+  const CELULAR = { id: "f-cel", name: "CELULAR", type: "phone" };
+  const tarefa = (id: string, criada: number, celular?: string) => ({
+    id,
+    name: `Tarefa ${id}`,
+    date_created: String(criada),
+    list: { id: "l1" },
+    ...(celular === undefined ? {} : { custom_fields: [{ id: "f-cel", value: celular }] }),
+  });
+
+  it("⚠ só devolve a task cujo número gravado é o mesmo — o filtro da API casa trecho", async () => {
+    stub((rota) => {
+      if (rota.includes("/field")) return { fields: [CELULAR] };
+      // A mesma resposta para todo formato procurado, com o número de outra
+      // pessoa e uma task sem o valor do campo: é o que volta quando o filtro
+      // casa trecho ou é ignorado.
+      return {
+        tasks: [
+          tarefa("t-certa", 2, "+55 84 87654321"),
+          tarefa("t-outro-ddd", 3, "+55 11 987654321"),
+          tarefa("t-sem-campo", 4),
+        ],
+      };
+    });
+
+    const r = (await tool("clickup_buscar_tarefas_por_telefone").execute(
+      { telefone: "+5584987654321", listas: ["l1"] },
+      ctx,
+    )) as {
+      total: number;
+      tarefas: { telefoneGravadoComo: string }[];
+      descartadas: { comOutroNumero: number; semOCampoNaResposta: number };
+    };
+
+    expect(r.total).toBe(1);
+    expect(JSON.stringify(r.tarefas)).toContain("t-certa");
+    expect(JSON.stringify(r.tarefas)).not.toContain("t-outro-ddd");
+    expect(r.tarefas[0].telefoneGravadoComo).toBe("+55 84 87654321");
+    expect(r.descartadas).toEqual({ comOutroNumero: 1, semOCampoNaResposta: 1 });
+
+    const busca = chamadas.find((c) => c.url.startsWith("/team/team1/task"));
+    expect(decodeURIComponent(busca?.url ?? "")).toContain('"field_id":"f-cel","operator":"="');
+  });
+
+  it("resposta sem o valor do campo não vira task achada — nada para gravar", async () => {
+    stub((rota) => {
+      if (rota.includes("/field")) return { fields: [CELULAR] };
+      return { tasks: [tarefa("t1", 1)] };
+    });
+
+    const r = (await tool("clickup_buscar_tarefas_por_telefone").execute(
+      { telefone: "+5584987654321", listas: ["l1"] },
+      ctx,
+    )) as { total: number; observacao: string };
+
+    expect(r.total).toBe(0);
+    expect(r.observacao).toContain("Não grave nada");
+  });
+
+  it("⚠ janela de dias: task antiga com o mesmo número fica de fora — atualizada recente conta", async () => {
+    const dia = 86_400_000;
+    stub((rota) => {
+      if (rota.includes("/field")) return { fields: [CELULAR] };
+      return {
+        tasks: [
+          tarefa("t-maio", Date.now() - 120 * dia, "+55 84 987654321"),
+          {
+            ...tarefa("t-velha-mexida", Date.now() - 90 * dia, "+55 84 987654321"),
+            date_updated: String(Date.now() - dia),
+          },
+          tarefa("t-hoje", Date.now() - 2 * dia, "+55 84 987654321"),
+        ],
+      };
+    });
+
+    const r = (await tool("clickup_buscar_tarefas_por_telefone").execute(
+      { telefone: "+5584987654321", listas: ["l1"], ultimosDias: 30 },
+      ctx,
+    )) as { total: number; tarefas: unknown[]; foraDaJanela: number };
+
+    expect(r.total).toBe(2);
+    // Da mais recente para a mais antiga, pela criação.
+    expect(JSON.stringify(r.tarefas[0])).toContain("t-hoje");
+    expect(JSON.stringify(r.tarefas)).toContain("t-velha-mexida");
+    expect(JSON.stringify(r.tarefas)).not.toContain("t-maio");
+    expect(r.foraDaJanela).toBe(1);
+  });
+
+  it("só tasks fora da janela: nada para gravar, e o motivo aparece", async () => {
+    const dia = 86_400_000;
+    stub((rota) => {
+      if (rota.includes("/field")) return { fields: [CELULAR] };
+      return { tasks: [tarefa("t-maio", Date.now() - 120 * dia, "+55 84 987654321")] };
+    });
+
+    const r = (await tool("clickup_buscar_tarefas_por_telefone").execute(
+      { telefone: "+5584987654321", listas: ["l1"], ultimosDias: 30 },
+      ctx,
+    )) as { total: number; observacao: string };
+
+    expect(r.total).toBe(0);
+    expect(r.observacao).toContain("nenhuma criada ou atualizada nos últimos 30 dias");
+  });
+});

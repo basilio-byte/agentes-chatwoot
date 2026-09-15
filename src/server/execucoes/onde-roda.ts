@@ -31,4 +31,6 @@ export const ONDE_RODA: Record<RunSource, "painel" | "worker"> = {
   // saber qual, fica do lado que nunca encerra um turno vivo — julgada só pela
   // idade. O preço é o zumbi de um worker morto esperar essa idade para fechar.
   [RunSource.INTERNO]: "painel",
+  // Sai da fila do gatilho de conversa, como o agendamento.
+  [RunSource.CONVERSA_ENCERRADA]: "worker",
 };

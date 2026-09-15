@@ -102,6 +102,17 @@ function idDaOpcao(
   const achada = opcoes.find((o) => normalizar(rotuloDaOpcao(o)) === alvo);
   if (achada) return { ok: true, id: achada.id };
 
+  // "7" para a opção "07": a "Nota de atendimento" do CRM Comercial tem opções
+  // de "00" a "10", e o modelo escreve a nota como número. Só casa quando UMA
+  // opção tem aquele valor — senão devolve a lista, como antes.
+  if (/^\d+$/.test(termo.trim())) {
+    const mesmoNumero = opcoes.filter((o) => {
+      const rotulo = rotuloDaOpcao(o).trim();
+      return /^\d+$/.test(rotulo) && Number(rotulo) === Number(termo);
+    });
+    if (mesmoNumero.length === 1) return { ok: true, id: mesmoNumero[0].id };
+  }
+
   const rotulos = opcoes.map(rotuloDaOpcao).filter(Boolean);
   return {
     ok: false,

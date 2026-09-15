@@ -67,6 +67,8 @@ export type ClickUpTarefa = {
   folder?: { id: string; name?: string };
   space?: { id: string; name?: string };
   parent?: string | null;
+  /** O valor de cada campo personalizado — vem na listagem e no detalhe. */
+  custom_fields?: Array<{ id: string; value?: unknown }>;
 };
 
 export type ClickUpComentario = {

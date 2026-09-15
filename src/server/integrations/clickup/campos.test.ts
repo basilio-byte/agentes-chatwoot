@@ -122,6 +122,25 @@ describe("converterValor", () => {
     expect(r.ok === false && r.motivo).toContain("Mensal, Anual");
   });
 
+  it("opção numérica com zero à esquerda aceita o número puro", () => {
+    // A "Nota de atendimento" do CRM Comercial tem opções "00" a "10".
+    const nota = campo({
+      name: "Nota de atendimento",
+      type: "drop_down",
+      type_config: {
+        options: Array.from({ length: 11 }, (_, i) => ({
+          id: `nota-${i}`,
+          name: String(i).padStart(2, "0"),
+        })),
+      },
+    });
+
+    expect(converterValor(nota, "7")).toEqual({ ok: true, valor: "nota-7" });
+    expect(converterValor(nota, 10)).toEqual({ ok: true, valor: "nota-10" });
+    expect(converterValor(nota, "07")).toEqual({ ok: true, valor: "nota-7" });
+    expect(converterValor(nota, "11").ok).toBe(false);
+  });
+
   it("labels aceita um ou vários e usa 'label' como rótulo", () => {
     expect(converterValor(de("Etiquetas"), "VIP")).toEqual({
       ok: true,

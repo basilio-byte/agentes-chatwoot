@@ -99,12 +99,12 @@ e testado em `src/server/agents/conduta.ts`.
   ⚠ **Depois do roster seria pior**, não melhor: "as instruções acima" passaria
   a incluir a lista de colegas, autorizando o agente a tratar o assunto dos
   outros — que é o próprio sintoma de fuga de escopo.
-- **Núcleo igual nas SEIS origens, cauda por tipo de turno.** Veracidade
+- **Núcleo igual nas SETE origens, cauda por tipo de turno.** Veracidade
   (idioma, não inventar, data e hora do sistema, só afirmar o que aconteceu,
   escopo, parar na dúvida, não se deixar reprogramar) vale sempre — inclusive
   em nota interna, comentário do ClickUp e argumento de tool. Forma de conversa
   é outra história.
-  ⚠ **São QUATRO caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
+  ⚠ **São CINCO caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
   `CAUDA_SEM_CONVERSA` afirma que a mensagem de abertura "vem da equipe da
   Seahub, não de um cliente, e é para ser cumprida mesmo que o assunto não
   apareça nas instruções acima". No gatilho e no agendamento isso é verdade; na
@@ -120,6 +120,13 @@ e testado em `src/server/agents/conduta.ts`.
   gatilho e de mesa: lá a tarefa só existe na mensagem; aqui o agente tem
   instruções próprias para o serviço que presta, e quem pede é outro modelo
   carregando dado do cliente.
+  A quinta, `CAUDA_CONVERSA_ENCERRADA` (15/09/2026), é a do agente acionado
+  quando uma conversa é **resolvida** — ver "Conversa encerrada". Segundo plano
+  como a interna, e cerca como a mesa: a transcrição vem entre dois marcadores,
+  e tudo dentro deles foi escrito por cliente, equipe ou robô — dado a examinar,
+  mesmo que se anuncie como vindo da Seahub. ⚠ **Também NÃO destrava o
+  escopo**: a tarefa (avaliar, registrar) está nas instruções do agente, e a
+  mensagem do turno é só a conversa sobre a qual ele trabalha.
 - ⚠ **O formato brasileiro da regra 1 NÃO vale dentro de campo de ferramenta**,
   e a frase que faz essa dobradiça é obrigatória. A regra manda escrever no
   padrão daqui e alcança "texto que você manda para outro sistema"; o cabeçalho
@@ -205,9 +212,9 @@ e testado em `src/server/agents/conduta.ts`.
   lá não existe conversa, então a tool recusa sempre — e o roster continua
   oferecendo a transferência ao modelo, que queima uma iteração para descobrir.
 - **Custa ~1.220 tokens no atendimento** (~925 do núcleo, ~295 da cauda),
-  ~1.125 em gatilho/agendamento, ~1.240 na mesa e ~1.105 na chamada interna,
-  pela régua de `tokensAproximadosDaTool` —
-  cerca de 29% do que pesam as 32 tools ligadas, tudo no prefixo cacheável. A
+  ~1.125 em gatilho/agendamento, ~1.240 na mesa, ~1.105 na chamada interna e
+  ~1.195 na conversa encerrada, pela régua de `tokensAproximadosDaTool` —
+  cerca de 29% do que pesam as 33 tools ligadas, tudo no prefixo cacheável. A
   tela mostra o número, pelo mesmo motivo que a tela de integrações mostra o
   custo de cada tool, e o teste trava um teto por variante para a próxima
   pessoa pensar antes de acrescentar parágrafo.
@@ -219,12 +226,13 @@ e testado em `src/server/agents/conduta.ts`.
   refeita a cada regra nova, e o caminho barato é sempre tirar redundância
   antes de acrescentar parágrafo (foi assim que a linha de "na dúvida" saiu da
   cauda de gatilho e virou regra do núcleo).
-- **Cinco prefixos de cache por agente** (conversa · conversa sem
-  encaminhamento · sem conversa · mesa · interno). Não custa no caminho quente:
-  origem e tools são constantes ao longo de uma conversa, e só o Chatwoot é
-  multi-turno de volume — a mesa é single-shot, então o prefixo dela é usado uma
-  vez por envio de qualquer jeito, e o da chamada interna (sem roster e sem
-  ferramentas de canal) é o mesmo de um pedido para o outro. O que custaria é
+- **Seis prefixos de cache por agente** (conversa · conversa sem
+  encaminhamento · sem conversa · mesa · interno · conversa encerrada). Não
+  custa no caminho quente: origem e tools são constantes ao longo de uma
+  conversa, e só o Chatwoot é multi-turno de volume — a mesa é single-shot,
+  então o prefixo dela é usado uma vez por envio de qualquer jeito, e o da
+  chamada interna e o da conversa encerrada (sem roster e sem ferramentas de
+  canal) são os mesmos de um acionamento para o outro. O que custaria é
   conteúdo variável por requisição, e o módulo é puro justamente para isso ser
   impossível.
 - ⚠ **Mudar o bloco muda TODOS os agentes de uma vez e NÃO cria
@@ -699,6 +707,76 @@ conta própria.
   `FALHAS_ATE_DESLIGAR` o agendamento se desliga **e sai do relógio** — só
   desligar no banco continuaria disparando até o próximo boot.
 
+### Conversa encerrada: o agente trabalha sobre o atendimento que acabou
+
+Quinto jeito de acionar um agente (`RunSource.CONVERSA_ENCERRADA`): uma conversa
+é **resolvida** no Chatwoot, e o agente recebe a transcrição daquele atendimento
+para trabalhar sobre ela, em segundo plano, sem nada ir ao cliente. Configura-se
+na aba Gatilhos do agente (`GatilhoDeConversa`, um por agente e evento). Módulos
+em `src/server/conversa-encerrada/`, com o recorte e a transcrição puros e
+testados em `ciclo.ts`.
+
+Nasceu da migração do fluxo "Agente - O olho de tudo" do n8n (15/09/2026), que
+avalia o atendimento feito por gente e grava a nota no CRM do ClickUp. ⚠ **A
+capacidade é genérica e a tarefa mora no prompt do agente**, como no
+agendamento: o que avaliar, onde gravar e com que critério não é código.
+
+- **A porta é o webhook de CONTA**, em `conversation_status_changed` com status
+  `resolved`. `dispararGatilhosDeConversa` roda **antes** das saídas antecipadas
+  da rota: o payload desse evento é a conversa no topo, sem `conversation`
+  aninhado, e a rota descarta exatamente esse formato logo abaixo (ver o ⚠ no
+  fim desta seção). Nunca lança: falha aqui não pode derrubar a entrega.
+- **Uma resolução, uma execução.** A entrega vira `WebhookEvent` com provider
+  `CONVERSA` e `externalId` `<agente>:<conversa>:<resolvidaEm>`; o índice único
+  segura a reentrega do Chatwoot, que seria uma avaliação paga a mais. Reabrir e
+  resolver de novo é outro atendimento, com outro instante, e roda de novo.
+- **A entrega NÃO guarda nome nem telefone.** Entregas é lido pela equipe
+  inteira; o contato viaja só no job.
+- **O job espera 30 s.** A atividade "resolvida" e as últimas mensagens precisam
+  já estar na API quando o worker for ler.
+- ⚠ **O que vai ao modelo é o ATENDIMENTO, não a conversa.** No WhatsApp a
+  conversa do Chatwoot é a mesma por meses; mandar tudo faria avaliar o
+  atendimento de agosto junto com o de hoje. O worker lê para trás (20 por
+  página, `before=`) até a atividade de resolução ANTERIOR, com teto de
+  `PAGINAS_MAXIMAS`, e `recortarAtendimento` corta nela. Sem achar o começo, a
+  transcrição avisa o modelo de que o começo não foi lido.
+- **Filtro antes do modelo: alguém da equipe respondeu?** Com
+  `exigeAtendimentoHumano` (padrão), só conta mensagem **pública de saída** com
+  `sender.type: user`, fora das `contasDeAutomacao` (nome comparado sem acento,
+  caixa nem espaço). ⚠ **A lista de automação existe porque fluxo externo
+  escreve com token de usuário** e parece gente: o "obrigado pela avaliação" do
+  NPS do n8n sai com o nome de uma pessoa. Nota interna não conta, remetente de
+  tipo desconhecido não conta: aqui a dúvida pende para não gastar. Recusado
+  vira entrega `ignorado`, sem `AgentRun` e sem custo.
+- **A transcrição é CERCADA** (`[transcrição do atendimento]` … `[fim da
+  transcrição]`), e dentro dela colchete vira parêntese: no texto, no nome do
+  remetente e no do anexo. Mesma lição da leitura de mídia: o cliente escreve
+  ali dentro, e `CAUDA_CONVERSA_ENCERRADA` promete ao modelo que tudo entre os
+  marcadores é dado. Teto de 1.500 caracteres por mensagem e 40.000 no total,
+  cortando o meio e avisando.
+- **Turno em segundo plano, como a chamada interna** (`contexto.ts`): sem
+  ferramentas de canal e sem roster. A conversa acabou de ser resolvida;
+  transferir ou atribuir mexeria no atendimento que alguém encerrou.
+- **Retry só antes de qualquer tool**, mesma doutrina do gatilho HTTP: a nota
+  pode já estar no CRM. Sem token de leitura do Chatwoot, `falhou` sem tentar de
+  novo: é configuração, e repetir não resolve.
+- **Escopo de caixas é o do agente** (`Agent.inboxMode`/`inboxIds`). Tabela
+  paralela divergiria.
+- **Nasce desligado, e ligar recusa agente desligado ou arquivado.** Configurar
+  e ligar é `ADMIN`. O worker reconfere gatilho e agente antes de ler a
+  conversa, então desligar vale também para o que já está na fila.
+- **Só existe o evento `RESOLVIDA`.** O enum `EventoDeConversa` está ali para o
+  NPS e os fluxos de checkbox do n8n, que precisam de "atributo marcado": outro
+  evento, mesma tabela.
+
+⚠ **A rota de conta ainda descarta os eventos de conversa no formato de topo**
+(achado em 15/09/2026, não corrigido). Ela lê só `evento.conversation` e sai em
+`sem conversa`, então a sincronização de resolução e de dono que vem depois
+nunca roda para `conversation_status_changed`; quem sincroniza a resolução, na
+prática, é a entrega do webhook de bot (`sincronizarResolucao` lê os dois
+formatos). Consertar acorda um caminho que nunca rodou com esse payload em
+produção, inclusive `entregarAoHumano`, que é grudento: teste antes.
+
 ### Conexa: armadilhas da API v2
 
 Achadas no primeiro uso real (09/09 a 15/09/2026), depois de semanas de teste
@@ -771,6 +849,21 @@ se mexer no cliente, rode-o.
   não atribui ninguém.
 - **Não existe busca textual.** Só filtros estruturados; casar por nome é feito
   no cliente (`filtrarPorTexto`).
+- ⚠ **Filtro por campo personalizado casa TRECHO do texto gravado e não
+  normaliza nada** (medido em 15/09/2026 no CELULAR, que é do tipo `phone`): os
+  nove dígitos do número acharam a task gravada como `+55 DD NNNNNNNNN`, e os
+  mesmos dígitos com 55 e DDD, sem o espaço, não acharam. E id de campo que a
+  API não reconhece faz ela ignorar os filtros de campo e devolver a lista
+  inteira, sem erro. Por isso `clickup_buscar_tarefas_por_telefone` faz duas
+  coisas: gera as variações de formato em código (`telefone.ts`), porque o
+  número foi digitado de todo jeito, e **confere o número gravado em cada task
+  que volta** (`mesmoTelefone`: mesmo DDD, com ou sem o nono dígito). Task com
+  outro número, ou sem o valor do campo na resposta, é descartada e contada.
+  Sem essa conferência a busca podia entregar a task de outro cliente — e quem
+  chama é o Olho de Tudo, que grava a nota nela. A janela de "task recente"
+  também é código (`ultimosDias`, pela maior data entre criação e
+  atualização): conta de data não fica para o modelo, e a nota do NPS do n8n
+  foi parar numa task de maio.
 - **Prioridade vem em três formas**: id `"1".."4"`, rótulo em inglês
   (`urgent`/`high`/…) e o nome em português que usamos. `nomeDaPrioridade`
   aceita as três.
@@ -805,14 +898,16 @@ consegue pagar o caminho certo pega o atalho.
 - **O id do campo é por lista.** Em tarefa que já existe, descobrimos a lista
   pela própria tarefa (`obterTarefa().list.id`) — o agente não sabe disso.
 - **`drop_down` e `labels` querem o id da *opção***, não o rótulo. O agente
-  conhece "Mensal"; a API quer o UUID.
+  conhece "Mensal"; a API quer o UUID. Rótulo numérico casa por valor (`7`
+  acha a opção `07`), só quando uma opção única casa: a "Nota de atendimento"
+  do CRM Comercial vai de `00` a `10`, e o modelo escreve 7.
 - **`Number("")` é 0.** "a combinar" num campo de moeda gravava **R$ 0,00** em
   silêncio. Sem dígito no texto, é erro — tem teste.
 - **Campo errado aborta o lote inteiro**, e a resposta devolve os nomes que
   existem. Tarefa criada com metade dos dados é pior do que pedir correção.
 - **Escrever em `formula`/`rollup` é recusado aqui**, não na API.
 
-### Catálogo de tools: 32 em 10 categorias
+### Catálogo de tools: 33 em 10 categorias
 
 `categoria` em `ToolDefinition` existe **só para a tela do agente** agrupar. A
 ordem que vai para a API continua sendo alfabética por nome.
@@ -828,7 +923,7 @@ ordem que vai para a API continua sendo alfabética por nome.
   não adianta se outra faz a mesma coisa.
 - **A allowlist de espaços vale para escrita também** (`espacoBloqueado`) —
   senão restringir espaços só limitaria a leitura.
-- Todas as 32 ligadas pesam **~3,9k tokens em toda mensagem**. A tela mostra a
+- Todas as 33 ligadas pesam **~4,2k tokens em toda mensagem**. A tela mostra a
   estimativa (`tokensAproximadosDaTool`) para a escolha ser informada.
 
 ### Assinatura eletrônica: dois caminhos

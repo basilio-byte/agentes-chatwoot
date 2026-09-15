@@ -226,6 +226,24 @@ export class ChatwootClient {
     return resposta.payload ?? [];
   }
 
+  /**
+   * Uma página de mensagens, andando para trás a partir de `antesDe`.
+   *
+   * ⚠ A API devolve no máximo 20 mensagens por chamada (conferido em
+   * 15/09/2026). `listarMensagens` lê só a última página, o que basta ao
+   * atendimento, que usa os turnos recentes. Quem precisa do atendimento
+   * inteiro pagina passando o menor id que já leu.
+   */
+  async listarMensagensAntes(conversationId: number, antesDe?: number) {
+    const consulta = antesDe ? `?before=${antesDe}` : "";
+    const resposta = await this.requisitar<{ payload?: MensagemChatwoot[] }>(
+      `/conversations/${conversationId}/messages${consulta}`,
+      {},
+      true,
+    );
+    return resposta.payload ?? [];
+  }
+
   async enviarMensagem(
     conversationId: number,
     conteudo: string,
@@ -423,7 +441,7 @@ export type MensagemChatwoot = {
    * (cliente). Mensagem de atividade vem sem remetente. É o que os prazos da
    * conversa usam para saber se alguém da equipe já respondeu.
    */
-  sender?: { type?: string | null } | null;
+  sender?: { type?: string | null; name?: string | null } | null;
   /**
    * Anexos da mensagem: áudio, imagem, documento, localização.
    *

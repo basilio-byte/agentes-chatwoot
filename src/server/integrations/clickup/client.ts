@@ -32,6 +32,11 @@ export type OpcoesBusca = {
   vencimentoAntesDe?: number;
   vencimentoDepoisDe?: number;
   page?: number;
+  /**
+   * Filtro por valor de campo personalizado. A API compara o valor EXATO — é
+   * por isso que a busca por telefone testa as variações de formato.
+   */
+  camposPersonalizados?: { field_id: string; operator: "="; value: string }[];
 };
 
 /**
@@ -172,6 +177,8 @@ export class ClickUpClient {
       q.set("due_date_lt", String(opcoes.vencimentoAntesDe));
     if (opcoes.vencimentoDepoisDe)
       q.set("due_date_gt", String(opcoes.vencimentoDepoisDe));
+    if (opcoes.camposPersonalizados?.length)
+      q.set("custom_fields", JSON.stringify(opcoes.camposPersonalizados));
 
     return this.requisitar<{ tasks: ClickUpTarefa[] }>(
       `/team/${teamId}/task?${q}`,

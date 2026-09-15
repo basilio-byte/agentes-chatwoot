@@ -10,6 +10,7 @@ import { humanidadeDoDono, podeAgir } from "@/server/integrations/chatwoot/regra
 import { eventoChatwootSchema } from "@/server/integrations/chatwoot/eventos";
 import { entregarAoHumano, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 import { ConversationStatus } from "@/generated/prisma/enums";
+import { dispararGatilhosDeConversa } from "@/server/conversa-encerrada/disparar";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +55,12 @@ export async function POST(req: Request) {
   }
 
   const evento = parsed.data;
+
+  // Antes de tudo o que vem abaixo: a resolução chega com a conversa no TOPO do
+  // payload, sem `conversation` aninhado, e as saídas antecipadas logo abaixo a
+  // descartariam. Nunca lança — ver `conversa-encerrada/disparar.ts`.
+  await dispararGatilhosDeConversa(evento);
+
   const conversa = evento.conversation;
   const conversationId = conversa?.id;
 

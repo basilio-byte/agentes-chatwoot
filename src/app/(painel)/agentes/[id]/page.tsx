@@ -19,6 +19,9 @@ import { resumoDoGatilho } from "@/server/actions/gatilho";
 import { GatilhoDoAgente } from "@/components/gatilho-do-agente";
 import { AgendamentosDoAgente } from "@/components/agendamentos-do-agente";
 import { listarAgendamentos } from "@/server/actions/agendamentos";
+import { GatilhoDeConversaDoAgente } from "@/components/gatilho-de-conversa-do-agente";
+import { resumoDoGatilhoDeConversa } from "@/server/actions/gatilho-de-conversa";
+import { PROVIDER_DA_ENTREGA } from "@/server/conversa-encerrada/evento";
 import { obterConfigChatwoot } from "@/server/integrations/chatwoot/credenciais";
 import { listarIntegracoes } from "@/server/integrations/registry";
 import {
@@ -108,6 +111,13 @@ export default async function AgentePage({
   const urlBaseGatilho = `${protocolo}://${host}/api/webhooks/gatilho/${agente.id}`;
   const resumoGatilho = await resumoDoGatilho(agente.id);
   const agendamentos = await listarAgendamentos(agente.id);
+  const resumoGatilhoDeConversa = await resumoDoGatilhoDeConversa(agente.id);
+  const entregasDeConversa = await db.webhookEvent.findMany({
+    where: { agentId: agente.id, provider: PROVIDER_DA_ENTREGA },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
+  });
   const entregasGatilho = await db.webhookEvent.findMany({
     where: { agentId: agente.id, provider: "TRIGGER" },
     orderBy: { createdAt: "desc" },
@@ -331,7 +341,9 @@ export default async function AgentePage({
             id: "gatilho",
             rotulo: "Gatilhos",
             icone: <Webhook size={15} aria-hidden />,
-            contador: agendamentos.filter((a) => a.enabled).length || undefined,
+            contador:
+              agendamentos.filter((a) => a.enabled).length +
+                (resumoGatilhoDeConversa.enabled ? 1 : 0) || undefined,
             alerta:
               Boolean(resumoGatilho.pausadoAutomaticamenteMotivo) ||
               agendamentos.some((a) => a.pausadoAutomaticamenteMotivo),
@@ -340,6 +352,14 @@ export default async function AgentePage({
                 <AgendamentosDoAgente
                   agentId={agente.id}
                   agendamentos={agendamentos}
+                  agenteAtivo={agente.active}
+                  editavel={editavel}
+                />
+
+                <GatilhoDeConversaDoAgente
+                  agentId={agente.id}
+                  resumo={resumoGatilhoDeConversa}
+                  entregas={entregasDeConversa}
                   agenteAtivo={agente.active}
                   editavel={editavel}
                 />

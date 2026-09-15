@@ -19,6 +19,11 @@ import {
   type JobAgendamento,
 } from "./agendamento";
 import { processarAgendamento } from "./agendamento-worker";
+import {
+  FILA_CONVERSA_ENCERRADA,
+  type JobConversaEncerrada,
+} from "./conversa-encerrada";
+import { processarConversaEncerrada } from "./conversa-encerrada-worker";
 import { executarAgente } from "@/server/agents/runner";
 import {
   clienteDoAgente,
@@ -876,6 +881,7 @@ export type Workers = {
   atendimento: Worker<JobAtendimento>;
   gatilho: Worker<JobGatilho>;
   agendamento: Worker<JobAgendamento>;
+  conversaEncerrada: Worker<JobConversaEncerrada>;
 };
 
 export function iniciarWorker(): Workers {
@@ -935,6 +941,22 @@ export function iniciarWorker(): Workers {
     );
   });
 
+  // Quarta fila, mesmo processo. Concorrência 2 pelo mesmo motivo do
+  // agendamento: ninguém espera por uma conversa que já foi resolvida, e o
+  // atendimento, que tem gente esperando, não pode perder vaga para ela.
+  const workerConversaEncerrada = new Worker<JobConversaEncerrada>(
+    FILA_CONVERSA_ENCERRADA,
+    processarConversaEncerrada,
+    { connection: getRedis(), concurrency: 2 },
+  );
+
+  workerConversaEncerrada.on("failed", (job, erro) => {
+    logger.error(
+      { jobId: job?.id, tentativa: job?.attemptsMade, erro: erro.message },
+      "gatilho de conversa falhou",
+    );
+  });
+
   // O relógio vive no Redis, mas quem sabe o que DEVERIA existir é o Postgres.
   // Sem esta reconciliação, um Redis limpo apagaria todos os agendamentos em
   // silêncio — a tela continuaria mostrando "ligado" e nada dispararia nunca.
@@ -955,5 +977,6 @@ export function iniciarWorker(): Workers {
     atendimento: worker,
     gatilho: workerGatilho,
     agendamento: workerAgendamento,
+    conversaEncerrada: workerConversaEncerrada,
   };
 }

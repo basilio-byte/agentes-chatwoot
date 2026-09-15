@@ -50,11 +50,13 @@ export async function prepararContexto(
 ): Promise<ContextoDoTurno> {
   const tipo = tipoDeTurno(source);
 
-  // Chamada interna: sem ferramenta que fale com o cliente ou passe a conversa
-  // de mãos. Quem roda em segundo plano não é dono do atendimento — ver
-  // `chamada-interna.ts`.
+  // Chamada interna e conversa encerrada: sem ferramenta que fale com o cliente
+  // ou passe a conversa de mãos. Quem roda em segundo plano não é dono do
+  // atendimento — ver `chamada-interna.ts` — e numa conversa resolvida não há
+  // atendimento para passar.
+  const emSegundoPlano = tipo === "interno" || tipo === "encerrada";
   const todas = await resolverToolsDoAgente(agente.id);
-  const resolvidas = tipo === "interno" ? semFerramentasDeCanal(todas) : todas;
+  const resolvidas = emSegundoPlano ? semFerramentasDeCanal(todas) : todas;
   const ferramentas = paraFerramentasOpenAI(resolvidas);
   const modelo = await obterModelo(agente.model);
   const enviarFerramentas =
@@ -64,10 +66,11 @@ export async function prepararContexto(
   // só muda quando alguém mexe na equipe. Se fosse mensagem, ocuparia posição
   // depois do histórico sem ganho nenhum de cache.
   //
-  // Na chamada interna ele não vai: sem ferramenta de transferência, oferecer
-  // colegas seria convite a queimar uma etapa numa tool que ele não tem.
+  // Na chamada interna e na conversa encerrada ele não vai: sem ferramenta de
+  // transferência, oferecer colegas seria convite a queimar uma etapa numa tool
+  // que ele não tem.
   const roster =
-    tipo === "interno"
+    emSegundoPlano
       ? []
       : montarRoster(
           await db.agent.findMany({

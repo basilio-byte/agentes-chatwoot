@@ -178,6 +178,34 @@ export async function obterSegredosDoBot(
 }
 
 /**
+ * Cliente só de LEITURA, com o token de usuário da conta — sem bot nenhum.
+ *
+ * Existe para ler uma conversa de qualquer caixa, inclusive das que não têm
+ * Agent Bot (Recepção, Instagram): é o que o gatilho de conversa encerrada
+ * precisa. Quem o usa não escreve no Chatwoot — escrever com ele sairia com o
+ * token de uma pessoa, não com o do robô.
+ */
+export async function clienteDeLeitura(): Promise<{
+  cliente: ChatwootClient;
+  config: ChatwootConfig;
+} | null> {
+  const [{ config }, daConta] = await Promise.all([
+    obterConfigChatwoot(),
+    obterSegredosDaConta(),
+  ]);
+  if (!config || !daConta.tokenDeLeitura) return null;
+
+  return {
+    cliente: new ChatwootClient(
+      config,
+      daConta.tokenDeLeitura,
+      daConta.tokenDeLeitura,
+    ),
+    config,
+  };
+}
+
+/**
  * Cliente pronto para o agente: junta a config global com o token do bot dele.
  * `null` quando falta qualquer uma das duas pontas.
  */

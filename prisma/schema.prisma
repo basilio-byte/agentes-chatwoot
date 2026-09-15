@@ -165,6 +165,7 @@ model Agent {
   trigger       AgentTrigger?
   schedules     AgentSchedule[]
   prazos        PrazoDeConversa[]
+  gatilhosDeConversa GatilhoDeConversa[]
 
   handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
   handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
@@ -326,6 +327,57 @@ model AgentSchedule {
 
   @@index([agentId])
   @@index([enabled])
+}
+
+/// O que acontece numa conversa do Chatwoot e aciona um agente.
+enum EventoDeConversa {
+  /// A conversa foi resolvida.
+  RESOLVIDA
+}
+
+/// Quando algo acontece numa conversa do Chatwoot, este agente roda sobre ela
+/// em segundo plano, com a transcrição do atendimento.
+///
+/// Nasceu para substituir o "Olho de tudo" do n8n (15/09/2026): toda conversa
+/// resolvida é avaliada e a nota vai para o CRM. Feito para receber outros
+/// eventos — checkbox marcado, para o NPS e o CRM por checkbox — sem refazer a
+/// tabela. Vários por agente, um por evento.
+///
+/// Diferente de `AgentTrigger`: não há sistema externo nem token. Quem avisa é o
+/// webhook de conta do Chatwoot, que já existe e já é assinado.
+///
+/// ⚠ As caixas NÃO moram aqui: vale o escopo do agente (`Agent.inboxMode`), o
+/// mesmo que a aba Canal edita. Duas listas de caixas para o mesmo agente
+/// divergiriam na primeira edição.
+model GatilhoDeConversa {
+  id      String           @id @default(cuid())
+  agentId String
+  evento  EventoDeConversa
+
+  /// Nasce desligado, como todo gatilho.
+  enabled Boolean @default(false)
+
+  /// Só roda se uma pessoa da equipe respondeu ao cliente naquele atendimento.
+  /// Conferido ANTES de chamar o modelo: conversa que só teve robô ou nota
+  /// interna não custa nada.
+  exigeAtendimentoHumano Boolean @default(true)
+
+  /// Nomes de contas do Chatwoot cujas mensagens não contam como pessoa. O n8n
+  /// escreve com o token do Basílio (decisão do usuário, 15/09/2026).
+  contasDeAutomacao String[] @default([])
+
+  ultimaExecucaoEm DateTime?
+  /// `executado` · `ignorado` · `falhou` · `interrompido`.
+  ultimoResultado  String?
+  ultimoDetalhe    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, evento])
+  @@index([evento, enabled])
 }
 
 /// Histórico imutável de prompt. Permite rollback quando um ajuste piora o atendimento.
@@ -562,6 +614,17 @@ enum RunSource {
   /// registrar, e a de gatilho manda escrever para a equipe. E o dinheiro: em
   /// /consumo o serviço interno aparece separado do atendimento que o acionou.
   INTERNO
+
+  /// Uma conversa do Chatwoot foi resolvida e um `GatilhoDeConversa` acionou
+  /// este agente em segundo plano, com a transcrição do atendimento
+  /// (`server/conversa-encerrada/`).
+  ///
+  /// Origem própria porque nenhuma cauda existente é verdade aqui: não há
+  /// cliente lendo (a de conversa mentiria), a tarefa está nas instruções do
+  /// agente e não na mensagem (a de gatilho carimbaria a transcrição inteira
+  /// como "vem da equipe e é para cumprir"), e o corpo da mensagem é conversa de
+  /// terceiro — dado para examinar, nunca ordem.
+  CONVERSA_ENCERRADA
 }
 
 enum RunStatus {
