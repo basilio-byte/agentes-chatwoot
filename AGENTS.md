@@ -729,6 +729,17 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
 - **`criar_reserva` lê a reserva de volta** e devolve a sala e o horário que o
   Conexa gravou: é isso que vai na confirmação ao cliente, nunca o que o agente
   pediu.
+- ⚠ **`conexa_faturar_reserva` decide SE cobra no código, não no modelo**
+  (`faturamento.ts`). Decisão do usuário em 15/09/2026: o agente de Salas de
+  Reunião fatura sozinho a reserva que fecha fora do expediente. Pacote de horas
+  (`deductedFromQuota`) não é cobrado; cancelada e situação fora do vocabulário
+  documentado são recusadas; e antes de criar a cobrança a tool procura, entre as
+  pendentes do cliente, uma que já contenha a venda — o modelo repete chamada, e
+  nada garante que a reserva vire `billed` no mesmo instante. Lista de
+  pendentes que não veio inteira também recusa.
+- ⚠ **O vencimento da cobrança é o dia da reserva.** Sem `dueDate`, o Conexa
+  vence HOJE, e a reserva feita no sábado para segunda nasceria vencida no
+  domingo, com juros antes de o cliente usar a sala.
 - ⚠ **`emailsMessage` e `phones` são substituídos inteiros no PATCH** — quarta
   aparição do campo de terceiro que apaga ao escrever. `atualizar_cliente` lê,
   acrescenta e grava.

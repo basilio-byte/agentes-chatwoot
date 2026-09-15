@@ -282,6 +282,7 @@ export class ConexaClient {
     customerId?: number;
     status?: string;
     limit?: number;
+    offset?: number;
   }) {
     const { companyId, customerId, ...resto } = filtros;
     return this.listar<Record<string, unknown>>("/charges", {

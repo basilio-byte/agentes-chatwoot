@@ -66,6 +66,7 @@ describe("catálogo do Conexa", () => {
         "conexa_criar_reserva",
         "conexa_encerrar_contrato",
         "conexa_enviar_contrato_para_assinatura",
+        "conexa_faturar_reserva",
         "conexa_registrar_lead",
       ].sort(),
     );

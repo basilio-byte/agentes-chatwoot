@@ -336,3 +336,135 @@ describe("clientes", () => {
     expect(r.clientes[0]).toEqual({ id: 1, nome: "Maria" });
   });
 });
+
+describe("conexa_faturar_reserva", () => {
+  const BASE = "/index.php/api/v2";
+  const faturar = () =>
+    tool("conexa_faturar_reserva").execute({ reservaId: 28400 }, ctx()) as Promise<
+      Record<string, unknown>
+    >;
+
+  const reservaDaApi = (extra: Record<string, unknown> = {}) => ({
+    ...reserva(28400),
+    saleId: 190001,
+    status: "notBilled",
+    isBilled: false,
+    canceled: false,
+    startTime: "2026-09-21T16:00:00-03:00",
+    finalTime: "2026-09-21T17:00:00-03:00",
+    ...extra,
+  });
+
+  const cobrancaDaApi = {
+    chargeId: 7001,
+    status: "unpaid",
+    amount: 60,
+    currentAmount: 60,
+    dueDate: "2026-09-21",
+    chargeUrl: "https://seahub.conexa.app/fatura/abc",
+    billetUrl: "https://seahub.conexa.app/boleto/abc.pdf",
+    salesIds: [190001],
+  };
+
+  /** Responde como o Conexa, pela rota; `pendentes` é o GET /charges. */
+  const conexa = (opcoes: {
+    reserva?: Record<string, unknown>;
+    pendentes?: unknown[];
+    postStatus?: number;
+  }) =>
+    responder(({ url, metodo }) => {
+      if (url.pathname === `${BASE}/room/booking/28400`) {
+        return { corpo: reservaDaApi(opcoes.reserva) };
+      }
+      if (url.pathname === `${BASE}/charges`) {
+        return { corpo: { data: opcoes.pendentes ?? [], pagination: { hasNext: false } } };
+      }
+      if (metodo === "POST" && url.pathname === `${BASE}/charge`) {
+        return { status: opcoes.postStatus ?? 200, corpo: { id: 7001 } };
+      }
+      if (url.pathname === `${BASE}/charge/7001`) return { corpo: cobrancaDaApi };
+      return { status: 404, corpo: {} };
+    });
+
+  const rotas = () => chamadas.map((c) => `${c.metodo} ${c.url.pathname.replace(BASE, "")}`);
+
+  it("cobra a venda da reserva, vencendo no dia dela, e devolve valor e link", async () => {
+    conexa({});
+
+    const r = await faturar();
+
+    expect(r.faturada).toBe(true);
+    expect(r.cobranca).toMatchObject({
+      valorAtual: 60,
+      vencimento: "2026-09-21",
+      faturaUrl: "https://seahub.conexa.app/fatura/abc",
+    });
+    expect(rotas()).toEqual([
+      "GET /room/booking/28400",
+      "GET /charges",
+      "POST /charge",
+      "GET /charge/7001",
+    ]);
+    // Só as pendentes do cliente, e o corpo com a venda e o dia da reserva.
+    expect(chamadas[1].url.searchParams.get("customerId[]")).toBe("975");
+    expect(chamadas[1].url.searchParams.get("status")).toBe("unpaid");
+    expect(chamadas[2].corpo).toEqual({ salesIds: [190001], dueDate: "2026-09-21" });
+  });
+
+  it("pacote de horas: não cria cobrança", async () => {
+    conexa({ reserva: { status: "deductedFromQuota" } });
+
+    const r = await faturar();
+
+    expect(r.descontadaDoPacoteDeHoras).toBe(true);
+    expect(rotas()).toEqual(["GET /room/booking/28400"]);
+  });
+
+  it("cancelada: recusa sem tocar em cobrança", async () => {
+    conexa({ reserva: { status: "cancelled", canceled: true } });
+
+    const r = await faturar();
+
+    expect(r.faturada).toBe(false);
+    expect(r).toHaveProperty("erro");
+    expect(rotas()).toEqual(["GET /room/booking/28400"]);
+  });
+
+  it("cobrança pendente com a venda já existe: devolve ela e NÃO cria outra", async () => {
+    // ⚠ É a trava contra cobrar duas vezes: o modelo repete chamada, e nada
+    // garante que a reserva vire "billed" no instante em que a cobrança nasce.
+    conexa({ pendentes: [cobrancaDaApi] });
+
+    const r = await faturar();
+
+    expect(r.faturada).toBe(true);
+    expect(r.jaExistia).toBe(true);
+    expect(rotas()).not.toContain("POST /charge");
+  });
+
+  it("já faturada e sem pendente achada: não cobra e manda a equipe mandar o link", async () => {
+    conexa({ reserva: { status: "billed", isBilled: true } });
+
+    const r = await faturar();
+
+    expect(r.faturada).toBe(false);
+    expect(r.jaFaturada).toBe(true);
+    expect(rotas()).not.toContain("POST /charge");
+  });
+
+  it("falha do servidor ao cobrar: indeterminado, e proíbe repetir", async () => {
+    conexa({ postStatus: 502 });
+
+    const r = await faturar();
+
+    expect(r.resultado).toBe("indeterminado");
+    expect(String(r.comoSeguir)).toContain("NÃO repita");
+    expect(r).not.toHaveProperty("faturada");
+  });
+
+  it("recusa do Conexa ao cobrar (4xx) continua sendo erro", async () => {
+    conexa({ postStatus: 422 });
+
+    await expect(faturar()).rejects.toBeInstanceOf(ConexaApiError);
+  });
+});

@@ -13,6 +13,7 @@ import {
   corpoDeClienteNovo,
   periodoDaAgenda,
 } from "./entrada";
+import { acharCobrancaDaVenda, situacaoDeFaturamento } from "./faturamento";
 import {
   acrescentarAnotacao,
   carimboDaAnotacao,
@@ -839,6 +840,102 @@ export const conexaIntegration: IntegrationDefinition = {
             reservaId: id,
             aviso:
               "A reserva foi criada, mas não consegui ler de volta o que o Conexa gravou. Confira com conexa_ver_reserva antes de dizer sala e horário ao cliente.",
+          };
+        }
+      },
+    },
+    {
+      name: "conexa_faturar_reserva",
+      categoria: "Reservas de sala",
+      description:
+        "Gera a cobrança de uma reserva e devolve valor, vencimento e link de pagamento. Confere antes de cobrar: reserva descontada do pacote de horas não é cobrada, reserva cancelada é recusada, e reserva que já tem cobrança devolve a existente em vez de criar outra. Chame UMA vez, logo depois de conexa_criar_reserva.",
+      requiresConfirmation: true,
+      inputSchema: z.object({
+        reservaId: z
+          .number()
+          .int()
+          .positive()
+          .describe("O id da reserva, devolvido por conexa_criar_reserva."),
+      }),
+      async execute(entrada, ctx) {
+        const { reservaId } = entrada as { reservaId: number };
+        const { cliente } = contexto(ctx);
+
+        const semCobrar =
+          "Não informe valor nem link ao cliente: encaminhe para a equipe cobrar.";
+        const comoMandarOLink =
+          "Mande ao cliente o valorAtual e o faturaUrl, que é a página de pagamento; sem faturaUrl, o boletoUrl. Não invente valor nem link.";
+
+        // A decisão de SE cobrar é do código (`faturamento.ts`), não do modelo.
+        const situacao = situacaoDeFaturamento(await cliente.obterReserva(reservaId));
+
+        if (situacao.tipo === "recusar") {
+          return { faturada: false, erro: situacao.motivo, comoSeguir: semCobrar };
+        }
+        if (situacao.tipo === "pacoteDeHoras") {
+          return {
+            faturada: false,
+            descontadaDoPacoteDeHoras: true,
+            observacao:
+              'Nada a cobrar: a reserva foi descontada do pacote de horas do cliente. Na confirmação, o valor é "Descontado do seu pacote de horas".',
+          };
+        }
+
+        const { vendaId, clienteId } = situacao;
+        const existente =
+          vendaId && clienteId
+            ? await acharCobrancaDaVenda(cliente, vendaId, clienteId)
+            : undefined;
+
+        if (existente?.cobranca) {
+          return {
+            faturada: true,
+            jaExistia: true,
+            cobranca: semVazios(formatarCobranca(existente.cobranca)),
+            observacao: comoMandarOLink,
+          };
+        }
+        if (situacao.tipo === "jaFaturada") {
+          return {
+            faturada: false,
+            jaFaturada: true,
+            observacao:
+              "A reserva já foi faturada, mas não achei cobrança pendente dela. NÃO gere outra: diga que o link de pagamento chega pela equipe.",
+          };
+        }
+        if (!existente?.conferido) {
+          // Sem cliente na reserva, ou lista de pendentes que não veio inteira:
+          // não dá para afirmar que a cobrança ainda não existe.
+          return {
+            faturada: false,
+            erro: "Não consegui conferir as cobranças pendentes do cliente, então não dá para garantir que esta reserva ainda não foi cobrada.",
+            comoSeguir: semCobrar,
+          };
+        }
+
+        let id: number;
+        try {
+          ({ id } = await cliente.criarCobranca({
+            salesIds: [situacao.vendaId],
+            dueDate: situacao.vencimento,
+          }));
+        } catch (erro) {
+          if (ehRecusaDaApi(erro)) throw erro;
+          return escritaIndeterminada(
+            erro,
+            "A cobrança pode ter sido criada: não chame conexa_faturar_reserva de novo. Diga ao cliente que o link de pagamento chega pela equipe e encaminhe.",
+          );
+        }
+
+        try {
+          const cobranca = semVazios(formatarCobranca(await cliente.obterCobranca(id)));
+          return { faturada: true, cobranca, observacao: comoMandarOLink };
+        } catch {
+          return {
+            faturada: true,
+            cobrancaId: id,
+            aviso:
+              "A cobrança foi criada, mas não consegui ler valor e link. Não invente nenhum dos dois: diga que o link de pagamento chega pela equipe.",
           };
         }
       },
