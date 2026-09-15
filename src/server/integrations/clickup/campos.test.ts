@@ -93,7 +93,8 @@ describe("converterValor", () => {
   it("data vira milissegundos", () => {
     expect(converterValor(de("Início do contrato"), "2026-08-01")).toEqual({
       ok: true,
-      valor: Date.parse("2026-08-01"),
+      // Meio-dia em São Paulo: meia-noite UTC cairia no dia anterior no ClickUp.
+      valor: Date.parse("2026-08-01T15:00:00Z"),
     });
     expect(converterValor(de("Início do contrato"), "amanhã").ok).toBe(false);
   });

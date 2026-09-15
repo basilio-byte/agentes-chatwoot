@@ -5,6 +5,7 @@ import {
   formatarTarefa,
   normalizar,
   paraTimestamp,
+  paraTimestampDoFimDoDia,
   resolverMembro,
 } from "./formatacao";
 import type { ClickUpTarefa, ClickUpUsuario } from "./tipos";
@@ -81,18 +82,37 @@ describe("filtro por texto", () => {
 });
 
 describe("datas", () => {
-  it("converte ISO para milissegundos", () => {
-    expect(paraTimestamp("2026-08-31")).toBe(Date.parse("2026-08-31"));
+  it("data sem hora vira meio-dia em São Paulo, não meia-noite UTC", () => {
+    // ⚠ Meia-noite UTC do dia 15 ainda é dia 14 em São Paulo — e foi 14/09 que
+    // o ClickUp gravou nas tasks do CRM Comercial (15/09/2026).
+    expect(paraTimestamp("2026-09-15")).toBe(Date.parse("2026-09-15T15:00:00Z"));
+    expect(deTimestamp(String(paraTimestamp("2026-09-15")))).toBe("2026-09-15");
+  });
+
+  it("hora sem fuso é hora de São Paulo; com fuso, vale o que veio", () => {
+    // O container roda em UTC: `Date.parse` leria "18:30" como 15:30 daqui.
+    expect(paraTimestamp("2026-09-15T18:30")).toBe(Date.parse("2026-09-15T21:30:00Z"));
+    expect(paraTimestamp("2026-09-20T23:59:59Z")).toBe(Date.parse("2026-09-20T23:59:59Z"));
+    expect(paraTimestamp("2026-09-15T08:00:00-03:00")).toBe(Date.parse("2026-09-15T11:00:00Z"));
   });
 
   it("ignora entrada inválida em vez de mandar NaN para a API", () => {
     expect(paraTimestamp("amanhã")).toBeUndefined();
     expect(paraTimestamp("")).toBeUndefined();
     expect(paraTimestamp(null)).toBeUndefined();
+    expect(paraTimestamp("2026-02-30")).toBeUndefined();
+    expect(paraTimestamp("2026-09-15T25:00")).toBeUndefined();
   });
 
-  it("converte de volta, lidando com o número em string da API", () => {
-    expect(deTimestamp(String(Date.parse("2026-08-31T00:00:00Z")))).toBe("2026-08-31");
+  it("filtro 'vence até o dia' inclui o dia inteiro", () => {
+    // É usado com "menor que": o corte é o começo do dia seguinte aqui.
+    expect(paraTimestampDoFimDoDia("2026-09-15")).toBe(Date.parse("2026-09-16T03:00:00Z"));
+    expect(paraTimestampDoFimDoDia("2026-09-15T18:30")).toBe(paraTimestamp("2026-09-15T18:30"));
+  });
+
+  it("lê de volta o dia de São Paulo, lidando com o número em string da API", () => {
+    // 01:30 UTC do dia 16 ainda é dia 15 aqui.
+    expect(deTimestamp(String(Date.parse("2026-09-16T01:30:00Z")))).toBe("2026-09-15");
     expect(deTimestamp(null)).toBeNull();
     expect(deTimestamp("nao-numero")).toBeNull();
   });
@@ -105,7 +125,9 @@ describe("formatação de tarefa", () => {
       name: "Trocar lâmpada",
       status: { status: "em andamento" },
       priority: { id: "2", priority: "high" },
-      due_date: String(Date.parse("2026-08-31T00:00:00Z")),
+      // Um vencimento sem hora como o ClickUp guarda: um instante dentro do dia
+      // de São Paulo (meia-noite UTC seria dia 30 aqui).
+      due_date: String(Date.parse("2026-08-31T15:00:00Z")),
       assignees: [{ id: 1, username: "João" }],
       list: { id: "9", name: "Manutenção" },
       url: "https://app.clickup.com/t/abc123",

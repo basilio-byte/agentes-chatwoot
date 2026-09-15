@@ -773,6 +773,13 @@ se mexer no cliente, rode-o.
 - **Tempo usa `tid`**, não `task_id`, e é sempre do dono do token — a API não
   cronometra em nome de outra pessoa.
 - **Comentário é endereçado direto** (`/comment/{id}`), sem a tarefa na rota.
+- ⚠ **Data sem hora vai como MEIO-DIA em São Paulo** (`paraTimestamp`), e a
+  volta é lida no dia de São Paulo (`deTimestamp`). O ClickUp guarda um instante
+  e mostra o dia no fuso de quem olha: `Date.parse("2026-09-15")` é meia-noite
+  UTC, 21h do dia 14 aqui — e foi 14/09 que ele gravou, no vencimento e no campo
+  de data. Achado em 15/09/2026 nas tasks do CRM Comercial; as criadas antes
+  disso ficaram um dia antes. Hora sem fuso é hora de São Paulo, e o filtro
+  "vence até" corta no começo do dia seguinte.
 
 ### Campos personalizados: por que o agente fugia deles
 

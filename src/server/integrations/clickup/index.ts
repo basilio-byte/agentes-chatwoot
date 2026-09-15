@@ -10,6 +10,7 @@ import {
   formatarTarefaDetalhada,
   normalizar,
   paraTimestamp,
+  paraTimestampDoFimDoDia,
   resolverMembro,
 } from "./formatacao";
 import { nomesDisponiveis, prepararCampos } from "./campos";
@@ -459,7 +460,8 @@ export const clickupIntegration: IntegrationDefinition = {
               : undefined,
           statuses: args.status,
           assignees,
-          vencimentoAntesDe: paraTimestamp(args.vencendoAte),
+          // "Vence até o dia 15" inclui o dia 15 inteiro no relógio de São Paulo.
+          vencimentoAntesDe: paraTimestampDoFimDoDia(args.vencendoAte),
           incluirFechadas: args.incluirFechadas,
         });
 
