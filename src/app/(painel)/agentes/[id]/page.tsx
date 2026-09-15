@@ -20,8 +20,13 @@ import { GatilhoDoAgente } from "@/components/gatilho-do-agente";
 import { AgendamentosDoAgente } from "@/components/agendamentos-do-agente";
 import { listarAgendamentos } from "@/server/actions/agendamentos";
 import { GatilhoDeConversaDoAgente } from "@/components/gatilho-de-conversa-do-agente";
-import { resumoDoGatilhoDeConversa } from "@/server/actions/gatilho-de-conversa";
+import { GatilhoDeCheckboxDoAgente } from "@/components/gatilho-de-checkbox-do-agente";
+import {
+  resumoDoGatilhoDeCheckbox,
+  resumoDoGatilhoDeConversa,
+} from "@/server/actions/gatilho-de-conversa";
 import { PROVIDER_DA_ENTREGA } from "@/server/conversa-encerrada/evento";
+import { PROVIDER_DO_CHECKBOX } from "@/server/conversa-marcada/evento";
 import { obterConfigChatwoot } from "@/server/integrations/chatwoot/credenciais";
 import { listarIntegracoes } from "@/server/integrations/registry";
 import {
@@ -114,6 +119,13 @@ export default async function AgentePage({
   const resumoGatilhoDeConversa = await resumoDoGatilhoDeConversa(agente.id);
   const entregasDeConversa = await db.webhookEvent.findMany({
     where: { agentId: agente.id, provider: PROVIDER_DA_ENTREGA },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
+  });
+  const resumoGatilhoDeCheckbox = await resumoDoGatilhoDeCheckbox(agente.id);
+  const entregasDeCheckbox = await db.webhookEvent.findMany({
+    where: { agentId: agente.id, provider: PROVIDER_DO_CHECKBOX },
     orderBy: { createdAt: "desc" },
     take: 50,
     select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
@@ -343,7 +355,8 @@ export default async function AgentePage({
             icone: <Webhook size={15} aria-hidden />,
             contador:
               agendamentos.filter((a) => a.enabled).length +
-                (resumoGatilhoDeConversa.enabled ? 1 : 0) || undefined,
+                (resumoGatilhoDeConversa.enabled ? 1 : 0) +
+                (resumoGatilhoDeCheckbox.enabled ? 1 : 0) || undefined,
             alerta:
               Boolean(resumoGatilho.pausadoAutomaticamenteMotivo) ||
               agendamentos.some((a) => a.pausadoAutomaticamenteMotivo),
@@ -360,6 +373,14 @@ export default async function AgentePage({
                   agentId={agente.id}
                   resumo={resumoGatilhoDeConversa}
                   entregas={entregasDeConversa}
+                  agenteAtivo={agente.active}
+                  editavel={editavel}
+                />
+
+                <GatilhoDeCheckboxDoAgente
+                  agentId={agente.id}
+                  resumo={resumoGatilhoDeCheckbox}
+                  entregas={entregasDeCheckbox}
                   agenteAtivo={agente.active}
                   editavel={editavel}
                 />

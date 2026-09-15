@@ -263,7 +263,8 @@ export function montarTranscricao(
   ].join("\n");
 }
 
-function quandoCompleto(segundosDesde1970: number): string {
+/** `15/09/2026 12:17`, no relógio de São Paulo — o container roda em UTC. */
+export function quandoCompleto(segundosDesde1970: number): string {
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone: FUSO_SEAHUB,
     day: "2-digit",

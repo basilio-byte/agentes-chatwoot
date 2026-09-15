@@ -46,5 +46,6 @@ describe("ONDE_RODA", () => {
     expect(ONDE_RODA[RunSource.TRIGGER]).toBe("worker");
     expect(ONDE_RODA[RunSource.SCHEDULE]).toBe("worker");
     expect(ONDE_RODA[RunSource.CONVERSA_ENCERRADA]).toBe("worker");
+    expect(ONDE_RODA[RunSource.CONVERSA_MARCADA]).toBe("worker");
   });
 });

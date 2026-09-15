@@ -11,6 +11,7 @@ import { eventoChatwootSchema } from "@/server/integrations/chatwoot/eventos";
 import { entregarAoHumano, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 import { ConversationStatus } from "@/generated/prisma/enums";
 import { dispararGatilhosDeConversa } from "@/server/conversa-encerrada/disparar";
+import { dispararGatilhosDeCheckbox } from "@/server/conversa-marcada/disparar";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +61,9 @@ export async function POST(req: Request) {
   // payload, sem `conversation` aninhado, e as saídas antecipadas logo abaixo a
   // descartariam. Nunca lança — ver `conversa-encerrada/disparar.ts`.
   await dispararGatilhosDeConversa(evento);
+  // O checkbox marcado vem em `conversation_updated`, no mesmo formato de topo,
+  // e cairia na mesma saída. Nunca lança — ver `conversa-marcada/disparar.ts`.
+  await dispararGatilhosDeCheckbox(evento);
 
   const conversa = evento.conversation;
   const conversationId = conversa?.id;

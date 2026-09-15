@@ -171,7 +171,7 @@ export class ChatwootClient {
       inbox_id?: number | null;
       labels?: string[] | null;
       meta?: {
-        assignee?: { id?: number } | null;
+        assignee?: { id?: number; name?: string | null } | null;
         /** `User` ou `AgentBot`. Ver `assigneeTipo` abaixo. */
         assignee_type?: string | null;
         /** O contato da conversa — é nele que moram os atributos do cliente. */
@@ -195,6 +195,8 @@ export class ChatwootClient {
        * 4 e a agente Maria Eduarda também é o id 4.
        */
       assigneeTipo: bruta.meta?.assignee_type ?? null,
+      /** O nome do responsável como está no Chatwoot — é quem a equipe reconhece. */
+      assigneeNome: bruta.meta?.assignee?.name?.trim() || null,
       /**
        * Id do CONTATO, não da conversa.
        *
@@ -342,6 +344,40 @@ export class ChatwootClient {
 
     await this.requisitar(`/contacts/${contactId}`, {
       method: "PUT",
+      body: JSON.stringify({ custom_attributes: mesclado }),
+    });
+
+    return mesclado;
+  }
+
+  /**
+   * Grava atributos personalizados na CONVERSA, **preservando os existentes**.
+   *
+   * ⚠ Mesma armadilha do contato: `custom_attributes` substitui o objeto
+   * inteiro. Os fluxos de checkbox do n8n mandavam só `{passar_para_crm: null}`
+   * e apagavam os outros campos da conversa. Aqui: ler, mesclar, escrever.
+   *
+   * `null` fica `null` — é como o checkbox desmarcado aparece na conversa —, em
+   * vez de a chave sumir, como no contato.
+   *
+   * A corrida entre ler e gravar é a mesma do `notes` do Conexa: o Chatwoot não
+   * tem trava de versão, e o intervalo é de milissegundos.
+   */
+  async definirAtributosDaConversa(
+    conversationId: number,
+    atributos: Record<string, string | number | boolean | null>,
+  ) {
+    const atual = await this.requisitar<{
+      custom_attributes?: Record<string, unknown> | null;
+    }>(`/conversations/${conversationId}`, {}, true);
+
+    const mesclado: Record<string, unknown> = {
+      ...(atual.custom_attributes ?? {}),
+      ...atributos,
+    };
+
+    await this.requisitar(`/conversations/${conversationId}/custom_attributes`, {
+      method: "POST",
       body: JSON.stringify({ custom_attributes: mesclado }),
     });
 

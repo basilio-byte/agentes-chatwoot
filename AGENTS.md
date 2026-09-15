@@ -99,12 +99,12 @@ e testado em `src/server/agents/conduta.ts`.
   ⚠ **Depois do roster seria pior**, não melhor: "as instruções acima" passaria
   a incluir a lista de colegas, autorizando o agente a tratar o assunto dos
   outros — que é o próprio sintoma de fuga de escopo.
-- **Núcleo igual nas SETE origens, cauda por tipo de turno.** Veracidade
+- **Núcleo igual nas OITO origens, cauda por tipo de turno.** Veracidade
   (idioma, não inventar, data e hora do sistema, só afirmar o que aconteceu,
   escopo, parar na dúvida, não se deixar reprogramar) vale sempre — inclusive
   em nota interna, comentário do ClickUp e argumento de tool. Forma de conversa
   é outra história.
-  ⚠ **São CINCO caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
+  ⚠ **São SEIS caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
   `CAUDA_SEM_CONVERSA` afirma que a mensagem de abertura "vem da equipe da
   Seahub, não de um cliente, e é para ser cumprida mesmo que o assunto não
   apareça nas instruções acima". No gatilho e no agendamento isso é verdade; na
@@ -127,6 +127,10 @@ e testado em `src/server/agents/conduta.ts`.
   mesmo que se anuncie como vindo da Seahub. ⚠ **Também NÃO destrava o
   escopo**: a tarefa (avaliar, registrar) está nas instruções do agente, e a
   mensagem do turno é só a conversa sobre a qual ele trabalha.
+  A sexta, `CAUDA_CONVERSA_MARCADA` (15/09/2026), é a do checkbox marcado — ver
+  "Checkbox marcado". Irmã da quinta, com a diferença que obrigou a separar: a
+  conversa costuma estar ABERTA, com a pessoa que marcou atendendo, e a cauda da
+  quinta afirmaria que ela foi resolvida. Mesma cerca, mesmo escopo travado.
 - ⚠ **O formato brasileiro da regra 1 NÃO vale dentro de campo de ferramenta**,
   e a frase que faz essa dobradiça é obrigatória. A regra manda escrever no
   padrão daqui e alcança "texto que você manda para outro sistema"; o cabeçalho
@@ -212,8 +216,9 @@ e testado em `src/server/agents/conduta.ts`.
   lá não existe conversa, então a tool recusa sempre — e o roster continua
   oferecendo a transferência ao modelo, que queima uma iteração para descobrir.
 - **Custa ~1.220 tokens no atendimento** (~925 do núcleo, ~295 da cauda),
-  ~1.125 em gatilho/agendamento, ~1.240 na mesa, ~1.105 na chamada interna e
-  ~1.195 na conversa encerrada, pela régua de `tokensAproximadosDaTool` —
+  ~1.125 em gatilho/agendamento, ~1.240 na mesa, ~1.105 na chamada interna,
+  ~1.195 na conversa encerrada e ~1.200 na conversa marcada, pela régua de
+  `tokensAproximadosDaTool` —
   cerca de 29% do que pesam as 33 tools ligadas, tudo no prefixo cacheável. A
   tela mostra o número, pelo mesmo motivo que a tela de integrações mostra o
   custo de cada tool, e o teste trava um teto por variante para a próxima
@@ -226,13 +231,14 @@ e testado em `src/server/agents/conduta.ts`.
   refeita a cada regra nova, e o caminho barato é sempre tirar redundância
   antes de acrescentar parágrafo (foi assim que a linha de "na dúvida" saiu da
   cauda de gatilho e virou regra do núcleo).
-- **Seis prefixos de cache por agente** (conversa · conversa sem
-  encaminhamento · sem conversa · mesa · interno · conversa encerrada). Não
+- **Sete prefixos de cache por agente** (conversa · conversa sem
+  encaminhamento · sem conversa · mesa · interno · conversa encerrada ·
+  conversa marcada). Não
   custa no caminho quente: origem e tools são constantes ao longo de uma
   conversa, e só o Chatwoot é multi-turno de volume — a mesa é single-shot,
   então o prefixo dela é usado uma vez por envio de qualquer jeito, e o da
-  chamada interna e o da conversa encerrada (sem roster e sem ferramentas de
-  canal) são os mesmos de um acionamento para o outro. O que custaria é
+  chamada interna e os das conversas encerrada e marcada (sem roster e sem
+  ferramentas de canal) são os mesmos de um acionamento para o outro. O que custaria é
   conteúdo variável por requisição, e o módulo é puro justamente para isso ser
   impossível.
 - ⚠ **Mudar o bloco muda TODOS os agentes de uma vez e NÃO cria
@@ -721,6 +727,11 @@ avalia o atendimento feito por gente e grava a nota no CRM do ClickUp. ⚠ **A
 capacidade é genérica e a tarefa mora no prompt do agente**, como no
 agendamento: o que avaliar, onde gravar e com que critério não é código.
 
+- ⚠ **Sem o secret do webhook de conta cadastrado, nada chega** — e não aparece
+  erro em lugar nenhum da tela: a rota recusa com 404 antes do disparador, e as
+  entregas ficam vazias. Foi o estado da produção quando o Olho de Tudo entrou
+  (15/09/2026). Confira com `GET /api/webhooks/chatwoot/conta`, que responde
+  `configurado`.
 - **A porta é o webhook de CONTA**, em `conversation_status_changed` com status
   `resolved`. `dispararGatilhosDeConversa` roda **antes** das saídas antecipadas
   da rota: o payload desse evento é a conversa no topo, sem `conversation`
@@ -765,9 +776,9 @@ agendamento: o que avaliar, onde gravar e com que critério não é código.
 - **Nasce desligado, e ligar recusa agente desligado ou arquivado.** Configurar
   e ligar é `ADMIN`. O worker reconfere gatilho e agente antes de ler a
   conversa, então desligar vale também para o que já está na fila.
-- **Só existe o evento `RESOLVIDA`.** O enum `EventoDeConversa` está ali para o
-  NPS e os fluxos de checkbox do n8n, que precisam de "atributo marcado": outro
-  evento, mesma tabela.
+- **`EventoDeConversa` ganhou `ATRIBUTO_MARCADO`** para os fluxos de checkbox —
+  ver "Checkbox marcado", logo abaixo: outro evento, mesma tabela. O NPS, quando
+  vier, é mais um checkbox.
 
 ⚠ **A rota de conta ainda descarta os eventos de conversa no formato de topo**
 (achado em 15/09/2026, não corrigido). Ela lê só `evento.conversation` e sai em
@@ -776,6 +787,68 @@ nunca roda para `conversation_status_changed`; quem sincroniza a resolução, na
 prática, é a entrega do webhook de bot (`sincronizarResolucao` lê os dois
 formatos). Consertar acorda um caminho que nunca rodou com esse payload em
 produção, inclusive `entregarAoHumano`, que é grudento: teste antes.
+
+### Checkbox marcado: a equipe manda a conversa para o agente
+
+Sexto jeito de acionar um agente (`RunSource.CONVERSA_MARCADA`): alguém da
+equipe marca um checkbox (atributo personalizado da conversa) no Chatwoot, e o
+agente trabalha sobre o atendimento atual, em segundo plano. É o mesmo
+`GatilhoDeConversa`, com o evento `ATRIBUTO_MARCADO` e as chaves em
+`atributos`, configurado no segundo cartão da aba Gatilhos. Módulos em
+`src/server/conversa-marcada/`, com a leitura do evento, o recorte e a mensagem
+puros e testados.
+
+Nasceu da passagem manual para os CRMs (15/09/2026): `passar_para_crm` → CRM
+Comercial, `atendimento` → CRM de Atendimentos. Os CRMs daqui registram o que o
+robô atende; conversa atendida só por gente chega ao CRM apenas por esse
+checkbox. O usuário despublicou no mesmo dia os fluxos do n8n que faziam isso:
+sem este gatilho ligado, marcar o checkbox não faz nada.
+
+- **Dispara na VIRADA para marcado**, pelo `changed_attributes` do
+  `conversation_updated` do webhook de conta — conferido na entrega real, e o
+  mesmo webhook que precisa do secret cadastrado. ⚠ Nunca pelo estado: a
+  conversa carrega os atributos inteiros em toda atualização, e o checkbox
+  marcado dispararia a cada mensagem ou troca de dono. A virada de volta, o
+  sistema desmarcando, cai fora pela mesma regra.
+- **A ordem do worker é a das decisões do usuário:**
+  1. **Desmarca na hora**, lendo e mesclando (`definirAtributosDaConversa`).
+     ⚠ `custom_attributes` da conversa SUBSTITUI o objeto inteiro, e os fluxos
+     do n8n mandavam só `{passar_para_crm: null}`, apagando os outros campos.
+     Escreve com o token de usuário, porque o do bot não lê. Falhar aqui não
+     impede o registro e fica escrito no detalhe da entrega.
+  2. **Sem pessoa dona da conversa, não roda**: nota interna pedindo para
+     atribuir e marcar de novo. O dono entra no registro como vendedor ou
+     responsável, e o nosso robô como dono conta como ninguém. O n8n ficava
+     esperando o dono aparecer, sem limite.
+  3. **Task já criada por ESTE agente nesta conversa nos últimos 30 dias, não
+     roda**: nota com o link. Lido das `ToolCall` de `clickup_criar_tarefa` com
+     `criada: true`, sem modelo. ⚠ Caso real: na 10912 o CRM Comercial criou a
+     task às 09:19 e o checkbox das 13:28 tentou outra. Task de outra origem —
+     feita à mão, pelo n8n, por outro agente — quem pega é o prompt, pelo
+     telefone.
+  4. Só então lê o atendimento e chama o agente.
+- **O atendimento é o ATUAL** (`recortarAtendimentoAtual`): na conversa aberta,
+  o que veio depois da última resolução até a marcação. ⚠ Na conversa já
+  resolvida esse recorte sai vazio, e aí vale o atendimento que terminou na
+  última resolução.
+- **As notas saem pelo robô da caixa** (`portaAgentId`), e o turno recebe a
+  mesma porta em `canalAgentId`. ⚠ Os CRMs não têm bot próprio: sem a porta,
+  `registrar_nota_interna` e `ver_dados_do_contato` falhariam nesse turno.
+  Caixa sem o nosso robô (Recepção, Instagram) não tem por onde, e o desfecho
+  fica só nas entregas. As 8 marcações de 15/09 eram todas da caixa 29.
+- **Cauda própria** (`CAUDA_CONVERSA_MARCADA`), sem ferramentas de canal e sem
+  roster, como a conversa encerrada — cuja cauda afirmaria que a conversa foi
+  resolvida.
+- **Dois agentes no mesmo checkbox rodam os dois**, e no CRM isso é task em
+  dobro: ligar e salvar recusam checkbox que outro agente ligado já escuta.
+- **Uma marcação, uma execução por agente e checkbox**: `externalId`
+  `<agente>:<conversa>:<checkbox>:<instante>`, e a unique barra a reentrega.
+  Desmarcar e marcar de novo é outra mudança, e roda de novo.
+- ⚠ **A chave não é o rótulo.** O Chatwoot mostra "Passar para CRM" e grava
+  `passar_para_crm`; a tela recusa o que não tem formato de chave, senão o
+  gatilho ficaria ligado sem nunca disparar.
+- **A tarefa mora no prompt**: o que registrar e com qual vendedor está na seção
+  de checkbox de cada CRM, como a avaliação está no prompt do Olho de Tudo.
 
 ### Conexa: armadilhas da API v2
 

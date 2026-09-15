@@ -333,6 +333,9 @@ model AgentSchedule {
 enum EventoDeConversa {
   /// A conversa foi resolvida.
   RESOLVIDA
+  /// Alguém da equipe marcou um checkbox (atributo personalizado) da conversa.
+  /// Quais checkboxes: `GatilhoDeConversa.atributos`.
+  ATRIBUTO_MARCADO
 }
 
 /// Quando algo acontece numa conversa do Chatwoot, este agente roda sobre ela
@@ -365,6 +368,12 @@ model GatilhoDeConversa {
   /// Nomes de contas do Chatwoot cujas mensagens não contam como pessoa. O n8n
   /// escreve com o token do Basílio (decisão do usuário, 15/09/2026).
   contasDeAutomacao String[] @default([])
+
+  /// Só em `ATRIBUTO_MARCADO`: as chaves dos checkboxes da conversa que acionam
+  /// o agente, como estão no Chatwoot (`passar_para_crm`). Lista, e não uma linha
+  /// por checkbox, porque o mesmo agente pode escutar mais de um — o NPS tem
+  /// dois — e a unique continua sendo agente + evento.
+  atributos String[] @default([])
 
   ultimaExecucaoEm DateTime?
   /// `executado` · `ignorado` · `falhou` · `interrompido`.
@@ -635,6 +644,15 @@ enum RunSource {
   /// como "vem da equipe e é para cumprir"), e o corpo da mensagem é conversa de
   /// terceiro — dado para examinar, nunca ordem.
   CONVERSA_ENCERRADA
+
+  /// Alguém da equipe marcou um checkbox numa conversa do Chatwoot e um
+  /// `GatilhoDeConversa` de `ATRIBUTO_MARCADO` acionou este agente sobre o
+  /// atendimento atual (`server/conversa-marcada/`).
+  ///
+  /// Origem própria, e não `CONVERSA_ENCERRADA`, porque a cauda de lá afirma
+  /// que a conversa foi resolvida — e aqui ela costuma estar aberta, com a
+  /// pessoa que marcou atendendo. Regra falsa é pior que regra ausente.
+  CONVERSA_MARCADA
 }
 
 enum RunStatus {

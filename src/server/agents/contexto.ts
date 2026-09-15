@@ -50,11 +50,13 @@ export async function prepararContexto(
 ): Promise<ContextoDoTurno> {
   const tipo = tipoDeTurno(source);
 
-  // Chamada interna e conversa encerrada: sem ferramenta que fale com o cliente
-  // ou passe a conversa de mãos. Quem roda em segundo plano não é dono do
-  // atendimento — ver `chamada-interna.ts` — e numa conversa resolvida não há
-  // atendimento para passar.
-  const emSegundoPlano = tipo === "interno" || tipo === "encerrada";
+  // Chamada interna, conversa encerrada e conversa marcada: sem ferramenta que
+  // fale com o cliente ou passe a conversa de mãos. Quem roda em segundo plano
+  // não é dono do atendimento — ver `chamada-interna.ts` —, numa conversa
+  // resolvida não há atendimento para passar, e na marcada ele está com a
+  // pessoa que marcou o checkbox.
+  const emSegundoPlano =
+    tipo === "interno" || tipo === "encerrada" || tipo === "marcada";
   const todas = await resolverToolsDoAgente(agente.id);
   const resolvidas = emSegundoPlano ? semFerramentasDeCanal(todas) : todas;
   const ferramentas = paraFerramentasOpenAI(resolvidas);

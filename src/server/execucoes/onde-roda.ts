@@ -33,4 +33,6 @@ export const ONDE_RODA: Record<RunSource, "painel" | "worker"> = {
   [RunSource.INTERNO]: "painel",
   // Sai da fila do gatilho de conversa, como o agendamento.
   [RunSource.CONVERSA_ENCERRADA]: "worker",
+  // Sai da fila do gatilho de checkbox, pelo mesmo caminho.
+  [RunSource.CONVERSA_MARCADA]: "worker",
 };
