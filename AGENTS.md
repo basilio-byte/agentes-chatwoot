@@ -1038,6 +1038,27 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
 - **`criar_reserva` lê a reserva de volta** e devolve a sala e o horário que o
   Conexa gravou: é isso que vai na confirmação ao cliente, nunca o que o agente
   pediu.
+- ⚠ **`conexa_criar_reserva` confere o conflito NO CÓDIGO antes de gravar**
+  (`conexa/agenda.ts`, puro e testado). O Conexa não recusa sobreposição de
+  forma clara, e até 16/09/2026 o único freio era a instrução de consultar a
+  agenda antes — escrita na descrição da tool e no prompt. Instrução o modelo
+  pula, e a reserva autônoma roda de madrugada e no fim de semana: duas reservas
+  no mesmo horário só aparecem quando os dois clientes chegam na porta da sala.
+  A tool lê a agenda daquela sala naquele dia, recusa se houver sobreposição e
+  devolve **só as pontas** do que ocupa — o agente precisa disso para oferecer
+  outro horário, e o resto é dado de outro cliente.
+  ⚠ **Encostar não é sobrepor:** 9h-10h e 10h-11h convivem, a comparação é
+  estritamente menor dos dois lados. Tratar encosto como conflito recusaria
+  metade das reservas de uma agenda cheia.
+  ⚠ **Na dúvida, NÃO grava.** Agenda cortada (`hasNext`), leitura que falhou, ou
+  reserva que ocupa e está sem horário legível: os três recusam. Entre uma
+  reserva que não sai por soluço do ERP e a mesma sala reservada duas vezes, a
+  primeira se conserta com uma mensagem.
+  - `cancelled` e `billedCancelled` não ocupam — os mesmos dois que a descrição
+    de `conexa_listar_reservas` promete ao modelo. Divergir aqui faria o agente
+    e o sistema discordarem sobre o que é uma sala livre.
+  - A corrida entre ler e gravar continua existindo, e está aceita: a janela caiu
+    de "um turno inteiro do modelo" para milissegundos.
 - ⚠ **`conexa_faturar_reserva` decide SE cobra no código, não no modelo**
   (`faturamento.ts`). Decisão do usuário em 15/09/2026: o agente de Salas de
   Reunião fatura sozinho a reserva que fecha fora do expediente. Pacote de horas

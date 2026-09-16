@@ -166,18 +166,28 @@ describe("conexa_criar_reserva", () => {
   const criar = () =>
     tool("conexa_criar_reserva").execute(pedido, ctx()) as Promise<Record<string, unknown>>;
 
+  /** A tool confere o conflito antes de gravar: toda reserva passa por aqui. */
+  const ehAAgenda = (c: Chamada) => c.url.pathname.endsWith("/room/bookings");
+  const agendaCom = (...itens: unknown[]) => ({
+    corpo: { data: itens, pagination: { hasNext: false } },
+  });
+
   it("devolve a sala e o horário que o Conexa gravou", async () => {
-    responder(({ metodo }) =>
-      metodo === "POST"
-        ? { corpo: { id: 28400 } }
-        : {
-            corpo: {
-              ...reserva(28400),
-              status: "notBilled",
-              startTime: "2026-09-15T16:00:00-03:00",
-              finalTime: "2026-09-15T17:00:00-03:00",
+    responder((c) =>
+      // A reserva das 13h às 16h ENCOSTA no pedido das 16h às 17h, e encostar
+      // não é sobrepor: tem de deixar gravar.
+      ehAAgenda(c)
+        ? agendaCom(reserva(28399))
+        : c.metodo === "POST"
+          ? { corpo: { id: 28400 } }
+          : {
+              corpo: {
+                ...reserva(28400),
+                status: "notBilled",
+                startTime: "2026-09-15T16:00:00-03:00",
+                finalTime: "2026-09-15T17:00:00-03:00",
+              },
             },
-          },
     );
 
     const r = await criar();
@@ -189,11 +199,13 @@ describe("conexa_criar_reserva", () => {
       inicio: "2026-09-15T16:00:00-03:00",
     });
     expect(chamadas.map((c) => `${c.metodo} ${c.url.pathname}`)).toEqual([
+      "GET /index.php/api/v2/room/bookings",
       "POST /index.php/api/v2/room/booking",
       "GET /index.php/api/v2/room/booking/28400",
     ]);
     // O corpo usa yyyy-MM-dd e HH:mm — o formato do CORPO, não o do filtro.
-    expect(chamadas[0].corpo).toMatchObject({
+    // `chamadas[0]` agora é a leitura da agenda; o POST é o segundo.
+    expect(chamadas[1].corpo).toMatchObject({
       customerId: 975,
       roomId: 2107,
       date: "2026-09-15",
@@ -205,7 +217,9 @@ describe("conexa_criar_reserva", () => {
   it("falha do servidor não é 'não reservou': manda conferir antes de repetir", async () => {
     // ⚠ Um 5xx pode ter chegado depois de gravar. Relançar faria o modelo
     // corrigir e chamar de novo — a mesma sala reservada duas vezes.
-    responder(() => ({ status: 502, corpo: { message: "Bad Gateway" } }));
+    responder((c) =>
+      ehAAgenda(c) ? agendaCom() : { status: 502, corpo: { message: "Bad Gateway" } },
+    );
 
     const r = await criar();
 
@@ -215,14 +229,20 @@ describe("conexa_criar_reserva", () => {
   });
 
   it("recusa do Conexa (4xx) continua sendo erro: nada foi gravado", async () => {
-    responder(() => ({ status: 422, corpo: { message: "Room unavailable" } }));
+    responder((c) =>
+      ehAAgenda(c) ? agendaCom() : { status: 422, corpo: { message: "Room unavailable" } },
+    );
 
     await expect(criar()).rejects.toBeInstanceOf(ConexaApiError);
   });
 
   it("criada, mas sem conseguir ler de volta: não afirma sala nem horário", async () => {
-    responder(({ metodo }) =>
-      metodo === "POST" ? { corpo: { id: 28400 } } : { status: 500, corpo: {} },
+    responder((c) =>
+      ehAAgenda(c)
+        ? agendaCom()
+        : c.metodo === "POST"
+          ? { corpo: { id: 28400 } }
+          : { status: 500, corpo: {} },
     );
 
     const r = await criar();
@@ -231,6 +251,84 @@ describe("conexa_criar_reserva", () => {
     expect(r.reservaId).toBe(28400);
     expect(r).not.toHaveProperty("reserva");
     expect(String(r.aviso)).toContain("conexa_ver_reserva");
+  });
+
+  // ⚠ A trava de conflito. Até 16/09/2026 o único freio era a instrução de
+  // consultar a agenda antes — e o modelo pode pular instrução.
+  it("recusa quando o horário pedido está ocupado, e NÃO chama o POST", async () => {
+    responder((c) =>
+      ehAAgenda(c)
+        ? agendaCom({
+            ...reserva(28100),
+            startTime: "2026-09-15T15:30:00-03:00",
+            finalTime: "2026-09-15T16:30:00-03:00",
+          })
+        : { corpo: { id: 28400 } },
+    );
+
+    const r = await criar();
+
+    expect(r.criada).toBe(false);
+    expect(r.ocupado).toEqual([
+      { inicio: "2026-09-15T15:30:00-03:00", fim: "2026-09-15T16:30:00-03:00" },
+    ]);
+    expect(String(r.comoSeguir)).toContain("NÃO tente reservar de novo");
+    expect(chamadas.map((c) => c.metodo)).toEqual(["GET"]);
+  });
+
+  it("reserva cancelada no mesmo horário não impede", async () => {
+    responder((c) =>
+      ehAAgenda(c)
+        ? agendaCom({
+            ...reserva(28100),
+            status: "cancelled",
+            startTime: "2026-09-15T16:00:00-03:00",
+            finalTime: "2026-09-15T17:00:00-03:00",
+          })
+        : c.metodo === "POST"
+          ? { corpo: { id: 28400 } }
+          : { corpo: reserva(28400) },
+    );
+
+    expect((await criar()).criada).toBe(true);
+  });
+
+  it("agenda cortada não autoriza reservar: sem lista inteira não há como provar que está livre", async () => {
+    responder((c) =>
+      ehAAgenda(c)
+        ? { corpo: { data: [reserva(28100)], pagination: { hasNext: true } } }
+        : { corpo: { id: 28400 } },
+    );
+
+    const r = await criar();
+
+    expect(r.criada).toBe(false);
+    expect(String(r.erro)).toContain("não veio inteira");
+    expect(chamadas.every((c) => c.metodo === "GET")).toBe(true);
+  });
+
+  it("agenda que não dá para ler recusa, em vez de gravar às cegas", async () => {
+    responder((c) =>
+      ehAAgenda(c) ? { status: 500, corpo: {} } : { corpo: { id: 28400 } },
+    );
+
+    const r = await criar();
+
+    expect(r.criada).toBe(false);
+    expect(String(r.erro)).toContain("não reservei");
+    expect(chamadas.every((c) => c.metodo === "GET")).toBe(true);
+  });
+
+  it("fim que não é depois do início para antes de qualquer chamada", async () => {
+    responder(() => ({ corpo: {} }));
+
+    const r = (await tool("conexa_criar_reserva").execute(
+      { ...pedido, inicio: "17:00", fim: "16:00" },
+      ctx(),
+    )) as Record<string, unknown>;
+
+    expect(String(r.erro)).toContain("não é depois do início");
+    expect(chamadas).toEqual([]);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   corpoDeClienteNovo,
   periodoDaAgenda,
 } from "./entrada";
+import { conferirHorario, instanteEmSaoPaulo } from "./agenda";
 import { acharCobrancaDaVenda, situacaoDeFaturamento } from "./faturamento";
 import {
   acrescentarAnotacao,
@@ -774,7 +775,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_criar_reserva",
       categoria: "Reservas de sala",
       description:
-        "Reserva uma sala. Confira antes com conexa_listar_reservas se o horário está livre — o Conexa não avisa sobre conflito de forma clara. O retorno traz a sala e o horário que o Conexa gravou: é isso que se confirma ao cliente.",
+        "Reserva uma sala. A ferramenta confere a agenda do dia e RECUSA se o horário estiver ocupado, devolvendo o que ocupa — o Conexa não avisa sobre conflito de forma clara, então a trava é aqui. Ainda assim consulte a agenda antes com conexa_listar_reservas: é dela que saem as alternativas para oferecer ao cliente. O retorno traz a sala e o horário que o Conexa gravou: é isso que se confirma ao cliente.",
       requiresConfirmation: true,
       inputSchema: z.object({
         clienteId: z.number().int().positive(),
@@ -809,6 +810,77 @@ export const conexaIntegration: IntegrationDefinition = {
         const sala = salaOuErro(args.sala, config);
         if ("erro" in sala) return sala;
         if (!sala.roomId) return { erro: "Informe a sala da reserva." };
+
+        const inicioMs = instanteEmSaoPaulo(args.data, args.inicio);
+        const fimMs = instanteEmSaoPaulo(args.data, args.fim);
+        if (inicioMs === null || fimMs === null) {
+          return {
+            erro: `Data ou horário fora do formato: data "${args.data}" (AAAA-MM-DD), início "${args.inicio}" e fim "${args.fim}" (HH:MM).`,
+          };
+        }
+        if (fimMs <= inicioMs) {
+          return { erro: `O fim (${args.fim}) não é depois do início (${args.inicio}).` };
+        }
+
+        // ⚠ A conferência de conflito é feita AQUI, e não deixada para o modelo.
+        // O Conexa não recusa sobreposição de forma clara, e até 16/09/2026 o
+        // único freio era a instrução de consultar a agenda antes — que o modelo
+        // pode pular, e que ninguém confere numa reserva feita de madrugada.
+        const diaDaReserva = periodoDaAgenda(args.data, args.data);
+        if ("erro" in diaDaReserva) return diaDaReserva;
+
+        let agenda: { itens: Awaited<ReturnType<typeof cliente.listarReservas>>["itens"]; completo: boolean };
+        try {
+          agenda = await juntarPaginas(
+            ({ offset, limit }) =>
+              cliente.listarReservas({
+                roomId: sala.roomId,
+                bookingDateTimeFrom: diaDaReserva.de,
+                bookingDateTimeTo: diaDaReserva.ate,
+                limit,
+                offset,
+              }),
+            { porPagina: POR_PAGINA_DA_AGENDA, teto: TETO_DA_AGENDA },
+          );
+        } catch {
+          // Recusa, e não segue às cegas: entre uma reserva que não sai por
+          // soluço do ERP e duas reservas na mesma sala, a primeira se conserta.
+          return {
+            criada: false,
+            erro: "Não consegui ler a agenda da sala para conferir se o horário está livre, então não reservei.",
+            comoSeguir:
+              "Tente de novo em instantes. Se persistir, encaminhe para a equipe conferir a agenda à mão.",
+          };
+        }
+
+        if (!agenda.completo) {
+          return {
+            criada: false,
+            erro: `A agenda da sala neste dia não veio inteira (mais de ${TETO_DA_AGENDA} reservas), então não dá para afirmar que o horário está livre — e não reservei.`,
+            comoSeguir: "Encaminhe para a equipe conferir a agenda à mão.",
+          };
+        }
+
+        const conferencia = conferirHorario(
+          agenda.itens.map((r) => formatarReserva(r)),
+          { inicioMs, fimMs },
+        );
+        if (!conferencia.livre) {
+          return {
+            criada: false,
+            erro: `O horário pedido não está livre nesta sala em ${args.data}.`,
+            // Só as pontas do que ocupa: é o que o agente precisa para oferecer
+            // outro horário, sem carregar dado de outro cliente para a conversa.
+            ocupado: conferencia.conflitam.map((r) => ({ inicio: r.inicio, fim: r.fim })),
+            ...(conferencia.ilegiveis.length
+              ? {
+                  aviso: `${conferencia.ilegiveis.length} reserva(s) desta sala no dia estão sem horário legível; por isso não dá para garantir que o horário está livre.`,
+                }
+              : {}),
+            comoSeguir:
+              "Ofereça outro horário livre do dia ao cliente, ou encaminhe para a equipe. NÃO tente reservar de novo o mesmo horário.",
+          };
+        }
 
         let id: number;
         try {
