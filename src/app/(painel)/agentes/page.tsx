@@ -86,23 +86,30 @@ export default async function AgentesPage({
             ) : null}
           </div>
 
-          <p className="truncate text-[13px] text-muted">
-            {agente.description || "Sem descrição"}
+          <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[13px] text-muted">
+            <span className="truncate">
+              {agente.description || "Sem descrição"}
+            </span>
+            <span className="truncate font-mono text-xs">{agente.model}</span>
           </p>
-
-          <Meta className="block truncate font-mono">{agente.model}</Meta>
         </div>
 
-        <div className="space-y-1 text-right">
-          <Meta className="block" title="Conversas que este agente já atendeu, e quantas vezes ele rodou">
-            {conversasPorAgente.get(agente.id) ?? 0} atendida(s) ·{" "}
-            {agente._count.runs} execução(ões)
+        <div className="space-y-0.5 text-right">
+          <Meta
+            className="block"
+            title="Conversas que este agente já atendeu, e quantas vezes ele rodou"
+          >
+            {agente._count.runs} execuç{agente._count.runs === 1 ? "ão" : "ões"}{" "}
+            · {conversasPorAgente.get(agente.id) ?? 0} conversa
+            {(conversasPorAgente.get(agente.id) ?? 0) === 1 ? "" : "s"}
           </Meta>
-          <Meta className="block">dono: {agente.owner?.name ?? "—"}</Meta>
-          <Meta className="block">
+          <Meta
+            className="block"
+            title={`Dono: ${agente.owner?.name ?? "—"} · última alteração por ${agente.updatedBy?.name ?? "—"}`}
+          >
             {arquivado && agente.archivedAt
               ? `arquivado em ${formatarData(agente.archivedAt)}`
-              : `alterado por ${agente.updatedBy?.name ?? "—"} em ${formatarData(agente.updatedAt)}`}
+              : `alterado em ${formatarData(agente.updatedAt)}`}
           </Meta>
         </div>
 

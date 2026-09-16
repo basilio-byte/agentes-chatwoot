@@ -2134,6 +2134,14 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
   resumo da linha some com `max-sm:hidden group-open:hidden` (a mesma
   propriedade, sem briga); com `sm:block` ele continuaria visível de bloco
   aberto.
+- **A tela do agente é uma coluna só, centrada** (`mx-auto max-w-3xl` na raiz).
+  O cabeçalho e a tira de abas iam até a borda do painel enquanto todos os sete
+  painéis paravam 300 px antes — a tela parecia inacabada do lado direito. A
+  largura é a que o conteúdo já usava, então nada dentro dos cartões reflui.
+- **Formulário longo tem a barra de salvar grudada embaixo** (`sticky
+  bottom-0`). A aba Agente passa de 1.700 px com um prompt de verdade, e o botão
+  ficava só no fim: procurar onde salvar é o atrito que faz alguém sair da tela
+  sem salvar.
 - **O logo da Seahub só existe em branco.** No tema claro ele é invertido por CSS
   (`.logo-seahub`) em vez de manter dois arquivos.
 - **Tools são ordenadas por nome** antes de ir para a API (`paraFerramentasAnthropic`).

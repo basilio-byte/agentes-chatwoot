@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Cpu, IdCard, ScrollText } from "lucide-react";
 import type { EstadoFormulario } from "@/server/actions/agents";
 import { MODELO_PADRAO, type ModeloCatalogo } from "@/server/agents/catalogo";
 import {
@@ -10,7 +10,16 @@ import {
   caudaDeConversa,
 } from "@/server/agents/conduta";
 import { SeletorModelo } from "@/components/seletor-modelo";
-import { Aviso, Button, Card, Field, Input, Textarea } from "@/components/ui";
+import {
+  Aviso,
+  Button,
+  Card,
+  Field,
+  Input,
+  Meta,
+  Textarea,
+  TituloDeBloco,
+} from "@/components/ui";
 import {
   AVISO_DESATUALIZADO,
   ehFluxoDeControle,
@@ -284,6 +293,13 @@ export function AgenteForm({
   return (
     <form action={submeter} className="space-y-5">
       <Card className="space-y-4">
+        <TituloDeBloco
+          icone={<IdCard size={15} aria-hidden />}
+          descricao="Como ele se chama e o que os colegas leem para decidir passar uma conversa para ele."
+        >
+          Identidade
+        </TituloDeBloco>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nome" erro={erroDe("name")}>
             <Input
@@ -318,6 +334,16 @@ export function AgenteForm({
           />
         </Field>
 
+      </Card>
+
+      <Card className="space-y-4">
+        <TituloDeBloco
+          icone={<ScrollText size={15} aria-hidden />}
+          descricao="O que este agente faz e como fala. É o campo que mais muda o comportamento dele."
+        >
+          Instruções
+        </TituloDeBloco>
+
         <Field
           label="Prompt do agente"
           hint="Escreva só o que é deste agente: quem ele é, o que ele atende, o que ele não decide sozinho e o tom. As regras de idioma, veracidade e formato o sistema acrescenta a todo agente — veja abaixo e não as repita aqui. Evite datas ou identificadores dinâmicos: invalidam o cache do provedor e encarecem cada mensagem."
@@ -337,12 +363,12 @@ export function AgenteForm({
       </Card>
 
       <Card className="space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold">Modelo e custo</h2>
-          <p className="text-xs text-muted">
-            Catálogo da OpenRouter. Os preços vêm da API deles.
-          </p>
-        </div>
+        <TituloDeBloco
+          icone={<Cpu size={15} aria-hidden />}
+          descricao="Catálogo da OpenRouter. Os preços vêm da API deles."
+        >
+          Modelo e custo
+        </TituloDeBloco>
 
         {erroDe("model") ? <Aviso tone="danger">{erroDe("model")}</Aviso> : null}
 
@@ -393,9 +419,18 @@ export function AgenteForm({
       {estado.ok ? <Aviso tone="success">{estado.ok}</Aviso> : null}
 
       {!somenteLeitura ? (
-        <Button type="submit" disabled={pendente}>
-          {pendente ? "Salvando…" : rotuloEnvio}
-        </Button>
+        // Acompanha a rolagem: o formulário passa de 1.700 px com um prompt de
+        // verdade, e procurar o botão de salvar no fim é o tipo de atrito que
+        // faz alguém sair da tela sem salvar.
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 border-t border-line bg-background/90 py-3 backdrop-blur">
+          <Button type="submit" disabled={pendente}>
+            {pendente ? "Salvando…" : rotuloEnvio}
+          </Button>
+          <Meta>
+            Mudar prompt, modelo ou effort cria uma versão — nome e descrição,
+            não.
+          </Meta>
+        </div>
       ) : null}
     </form>
   );

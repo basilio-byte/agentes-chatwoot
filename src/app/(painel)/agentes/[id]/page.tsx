@@ -192,7 +192,10 @@ export default async function AgentePage({
   ).length;
 
   return (
-    <div className="space-y-6">
+    // A mesma largura do conteúdo das abas, e centrada: o cabeçalho e a tira de
+    // abas iam até a borda do painel enquanto os cartões paravam 300 px antes,
+    // e a tela inteira parecia inacabada do lado direito.
+    <div className="mx-auto max-w-3xl space-y-6">
       {/* Sem borda inferior: a tira de abas logo abaixo já traz a linha. */}
       <div className="space-y-3">
         <Link
