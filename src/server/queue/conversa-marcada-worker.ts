@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { executarAgente } from "@/server/agents/runner";
 import { ehInterrupcao } from "@/server/agents/cancelamento";
+import { ehSemCredito, MOTIVO_SEM_CREDITO } from "@/server/agents/sem-credito";
 import { RunSource } from "@/generated/prisma/enums";
 import {
   clienteDeLeitura,
@@ -218,6 +219,14 @@ export async function processarConversaMarcada(job: Job<JobConversaMarcada>) {
     // turno inteiro de novo, tools e tudo.
     if (ehInterrupcao(erro)) {
       await registrarDesfecho(dados, "interrompido", erro.message);
+      return;
+    }
+
+    // Falta de saldo: repetir não repõe crédito, e o BullMQ rodaria o turno
+    // inteiro de novo. Fica escrito na entrega, junto do que já foi feito
+    // nesta conversa (desmarcar o checkbox, por exemplo).
+    if (ehSemCredito(erro)) {
+      await registrarDesfecho(dados, "falhou", juntar([MOTIVO_SEM_CREDITO, ...avisos]));
       return;
     }
 

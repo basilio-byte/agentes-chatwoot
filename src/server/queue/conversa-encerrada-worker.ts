@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { executarAgente } from "@/server/agents/runner";
 import { ehInterrupcao } from "@/server/agents/cancelamento";
+import { ehSemCredito, MOTIVO_SEM_CREDITO } from "@/server/agents/sem-credito";
 import { RunSource } from "@/generated/prisma/enums";
 import { clienteDeLeitura } from "@/server/integrations/chatwoot/credenciais";
 import {
@@ -118,6 +119,14 @@ export async function processarConversaEncerrada(job: Job<JobConversaEncerrada>)
     // turno inteiro de novo, tools e tudo.
     if (ehInterrupcao(erro)) {
       await registrarDesfecho(dados, "interrompido", erro.message);
+      return;
+    }
+
+    // Falta de saldo: repetir não repõe crédito, e o BullMQ rodaria o turno
+    // inteiro de novo. Fica escrito na entrega, que é onde se procura o que
+    // aconteceu com esta conversa.
+    if (ehSemCredito(erro)) {
+      await registrarDesfecho(dados, "falhou", MOTIVO_SEM_CREDITO);
       return;
     }
 

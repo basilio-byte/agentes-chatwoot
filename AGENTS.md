@@ -64,6 +64,69 @@ modelos `anthropic/*` como padrão.
   outra chave, outra fatura. A conversa continua 100% na OpenRouter — não use um
   cliente pelo outro.
 
+### Saldo da OpenRouter, e por que o 402 não é instabilidade
+
+Substitui o fluxo "Notificar Saldo Openrouter" do n8n, que lia `/credits` de
+hora em hora e **nunca avisou ninguém** — o nó de decisão não tinha saída
+ligada. Aqui não há relógio nem canal de saída: o número aparece em `/consumo`,
+e quem abre a tela do dinheiro é quem repõe o dinheiro.
+
+- **Só em `/consumo`** (decisão do usuário em 16/09/2026): o painel é
+  compartilhado com a equipe e o saldo não precisa ficar visível em toda tela. O
+  preço, aceito, é que ninguém é avisado sem abrir a tela — se isso doer, o
+  caminho é um webhook de saída configurável, não uma faixa no topo do painel.
+- **Fica ACIMA da barra de filtros.** A barra recorta tudo que está abaixo dela,
+  e o saldo é o estado da conta agora, não uma apuração do período. Embaixo, a
+  tela estaria prometendo que o número responde ao filtro.
+- **Duas fontes, e a tela diz qual está mostrando.** `GET /credits` devolve o
+  saldo da CONTA (`total_credits − total_usage`, a mesma conta que o n8n fazia).
+  A documentação diz que é operação de chave de gestão; na prática a chave de
+  inferência responde, e é a que o fluxo do n8n usava. Recusada (401/403), cai
+  para `GET /key`, que devolve o que resta do **teto daquela chave** — outro
+  número, e pode ser muito menor do que a conta tem.
+  ⚠ **`limit_remaining` vem `null` quando a chave não tem teto**, e aí ninguém
+  sabe o saldo: a tela diz o que configurar (`OPENROUTER_MANAGEMENT_KEY`, que é
+  opcional) em vez de mostrar zero.
+- ⚠ **Falha de leitura nunca vira "saldo zero"**, mesma doutrina da consulta de
+  CNPJ e das escritas do Conexa. Timeout, 5xx e queda de rede dizem que a
+  LEITURA falhou, e é isso que a tela escreve — um zero inventado mandaria
+  repor crédito que já existe, ou acusaria falta de saldo quando o problema é
+  outro.
+- **Cache de 5 min na memória do processo** (1 min quando a leitura falha): a
+  tela é componente de servidor e renderiza a cada abertura.
+- **"Dura cerca de N dias" usa janela MÓVEL de 7×24h**, não os sete últimos dias
+  civis: dividir por sete só é honesto com sete dias inteiros, e hoje está
+  sempre pela metade — o dia corrente puxaria a média para baixo justamente
+  quando ela serve para avisar. Sem gasto medido, a tela não promete nada.
+
+#### O 402 é configuração, não instabilidade
+
+Era tratado como falha passageira, e quem pagava era o cliente: o BullMQ
+reexecuta o turno INTEIRO, o 402 volta igual, e a rede de segurança manda outro
+"Tive uma instabilidade" — uma por tentativa, mais o aviso da última. Em
+08/09/2026 foram 29 execuções com 402 em 12 conversas, e nenhuma delas dizia à
+equipe qual era o problema.
+
+- **Reconhecido por `status === 402`** (`agents/sem-credito.ts`), com a mensagem
+  como segunda pista. ⚠ Casar por texto exige as DUAS pistas ("402" **e**
+  crédito/payment required): "402" solto aparece em nome de modelo e em retorno
+  de tool, e desistir de tentar de novo por engano custaria ao cliente a
+  resposta que a próxima tentativa daria.
+- **Nenhum worker relança.** Atendimento, gatilho HTTP, conversa encerrada e
+  conversa marcada param no primeiro 402.
+- ⚠ **No agendamento entra como `pulado`, não como `falhou`**: `falhou` conta
+  para `FALHAS_ATE_DESLIGAR`, e uma conta sem crédito por um dia desligaria
+  sozinhos os agendamentos sãos — que continuariam desligados depois da
+  reposição, em silêncio. Mesma lógica do atraso.
+- **A nota interna nomeia a causa.** O cliente recebe o aviso genérico (do lado
+  dele, foi o que aconteceu); a equipe precisa saber que não adianta esperar
+  passar. Quem entrega a conversa a uma pessoa continua sendo o vigia, que não
+  chama modelo nenhum e por isso continua funcionando sem crédito.
+- **`AgentRun.error` ganha a marca `[sem crédito na OpenRouter]`**, e é por ela
+  que `/consumo` conta os atendimentos perdidos nas últimas 24h. Sem a marca,
+  restaria procurar "402" dentro do despejo do SDK — que casaria com número
+  dentro de retorno de tool.
+
 ### Regras da Casa: o bloco que o sistema injeta em todo prompt
 
 Os agentes em produção derrapavam — respondiam em espanhol, opinavam fora do

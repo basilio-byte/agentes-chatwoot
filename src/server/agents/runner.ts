@@ -16,6 +16,7 @@ import {
   ehInterrupcao,
   limparPedido,
 } from "./cancelamento";
+import { ehSemCredito, marcarSemCredito } from "./sem-credito";
 import { RunSource, RunStatus } from "@/generated/prisma/enums";
 
 export type MensagemHistorico = {
@@ -300,6 +301,10 @@ export async function executarAgente(
   } catch (erro) {
     const mensagem = erro instanceof Error ? erro.message : String(erro);
     const interrompida = ehInterrupcao(erro);
+    // Falta de saldo é registrada com nome: sem isto, Execuções mostra o
+    // despejo cru do SDK (402 com o JSON de erro dentro) e quem lê precisa
+    // saber o que é um 402 para entender que o problema é dinheiro.
+    const registro = ehSemCredito(erro) ? marcarSemCredito(mensagem) : mensagem;
 
     // Parada deliberada não é falha, e registrar como falha faria o operador
     // caçar um defeito que ele mesmo causou. O que foi gasto até aqui continua
@@ -311,14 +316,14 @@ export async function executarAgente(
       );
       await limparPedido(run.id);
     } else {
-      logger.error({ runId: run.id, erro: mensagem }, "falha ao executar agente");
+      logger.error({ runId: run.id, erro: registro }, "falha ao executar agente");
     }
 
     await db.agentRun.update({
       where: { id: run.id },
       data: {
         status: interrompida ? RunStatus.CANCELED : RunStatus.ERROR,
-        error: mensagem,
+        error: registro,
         messages: JSON.parse(JSON.stringify(messages)),
         ...uso,
         latencyMs: Date.now() - inicio,

@@ -21,6 +21,14 @@ const schema = z.object({
    * Ver `getOpenRouter()`.
    */
   OPENROUTER_API_KEY: z.string().optional(),
+  /**
+   * Chave de GESTÃO, só para ler o saldo em Consumo. Opcional: a chave de
+   * inferência acima costuma ser aceita em `/credits`, e é a que o fluxo do
+   * n8n usava. Serve para quando ela for recusada — sem teto próprio, uma
+   * chave de inferência não sabe o saldo da conta.
+   * Criada em openrouter.ai/settings/management-keys.
+   */
+  OPENROUTER_MANAGEMENT_KEY: z.string().optional(),
   /** Atribuição no ranking público da OpenRouter. Opcionais. */
   OPENROUTER_SITE_URL: z.string().optional(),
   OPENROUTER_SITE_NAME: z.string().optional(),

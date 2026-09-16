@@ -17,12 +17,16 @@ import {
   type Fatia,
 } from "@/server/consumo/agregacao";
 import {
+  DIAS_DA_MEDIA,
+  falhasSemCredito,
+  gastoMedioPorDia,
   normalizarFonte,
   opcoesDeFiltro,
   ROTULO_DA_FONTE,
   TETO_DE_LINHAS,
   varrerPeriodo,
 } from "@/server/consumo/consulta";
+import { lerSaldo } from "@/server/consumo/saldo";
 import {
   diasDoIntervalo,
   intervaloDoPeriodo,
@@ -33,6 +37,7 @@ import {
 import { diaEmSaoPaulo } from "@/lib/tempo";
 import { Filtros, type Campo } from "@/components/filtros";
 import { GraficoDiario } from "@/components/consumo/grafico-diario";
+import { SaldoDaConta } from "@/components/consumo/saldo";
 import {
   Aviso,
   Barra,
@@ -83,16 +88,22 @@ export default async function ConsumoPage({
   });
   const fonte = normalizarFonte(busca.fonte);
 
-  const [opcoes, resultado, execucoesNoHistorico] = await Promise.all([
-    opcoesDeFiltro(),
-    varrerPeriodo({
-      intervalo,
-      agentId: busca.agente ?? null,
-      model: busca.modelo ?? null,
-      source: fonte,
-    }),
-    db.agentRun.count(),
-  ]);
+  const [opcoes, resultado, execucoesNoHistorico, leitura, gastoDiario, falhas] =
+    await Promise.all([
+      opcoesDeFiltro(),
+      varrerPeriodo({
+        intervalo,
+        agentId: busca.agente ?? null,
+        model: busca.modelo ?? null,
+        source: fonte,
+      }),
+      db.agentRun.count(),
+      // O saldo e a média não são recortados pelos filtros: são o estado da
+      // conta agora, não uma apuração do período escolhido.
+      lerSaldo(),
+      gastoMedioPorDia(),
+      falhasSemCredito(),
+    ]);
 
   const campos: Campo[] = [
     {
@@ -186,10 +197,20 @@ export default async function ConsumoPage({
     />
   );
 
+  const saldo = (
+    <SaldoDaConta
+      leitura={leitura}
+      gastoDiarioUsd={gastoDiario}
+      diasDaMedia={DIAS_DA_MEDIA}
+      falhas={falhas}
+    />
+  );
+
   if (resultado.excedeu) {
     return (
       <div className="space-y-6">
         {cabecalho}
+        {saldo}
         {filtros}
         <Aviso tone="warning">
           O período escolhido tem{" "}
@@ -217,6 +238,7 @@ export default async function ConsumoPage({
     return (
       <div className="space-y-6">
         {cabecalho}
+        {saldo}
         {filtros}
         <EmptyState
           icone={<CalendarRange size={18} aria-hidden />}
@@ -285,6 +307,7 @@ export default async function ConsumoPage({
   return (
     <div className="space-y-6">
       {cabecalho}
+      {saldo}
       {filtros}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

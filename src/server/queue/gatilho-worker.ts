@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { executarAgente } from "@/server/agents/runner";
 import { ehInterrupcao } from "@/server/agents/cancelamento";
+import { ehSemCredito, MOTIVO_SEM_CREDITO } from "@/server/agents/sem-credito";
 import { RunSource } from "@/generated/prisma/enums";
 import { montarMensagemDoGatilho } from "@/server/gatilho/payload";
 import type { JobGatilho } from "./gatilho";
@@ -57,6 +58,14 @@ export async function processarGatilho(job: Job<JobGatilho>) {
     // turno inteiro de novo, tools e tudo.
     if (ehInterrupcao(erro)) {
       await marcarEntregaGatilho(webhookEventId, "interrompido", erro.message);
+      return;
+    }
+
+    // Falta de saldo: repetir não repõe crédito. Fica escrito na entrega, e o
+    // sistema que chamou já recebeu 200 — a porta do gatilho responde 200 para
+    // quase tudo, de propósito.
+    if (ehSemCredito(erro)) {
+      await marcarEntregaGatilho(webhookEventId, "falhou", MOTIVO_SEM_CREDITO);
       return;
     }
 

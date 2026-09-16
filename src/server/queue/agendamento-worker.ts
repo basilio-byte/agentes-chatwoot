@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { executarAgente } from "@/server/agents/runner";
 import { ehInterrupcao } from "@/server/agents/cancelamento";
+import { ehSemCredito, MOTIVO_SEM_CREDITO } from "@/server/agents/sem-credito";
 import { RunSource } from "@/generated/prisma/enums";
 import {
   atrasoEmMinutos,
@@ -144,6 +145,16 @@ export async function processarAgendamento(job: Job<JobAgendamento>) {
     // turno inteiro de novo, tools e tudo.
     if (ehInterrupcao(erro)) {
       await encerrar(schedule.id, eventoId, "interrompido", erro.message);
+      return;
+    }
+
+    // ⚠ Falta de saldo entra como `pulado`, não como falha, e a diferença
+    // importa: `falhou` conta para FALHAS_ATE_DESLIGAR, e uma conta sem
+    // crédito por um dia desligaria sozinhos os agendamentos sãos — que
+    // continuariam desligados depois de repor o crédito, em silêncio. Mesma
+    // lógica do atraso: o sistema funcionando, não o agendamento defeituoso.
+    if (ehSemCredito(erro)) {
+      await encerrar(schedule.id, eventoId, "pulado", MOTIVO_SEM_CREDITO);
       return;
     }
 

@@ -912,3 +912,53 @@ describe("atendimento que voltou para o agente", () => {
     expect(conversa.retomadaPendente).toBe(false);
   });
 });
+
+describe("sem crédito na OpenRouter", () => {
+  /** Como o erro chega do SDK: código HTTP em `status`. */
+  const erro402 = () =>
+    Object.assign(
+      new Error('402 {"error":{"message":"Insufficient credits","code":402}}'),
+      { status: 402 },
+    );
+
+  it("não tenta de novo, nem na primeira tentativa", async () => {
+    const runner = await import("@/server/agents/runner");
+    vi.spyOn(runner, "executarAgente").mockRejectedValueOnce(erro402());
+
+    // Primeira de três: qualquer outra falha seria relançada para o BullMQ
+    // tentar de novo. Aqui não — o 402 voltaria igual, e cada tentativa custa
+    // ao cliente mais uma mensagem de desculpa.
+    await expect(processarAtendimento(job("porta", 0))).resolves.toBeUndefined();
+  });
+
+  it("o cliente recebe UMA desculpa, não uma por tentativa", async () => {
+    const runner = await import("@/server/agents/runner");
+    vi.spyOn(runner, "executarAgente").mockRejectedValueOnce(erro402());
+
+    await processarAtendimento(job("porta", 0));
+
+    expect(publicas()).toHaveLength(1);
+    expect(publicas()[0]).toContain("instabilidade");
+  });
+
+  it("a nota interna nomeia a causa — 'instabilidade' faria a equipe esperar passar", async () => {
+    const runner = await import("@/server/agents/runner");
+    vi.spyOn(runner, "executarAgente").mockRejectedValueOnce(erro402());
+
+    await processarAtendimento(job("porta", 0));
+
+    const notas = enviadas.filter((m) => m.privado).map((m) => m.texto);
+    expect(notas.some((n) => n.includes("Sem crédito na OpenRouter"))).toBe(true);
+  });
+
+  it("falha comum continua sendo relançada para o BullMQ", async () => {
+    // A trava só vale para o 402: desistir de uma instabilidade de verdade
+    // custaria ao cliente uma resposta que a próxima tentativa daria.
+    const runner = await import("@/server/agents/runner");
+    vi.spyOn(runner, "executarAgente").mockRejectedValueOnce(
+      new Error("provedor fora do ar"),
+    );
+
+    await expect(processarAtendimento(job("porta", 0))).rejects.toThrow();
+  });
+});

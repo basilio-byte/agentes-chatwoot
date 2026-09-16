@@ -31,7 +31,7 @@ let entregasVistas: Set<string>;
 let travaOcupada: boolean;
 let agendadoresRemovidos: string[];
 /** O que `executarAgente` deve fazer nesta chamada. */
-let comportamentoDoAgente: "ok" | "falha" | "interrompida";
+let comportamentoDoAgente: "ok" | "falha" | "interrompida" | "sem-credito";
 let execucoes: number;
 
 vi.mock("@/lib/db", () => ({
@@ -89,6 +89,9 @@ vi.mock("@/server/agents/runner", () => ({
     if (comportamentoDoAgente === "falha") throw new Error("integração fora do ar");
     if (comportamentoDoAgente === "interrompida") {
       throw new ExecucaoInterrompida("run-1", "Basílio");
+    }
+    if (comportamentoDoAgente === "sem-credito") {
+      throw Object.assign(new Error("402 Insufficient credits"), { status: 402 });
     }
     return { runId: "run-1", toolCalls: [], iteracoes: 1 };
   },
@@ -228,6 +231,21 @@ describe("agendamento quebrado se desliga sozinho", () => {
 
     expect(schedule!.enabled).toBe(true);
     expect(agendadoresRemovidos).toEqual([]);
+  });
+
+  it("⚠ falta de saldo é pulado, não falha: a conta é que ficou sem crédito", async () => {
+    // Contar como falha desligaria sozinhos agendamentos sãos enquanto a conta
+    // está sem crédito — e eles continuariam desligados depois da reposição,
+    // sem ninguém entender por quê.
+    comportamentoDoAgente = "sem-credito";
+    schedule!.falhasConsecutivas = FALHAS_ATE_DESLIGAR - 1;
+
+    await expect(processarAgendamento(job())).resolves.toBeUndefined();
+
+    expect(schedule!.enabled).toBe(true);
+    expect(agendadoresRemovidos).toEqual([]);
+    expect(ultimaEntrega()?.resultado).toBe("pulado");
+    expect(ultimaEntrega()?.detalhe).toContain("sem crédito");
   });
 
   it("pulado NÃO conta como falha — o sistema funcionando não é defeito", async () => {

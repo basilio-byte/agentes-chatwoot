@@ -47,6 +47,11 @@ import {
   montarContextoDeRetomada,
 } from "@/server/integrations/chatwoot/historico";
 import { ehInterrupcao } from "@/server/agents/cancelamento";
+import {
+  ehSemCredito,
+  marcarSemCredito,
+  NOTA_SEM_CREDITO,
+} from "@/server/agents/sem-credito";
 import { contextoDeMidia } from "@/server/integrations/openai/credenciais";
 import {
   enriquecerComMidia,
@@ -118,7 +123,9 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     // Falha ANTES da chamada ao modelo não cria AgentRun — sem este registro, a
     // causa existiria só no log do container e o painel diria "ainda sem
     // resposta" para sempre.
-    const motivo = erro instanceof Error ? erro.message : String(erro);
+    const bruto = erro instanceof Error ? erro.message : String(erro);
+    const semCredito = ehSemCredito(erro);
+    const motivo = semCredito ? marcarSemCredito(bruto) : bruto;
     await registrarFalha(chatwootConversationId, motivo);
 
     // Parada pedida no painel encerra aqui. Relançar devolveria o job ao
@@ -126,6 +133,17 @@ export async function processarAtendimento(job: Job<JobAtendimento>) {
     // parada não teria valido de nada.
     if (ehInterrupcao(erro)) {
       await avisarInterrupcao(job.data.agentId, chatwootConversationId, erro.porQuem);
+      return;
+    }
+
+    // Sem crédito na OpenRouter encerra aqui pelo mesmo motivo: o BullMQ
+    // rodaria o turno INTEIRO de novo, o 402 voltaria igual, e a rede de
+    // segurança mandaria OUTRO "tive uma instabilidade" ao cliente — uma por
+    // tentativa, mais o aviso da última. Repetir não repõe saldo. A nota
+    // interna nomeia a causa: sem ela, a equipe lê "instabilidade" e espera
+    // passar uma coisa que não passa sozinha.
+    if (semCredito) {
+      await avisarSemCredito(job.data.agentId, chatwootConversationId);
       return;
     }
 
@@ -197,6 +215,38 @@ async function avisarFalhaDefinitiva(
     logger.error(
       { conversa: chatwootConversationId, erro },
       "não consegui avisar o cliente da falha definitiva",
+    );
+  }
+}
+
+/**
+ * Nota interna dizendo que faltou saldo — e que não é nesta conversa que se
+ * resolve.
+ *
+ * Melhor esforço: a nota é o rastro, não o atendimento. O cliente já recebeu o
+ * aviso de instabilidade pela rede de segurança, e o vigia entrega a conversa a
+ * uma pessoa como entrega qualquer turno que ficou sem resposta.
+ */
+async function avisarSemCredito(
+  portaId: string,
+  chatwootConversationId: number,
+) {
+  logger.error(
+    { conversa: chatwootConversationId },
+    "sem crédito na OpenRouter — turno encerrado sem nova tentativa",
+  );
+
+  try {
+    const cliente = await clienteDoAgente(portaId);
+    if (!cliente) return;
+
+    await cliente.enviarMensagem(chatwootConversationId, NOTA_SEM_CREDITO, {
+      privado: true,
+    });
+  } catch (erro) {
+    logger.error(
+      { conversa: chatwootConversationId, erro },
+      "não consegui registrar a nota de falta de crédito",
     );
   }
 }

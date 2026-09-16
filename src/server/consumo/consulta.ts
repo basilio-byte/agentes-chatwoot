@@ -1,3 +1,4 @@
+import { MARCA_SEM_CREDITO } from "@/server/agents/sem-credito";
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { RunSource } from "@/generated/prisma/enums";
@@ -124,3 +125,64 @@ export async function opcoesDeFiltro(): Promise<OpcoesDeFiltro> {
 // importa `@/lib/db`, e componente de cliente não pode ler daqui sem arrastar o
 // Prisma para o bundle. Reexportado para os chamadores continuarem intactos.
 export { ROTULO_DA_FONTE, normalizarFonte } from "@/lib/origens";
+
+/** Dias da janela usada para estimar quanto o saldo ainda dura. */
+export const DIAS_DA_MEDIA = 7;
+
+/**
+ * Gasto médio por dia, para dizer quantos dias o saldo aguenta.
+ *
+ * Janela MÓVEL de 7×24h, e não os últimos sete dias civis: dividir por sete só
+ * é honesto se forem sete dias inteiros, e hoje está sempre pela metade — o dia
+ * corrente puxaria a média para baixo justamente quando ela serve para avisar.
+ *
+ * Soma no banco, e não varredura como a apuração da tela: aqui não há quebra
+ * nenhuma para fazer, e este número não depende dos filtros — o saldo da conta
+ * também não.
+ */
+export async function gastoMedioPorDia(): Promise<number> {
+  const desde = new Date(Date.now() - DIAS_DA_MEDIA * 24 * 60 * 60 * 1000);
+  const { _sum } = await db.agentRun.aggregate({
+    _sum: { costUsd: true },
+    where: { createdAt: { gte: desde } },
+  });
+
+  return Number(_sum.costUsd ?? 0) / DIAS_DA_MEDIA;
+}
+
+/** Janela em que uma falta de saldo ainda é notícia, e não história. */
+const HORAS_DA_JANELA_SEM_CREDITO = 24;
+
+/**
+ * Atendimentos perdidos por falta de crédito nas últimas 24h.
+ *
+ * Existe porque o saldo lido pode estar bom e mesmo assim haver 402: o teto da
+ * própria chave pode ter estourado, ou o crédito pode ter sido reposto depois
+ * de uma janela em que ninguém foi atendido. O número que importa para quem
+ * abre esta tela é quantas conversas já se perderam, não só quanto resta.
+ */
+export async function falhasSemCredito(): Promise<{
+  quantidade: number;
+  ultima: Date | null;
+}> {
+  const desde = new Date(
+    Date.now() - HORAS_DA_JANELA_SEM_CREDITO * 60 * 60 * 1000,
+  );
+  const where = {
+    createdAt: { gte: desde },
+    // A marca é posta pelo runner; sem ela, restaria procurar "402" no meio do
+    // despejo do SDK, que casaria com número dentro de retorno de tool.
+    error: { startsWith: MARCA_SEM_CREDITO },
+  };
+
+  const [quantidade, ultima] = await Promise.all([
+    db.agentRun.count({ where }),
+    db.agentRun.findFirst({
+      where,
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    }),
+  ]);
+
+  return { quantidade, ultima: ultima?.createdAt ?? null };
+}
