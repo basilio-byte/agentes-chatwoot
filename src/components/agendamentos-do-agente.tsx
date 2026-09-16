@@ -16,14 +16,13 @@ import {
   Aviso,
   Badge,
   Button,
-  Card,
-  EmptyState,
   Field,
   Input,
   Meta,
   Select,
   Textarea,
 } from "@/components/ui";
+import { Recolhivel } from "@/components/recolhivel";
 import { formatarData } from "@/lib/utils";
 
 const DIAS = [
@@ -276,23 +275,36 @@ export function AgendamentosDoAgente({
   const [resultado, setResultado] = useState<EstadoAgendamento | null>(null);
   const [ocupado, iniciar] = useTransition();
 
+  const ligados = agendamentos.filter((a) => a.enabled).length;
+
   return (
-    <Card className="space-y-4">
+    <Recolhivel
+      icone={<CalendarClock size={15} aria-hidden />}
+      titulo="Por horário"
+      estado={
+        ligados > 0 ? (
+          <Badge tone="success">
+            {ligados === 1 ? "1 ligado" : `${ligados} ligados`}
+          </Badge>
+        ) : (
+          <Badge tone="neutral">nenhum</Badge>
+        )
+      }
+      resumo="O agente roda sozinho na hora marcada"
+      padraoAberto={agendamentos.length > 0}
+    >
       <div className="flex flex-wrap items-center gap-2">
-        <CalendarClock size={15} aria-hidden className="text-muted" />
-        <h2 className="text-sm font-semibold">Agendamentos</h2>
         {editavel && !criando ? (
           <Button
             size="sm"
-            variant="ghost"
-            className="ml-auto"
+            variant="secondary"
             onClick={() => {
               setCriando(true);
               setEditando(null);
             }}
           >
             <Plus size={13} aria-hidden />
-            Novo
+            Novo agendamento
           </Button>
         ) : null}
       </div>
@@ -317,11 +329,10 @@ export function AgendamentosDoAgente({
       ) : null}
 
       {agendamentos.length === 0 && !criando ? (
-        <EmptyState
-          icone={<CalendarClock size={18} aria-hidden />}
-          titulo="Nenhum agendamento"
-          descricao="Crie um para o agente rodar sozinho — um resumo pela manhã, uma conferência no fim do dia."
-        />
+        <Meta className="block">
+          Nenhum agendamento. Crie um para o agente rodar sozinho — um resumo
+          pela manhã, uma conferência no fim do dia.
+        </Meta>
       ) : null}
 
       <div className="space-y-2">
@@ -423,6 +434,6 @@ export function AgendamentosDoAgente({
           ),
         )}
       </div>
-    </Card>
+    </Recolhivel>
   );
 }

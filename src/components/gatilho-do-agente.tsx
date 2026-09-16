@@ -12,7 +12,8 @@ import {
   EntregasDoWebhook,
   type Entrega,
 } from "@/components/entregas-do-webhook";
-import { Aviso, Badge, Button, Card, Input, Meta } from "@/components/ui";
+import { Aviso, Badge, Button, Input, Meta } from "@/components/ui";
+import { Recolhivel, RecolhivelInterno } from "@/components/recolhivel";
 import { formatarData } from "@/lib/utils";
 
 /**
@@ -55,23 +56,29 @@ export function GatilhoDoAgente({
   }
 
   return (
-    <div className="space-y-6">
-      <Card className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Webhook size={15} aria-hidden className="text-muted" />
-          <h2 className="text-sm font-semibold">Gatilho HTTP externo</h2>
-          {!resumo.configurado ? (
-            <Badge>sem token</Badge>
-          ) : resumo.pausadoAutomaticamenteMotivo ? (
-            <Badge tone="danger">pausado automaticamente</Badge>
-          ) : resumo.enabled ? (
-            <Badge tone="success">ligado</Badge>
-          ) : (
-            <Badge tone="neutral">desligado</Badge>
-          )}
-        </div>
-
-        <p className="text-sm leading-relaxed text-muted">
+    <Recolhivel
+      icone={<Webhook size={15} aria-hidden />}
+      titulo="Gatilho HTTP externo"
+      estado={
+        !resumo.configurado ? (
+          <Badge>sem token</Badge>
+        ) : resumo.pausadoAutomaticamenteMotivo ? (
+          <Badge tone="danger">pausado automaticamente</Badge>
+        ) : resumo.enabled ? (
+          <Badge tone="success">ligado</Badge>
+        ) : (
+          <Badge tone="neutral">desligado</Badge>
+        )
+      }
+      resumo="Um POST de fora — ClickUp, n8n, curl"
+      // Pausa automática abre: é o estado que alguém precisa ver e resolver.
+      padraoAberto={
+        resumo.enabled ||
+        Boolean(resumo.pausadoAutomaticamenteMotivo) ||
+        entregas.length > 0
+      }
+    >
+      <p className="text-sm leading-relaxed text-muted">
           Aciona este agente diretamente por uma chamada HTTP de fora — um
           webhook configurado no ClickUp, no n8n, ou qualquer sistema capaz de
           fazer um POST. Não passa pelo Chatwoot: não há cliente nem conversa,
@@ -163,10 +170,8 @@ export function GatilhoDoAgente({
               : ""}
           </p>
         ) : null}
-      </Card>
 
-      <Card className="space-y-3">
-        <h2 className="text-sm font-semibold">Como o agente recebe o evento</h2>
+      <RecolhivelInterno titulo="Como o agente recebe o evento">
         <p className="text-sm text-muted">
           Cada POST vira uma mensagem para o modelo, com o payload em JSON —
           escreva o prompt do agente sabendo este formato:
@@ -192,10 +197,12 @@ Payload recebido (JSON):
             {"'"}
           </code>
         </Meta>
-      </Card>
+      </RecolhivelInterno>
 
-      <EntregasDoWebhook
-        entregas={entregas}
+      <RecolhivelInterno titulo="Entregas recebidas" contador={entregas.length}>
+        <EntregasDoWebhook
+          semMoldura
+          entregas={entregas}
         textoVazio={
           <>
             Nada chegou ainda. Confira se o sistema externo está apontando
@@ -207,10 +214,11 @@ Payload recebido (JSON):
           <>
             A última entrega foi recusada por token. O{" "}
             <strong>token do gatilho</strong> configurado no sistema externo
-            não confere com o daqui — gere um novo e atualize lá.
-          </>
-        }
-      />
-    </div>
+              não confere com o daqui — gere um novo e atualize lá.
+            </>
+          }
+        />
+      </RecolhivelInterno>
+    </Recolhivel>
   );
 }

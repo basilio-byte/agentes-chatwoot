@@ -49,10 +49,17 @@ export function EntregasDoWebhook({
   entregas,
   textoVazio = TEXTO_VAZIO_PADRAO,
   textoSegredoQuebrado = TEXTO_SEGREDO_QUEBRADO_PADRAO,
+  semMoldura = false,
 }: {
   entregas: Entrega[];
   textoVazio?: React.ReactNode;
   textoSegredoQuebrado?: React.ReactNode;
+  /**
+   * Sem cartão e sem título próprio, para quando já está dentro de um bloco que
+   * os tem — é o caso dos gatilhos, onde moldura dentro de moldura vira
+   * escadinha e o título apareceria duas vezes.
+   */
+  semMoldura?: boolean;
 }) {
   // Só avisa se a recusa ainda vale: uma entrega aceita depois dela significa
   // que o secret já foi corrigido. Sem isto, o alarme ficava vermelho para
@@ -65,18 +72,8 @@ export function EntregasDoWebhook({
       .some((e) => e.resultado === "agendado" || e.resultado === "ignorado");
   const secretQuebrado = ultimaRecusa >= 0 && !aceitaDepois;
 
-  return (
-    <Card className="space-y-3">
-      <div>
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <Radio size={15} aria-hidden className="text-muted" />
-          Entregas recebidas
-        </h2>
-        <p className="text-xs text-muted">
-          O que o Chatwoot mandou para este webhook, mais recente primeiro.
-        </p>
-      </div>
-
+  const corpo = (
+    <>
       {entregas.length === 0 ? (
         <Aviso>{textoVazio}</Aviso>
       ) : (
@@ -112,6 +109,23 @@ export function EntregasDoWebhook({
           </Meta>
         </>
       )}
+    </>
+  );
+
+  if (semMoldura) return <div className="space-y-3">{corpo}</div>;
+
+  return (
+    <Card className="space-y-3">
+      <div>
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <Radio size={15} aria-hidden className="text-muted" />
+          Entregas recebidas
+        </h2>
+        <p className="text-xs text-muted">
+          O que o Chatwoot mandou para este webhook, mais recente primeiro.
+        </p>
+      </div>
+      {corpo}
     </Card>
   );
 }

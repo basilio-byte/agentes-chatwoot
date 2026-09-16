@@ -12,7 +12,8 @@ import {
   EntregasDoWebhook,
   type Entrega,
 } from "@/components/entregas-do-webhook";
-import { Aviso, Badge, Button, Card, Field, Meta, Textarea } from "@/components/ui";
+import { Aviso, Badge, Button, Field, Meta, Textarea } from "@/components/ui";
+import { Recolhivel, RecolhivelInterno } from "@/components/recolhivel";
 import { formatarData } from "@/lib/utils";
 
 const TOM_DO_RESULTADO: Record<string, "success" | "danger" | "neutral"> = {
@@ -51,34 +52,44 @@ export function GatilhoDeCheckboxDoAgente({
   const [ocupado, iniciar] = useTransition();
 
   return (
-    <div className="space-y-6">
-      <Card className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <ListChecks size={15} aria-hidden className="text-muted" />
-          <h2 className="text-sm font-semibold">Quando um checkbox é marcado na conversa</h2>
-          {resumo.enabled ? (
-            <Badge tone="success">ligado</Badge>
-          ) : (
-            <Badge tone="neutral">desligado</Badge>
-          )}
-
-          {editavel ? (
-            <Button
-              size="sm"
-              variant={resumo.enabled ? "secondary" : "primary"}
-              className="ml-auto"
-              disabled={ocupado}
-              onClick={() =>
-                iniciar(async () =>
-                  setResultado(await alternarGatilhoDeCheckbox(agentId, !resumo.enabled)),
-                )
-              }
-            >
-              {resumo.enabled ? "Desligar" : "Ligar"}
-            </Button>
-          ) : null}
-        </div>
-
+    // ⚠ A resposta do botão fica FORA do bloco, e de propósito: o botão age com
+    // o bloco fechado, e uma recusa ("ligue o agente antes") escrita lá dentro
+    // seria invisível — clicar em Ligar e nada acontecer é indistinguível de um
+    // botão quebrado.
+    <div className="space-y-2">
+      <Recolhivel
+      icone={<ListChecks size={15} aria-hidden />}
+      titulo="Checkbox marcado"
+      estado={
+        resumo.enabled ? (
+          <Badge tone="success">ligado</Badge>
+        ) : (
+          <Badge tone="neutral">desligado</Badge>
+        )
+      }
+      acao={
+        editavel ? (
+          <Button
+            size="sm"
+            variant={resumo.enabled ? "secondary" : "primary"}
+            disabled={ocupado}
+            onClick={() =>
+              iniciar(async () =>
+                setResultado(await alternarGatilhoDeCheckbox(agentId, !resumo.enabled)),
+              )
+            }
+          >
+            {resumo.enabled ? "Desligar" : "Ligar"}
+          </Button>
+        ) : null
+      }
+      resumo={
+        resumo.atributos.length > 0
+          ? resumo.atributos.join(", ")
+          : "A equipe manda a conversa para este agente"
+      }
+      padraoAberto={resumo.enabled || entregas.length > 0}
+    >
         <p className="text-sm leading-relaxed text-muted">
           Quando alguém da equipe marca um dos checkboxes abaixo numa conversa do
           Chatwoot, em qualquer caixa do escopo deste agente (aba Canal), ele roda
@@ -111,9 +122,6 @@ export function GatilhoDeCheckboxDoAgente({
             O agente está desligado: os checkboxes marcados chegam e são ignorados.
           </Aviso>
         ) : null}
-
-        {resultado?.ok ? <Aviso tone="success">{resultado.ok}</Aviso> : null}
-        {resultado?.erro ? <Aviso tone="danger">{resultado.erro}</Aviso> : null}
 
         <form action={salvar} className="space-y-4 border-t border-line pt-4">
           <Field
@@ -150,10 +158,8 @@ export function GatilhoDeCheckboxDoAgente({
         ) : (
           <Meta className="block">Ainda não rodou.</Meta>
         )}
-      </Card>
 
-      <Card className="space-y-3">
-        <h2 className="text-sm font-semibold">Como o agente recebe a conversa marcada</h2>
+      <RecolhivelInterno titulo="Como o agente recebe a conversa marcada">
         <p className="text-sm text-muted">
           Uma mensagem por checkbox marcado — escreva o prompt sabendo este
           formato. A transcrição vai do fim do atendimento anterior até a
@@ -178,18 +184,25 @@ Quem da equipe respondeu ao cliente: Regis Costa
 15/09 13:28 · Sistema: Sistema de Automação adicionou crm_clickup
 [fim da transcrição]`}
         </pre>
-      </Card>
+      </RecolhivelInterno>
 
-      <EntregasDoWebhook
-        entregas={entregas}
-        textoVazio={
-          <>
-            Nenhum checkbox marcado chegou ainda. Confira se o gatilho está{" "}
-            <strong>ligado</strong> e se o <strong>webhook de conta</strong> do
-            Chatwoot aponta para este sistema, assinando atualização de conversa.
-          </>
-        }
-      />
+      <RecolhivelInterno titulo="Entregas recebidas" contador={entregas.length}>
+        <EntregasDoWebhook
+          semMoldura
+          entregas={entregas}
+          textoVazio={
+            <>
+              Nenhum checkbox marcado chegou ainda. Confira se o gatilho está{" "}
+              <strong>ligado</strong> e se o <strong>webhook de conta</strong> do
+              Chatwoot aponta para este sistema, assinando atualização de conversa.
+            </>
+          }
+        />
+      </RecolhivelInterno>
+      </Recolhivel>
+
+      {resultado?.ok ? <Aviso tone="success">{resultado.ok}</Aviso> : null}
+      {resultado?.erro ? <Aviso tone="danger">{resultado.erro}</Aviso> : null}
     </div>
   );
 }

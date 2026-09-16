@@ -12,7 +12,8 @@ import {
   EntregasDoWebhook,
   type Entrega,
 } from "@/components/entregas-do-webhook";
-import { Aviso, Badge, Button, Card, Field, Meta, Textarea } from "@/components/ui";
+import { Aviso, Badge, Button, Field, Meta, Textarea } from "@/components/ui";
+import { Recolhivel, RecolhivelInterno } from "@/components/recolhivel";
 import { formatarData } from "@/lib/utils";
 
 const TOM_DO_RESULTADO: Record<string, "success" | "danger" | "neutral"> = {
@@ -50,35 +51,42 @@ export function GatilhoDeConversaDoAgente({
   const [ocupado, iniciar] = useTransition();
 
   return (
-    <div className="space-y-6">
-      <Card className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <MessagesSquare size={15} aria-hidden className="text-muted" />
-          <h2 className="text-sm font-semibold">Quando uma conversa é resolvida</h2>
-          {resumo.enabled ? (
-            <Badge tone="success">ligado</Badge>
-          ) : (
-            <Badge tone="neutral">desligado</Badge>
-          )}
-
-          {editavel ? (
-            <Button
-              size="sm"
-              variant={resumo.enabled ? "secondary" : "primary"}
-              className="ml-auto"
-              disabled={ocupado}
-              onClick={() =>
-                iniciar(async () =>
-                  setResultado(await alternarGatilhoDeConversa(agentId, !resumo.enabled)),
-                )
-              }
-            >
-              {resumo.enabled ? "Desligar" : "Ligar"}
-            </Button>
-          ) : null}
-        </div>
-
-        <p className="text-sm leading-relaxed text-muted">
+    // ⚠ A resposta do botão fica FORA do bloco, e de propósito: o botão age com
+    // o bloco fechado, e uma recusa ("ligue o agente antes") escrita lá dentro
+    // seria invisível — clicar em Ligar e nada acontecer é indistinguível de um
+    // botão quebrado.
+    <div className="space-y-2">
+      <Recolhivel
+      icone={<MessagesSquare size={15} aria-hidden />}
+      titulo="Conversa resolvida"
+      estado={
+        resumo.enabled ? (
+          <Badge tone="success">ligado</Badge>
+        ) : (
+          <Badge tone="neutral">desligado</Badge>
+        )
+      }
+      acao={
+        editavel ? (
+          <Button
+            size="sm"
+            variant={resumo.enabled ? "secondary" : "primary"}
+            disabled={ocupado}
+            onClick={() =>
+              iniciar(async () =>
+                setResultado(await alternarGatilhoDeConversa(agentId, !resumo.enabled)),
+              )
+            }
+          >
+            {resumo.enabled ? "Desligar" : "Ligar"}
+          </Button>
+        ) : null
+      }
+      resumo="Avalia o atendimento que acabou de ser resolvido"
+      // Nasce aberto só quando há o que ver: ligado, ou já chegou entrega.
+      padraoAberto={resumo.enabled || entregas.length > 0}
+    >
+      <p className="text-sm leading-relaxed text-muted">
           Toda vez que uma conversa é resolvida no Chatwoot, em qualquer caixa do
           escopo deste agente (aba Canal), ele roda em segundo plano sobre a
           transcrição daquele atendimento. <strong>Nada vai para o cliente</strong>:
@@ -91,9 +99,6 @@ export function GatilhoDeConversaDoAgente({
             O agente está desligado: as conversas resolvidas chegam e são ignoradas.
           </Aviso>
         ) : null}
-
-        {resultado?.ok ? <Aviso tone="success">{resultado.ok}</Aviso> : null}
-        {resultado?.erro ? <Aviso tone="danger">{resultado.erro}</Aviso> : null}
 
         <form action={salvar} className="space-y-4 border-t border-line pt-4">
           <label className="flex items-start gap-2 text-sm">
@@ -147,10 +152,8 @@ export function GatilhoDeConversaDoAgente({
         ) : (
           <Meta className="block">Ainda não rodou.</Meta>
         )}
-      </Card>
 
-      <Card className="space-y-3">
-        <h2 className="text-sm font-semibold">Como o agente recebe a conversa</h2>
+      <RecolhivelInterno titulo="Como o agente recebe a conversa">
         <p className="text-sm text-muted">
           Uma mensagem por atendimento resolvido — escreva o prompt sabendo este
           formato. A transcrição vai do fim do atendimento anterior até esta
@@ -173,18 +176,25 @@ Quem da equipe respondeu ao cliente: Regis Costa
 15/09 12:17 · Sistema: Conversa foi marcada como resolvida por Regis Costa
 [fim da transcrição]`}
         </pre>
-      </Card>
+      </RecolhivelInterno>
 
-      <EntregasDoWebhook
-        entregas={entregas}
-        textoVazio={
-          <>
-            Nenhuma conversa resolvida chegou ainda. Confira se o gatilho está{" "}
-            <strong>ligado</strong> e se o <strong>webhook de conta</strong> do
-            Chatwoot aponta para este sistema, assinando mudança de status.
-          </>
-        }
-      />
+      <RecolhivelInterno titulo="Entregas recebidas" contador={entregas.length}>
+        <EntregasDoWebhook
+          semMoldura
+          entregas={entregas}
+          textoVazio={
+            <>
+              Nenhuma conversa resolvida chegou ainda. Confira se o gatilho está{" "}
+              <strong>ligado</strong> e se o <strong>webhook de conta</strong> do
+              Chatwoot aponta para este sistema, assinando mudança de status.
+            </>
+          }
+        />
+      </RecolhivelInterno>
+      </Recolhivel>
+
+      {resultado?.ok ? <Aviso tone="success">{resultado.ok}</Aviso> : null}
+      {resultado?.erro ? <Aviso tone="danger">{resultado.erro}</Aviso> : null}
     </div>
   );
 }

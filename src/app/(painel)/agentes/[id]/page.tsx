@@ -361,7 +361,31 @@ export default async function AgentePage({
               Boolean(resumoGatilho.pausadoAutomaticamenteMotivo) ||
               agendamentos.some((a) => a.pausadoAutomaticamenteMotivo),
             conteudo: (
-              <div className="max-w-3xl space-y-6">
+              <div className="max-w-3xl space-y-3">
+                <div>
+                  <h2 className="text-sm font-semibold">
+                    Quando este agente roda
+                  </h2>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted">
+                    Cinco maneiras de acionar o mesmo agente. Abra uma para ver
+                    a explicação, configurar e conferir o que já chegou.
+                  </p>
+                </div>
+
+                {/* A porta principal não se configura aqui — e era justamente
+                    por isso que ela não aparecia em lugar nenhum desta lista.
+                    Quem abre "Gatilhos" precisa ver que ela existe antes de
+                    concluir que o agente só roda por webhook. */}
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-line px-4 py-3">
+                  <MessagesSquare size={15} aria-hidden className="text-muted" />
+                  <span className="text-sm font-semibold">
+                    Mensagem no Chatwoot
+                  </span>
+                  <span className="ml-auto text-xs text-muted">
+                    A porta principal — bot e caixas ficam na aba Canal
+                  </span>
+                </div>
+
                 <AgendamentosDoAgente
                   agentId={agente.id}
                   agendamentos={agendamentos}

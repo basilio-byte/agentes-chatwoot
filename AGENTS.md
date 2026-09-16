@@ -2111,6 +2111,29 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
   de conserto e **não bastou**: dica visual depende de a pessoa reparar, e a
   prova de que não repara aconteceu duas vezes. Quebrar custa altura, e altura
   se vê. **Não reintroduza `overflow-x` aqui** — sete integrações vão virar oito.
+- **Lista de coisas configuráveis: uma linha por item, que abre**
+  (`<Recolhivel>`, `src/components/recolhivel.tsx`). A aba Gatilhos empilhava as
+  quatro maneiras de acionar o agente, cada uma com explicação, formulário,
+  exemplo da mensagem e histórico de entregas: **dez blocos do mesmo tamanho e
+  3.900 px de altura**, quatro rolagens, e nada dizendo quais estavam ligadas —
+  que é a pergunta de quem abre a aba. Hoje são cinco linhas numa tela só, com
+  estado e ação visíveis sem abrir. O padrão não foi inventado: é o da aba
+  Integrações, que já era assim e nunca incomodou ninguém.
+  ⚠ **A resposta do botão da linha fica FORA do bloco.** O botão age com o bloco
+  fechado, e a recusa (`"ligue o agente antes"`) escrita no corpo seria
+  invisível — clicar em Ligar e não ver nada acontecer é indistinguível de um
+  botão quebrado.
+  ⚠ **O clique do botão precisa de `preventDefault`**: o `<details>` abre como
+  ação PADRÃO do clique no `<summary>`, então ligar um gatilho abriria o bloco
+  junto. `stopPropagation` sozinho não segura.
+  ⚠ **O estado aberto/fechado é do navegador, não da prop.** A prop só decide
+  como o bloco nasce: se ela mandasse sempre, salvar o formulário de um gatilho
+  desligado o fecharia na cara de quem salvou, escondendo o próprio aviso de
+  "salvo" — as server actions revalidam e o componente volta a renderizar.
+  ⚠ **Variante responsiva vence variante de estado na ordem do Tailwind.** O
+  resumo da linha some com `max-sm:hidden group-open:hidden` (a mesma
+  propriedade, sem briga); com `sm:block` ele continuaria visível de bloco
+  aberto.
 - **O logo da Seahub só existe em branco.** No tema claro ele é invertido por CSS
   (`.logo-seahub`) em vez de manter dois arquivos.
 - **Tools são ordenadas por nome** antes de ir para a API (`paraFerramentasAnthropic`).
