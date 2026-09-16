@@ -1806,41 +1806,77 @@ continuou no nome da primeira — e é por ela que se mede quem vendeu.
   credencial, toggle global e allowlist valem igual, e ClickUp desligado no
   painel vale para o sistema também.
 
-##### `/prazos`: quantas vezes cada pessoa deixou vencer
+##### `/prazos`: a taxa de perda de cada pessoa
 
-Tela nova, **só para Proprietário** (pedido do usuário em 16/09/2026: *"um
-contador de troca, somando quantas vezes um atendente perdeu o prazo"*, dentro
-do nosso sistema e **nunca como nota privada na conversa**).
+Tela **só para Proprietário** (pedido do usuário em 16/09/2026: *"um contador de
+troca, somando quantas vezes um atendente perdeu o prazo"*, dentro do nosso
+sistema e **nunca como nota privada na conversa**). No mesmo dia veio a régua
+que faltava: *"a proporção mostrando realmente quantas conversas foram vencidas
+em relação às que foram atendidas"*.
 
 - **Nota privada era o lugar errado por construção.** Ela fica dentro do
   atendimento: somar exigiria abrir conversa por conversa, e o número apareceria
-  para a equipe inteira — inclusive para quem está sendo contado.
+  para a equipe inteira — inclusive para quem está sendo medido.
 - **Não há tabela nova nem migration.** Cada vencimento já grava uma linha em
-  `PrazoDeConversa` desde 14/09/2026; a tela só agrupa por `donoId`/`donoNome`.
-- ⚠ **Só `EXECUTADO` conta como falta**, e é a única honesta: é o estado em que
-  o vigia leu o Chatwoot ao vivo e confirmou que ninguém da equipe tinha
-  escrito. `CANCELADO` quer dizer justamente que alguém respondeu, e
-  `DESCARTADO` que não se chegou a conferir. `FALHOU` tenta os dois lados —
-  pode ser falta cuja troca deu errado, pode ser o prazo morrendo antes da
-  conferência —, e o registro não distingue: somar no nome de uma pessoa
+  `PrazoDeConversa` desde 14/09/2026; a tela agrupa por `donoId`/`donoNome`.
+  Lógica pura e testada em `prazos/contagem.ts`.
+- ⚠ **Contagem crua mente sobre quem atende mais.** A primeira versão desenhava
+  a barra como a fatia do total de perdas, e quem recebia trinta conversas e
+  perdia três aparecia pior que quem recebia quatro e perdia duas. Hoje a barra
+  é a **taxa**: `deixou vencer ÷ (deixou vencer + respondeu a tempo)`.
+- **Os dois lados da taxa são o MESMO instante da MESMA conferência**: no
+  vencimento o vigia lê o Chatwoot ao vivo e vê se alguém da equipe escreveu.
+  É o que os torna comparáveis. Tudo o mais — conversa resolvida antes, trocou
+  de mãos antes, `DESCARTADO`, `FALHOU` — não responde "essa pessoa respondeu?",
+  então aparece na tela e fica fora da taxa de qualquer um. `FALHOU` é o que
+  mais tenta: pode ser falta cuja troca deu errado, pode ser o prazo morrendo
+  antes da conferência, e o registro não distingue — somar no nome de alguém
   transformaria falha nossa em falta dela.
-- **O que não conta aparece assim mesmo**, no bloco "Fora da conta", com
-  conversa, quem estava com ela e o motivo registrado. Sem ele o total seria uma
+- ⚠⚠ **`substituído por um prazo novo` não é desfecho, e fica fora até de
+  "recebeu".** É o `CANCELADO` que `registrarPrazo` grava para o prazo zerar a
+  cada resposta. Contá-lo faria UMA entrega com três registros virar quatro
+  conversas recebidas, três delas como "não perdeu" — diluindo justamente a taxa
+  de quem tem mais prazo registrado. Tem teste.
+- ⚠ **Os motivos viraram constantes (`MOTIVO`, em `decisao.ts`) porque deixaram
+  de ser texto de tela.** São **dado lido do banco**: é por eles que a contagem
+  distingue quem respondeu de quem deixou vencer, em linhas gravadas semanas
+  antes, e não existe coluna de desfecho que pudesse substituí-los (criar uma
+  não recuperaria o passado). Reescrever uma frase reclassifica o histórico em
+  silêncio — e por isso a falha pende para o lado seguro: motivo que a contagem
+  não reconhece vira "sem conclusão", nunca falta de alguém. Tem teste.
+- **Sem base, a taxa é "—", não zero.** Quem só teve conversa resolvida antes
+  não tem numerador nem denominador, e um `0%` ali se leria como elogio.
+- **A tabela ordena por perdas absolutas, não pela taxa.** Liderar pela taxa
+  poria "1 de 1 = 100%" acima de quem deixou vencer dez vezes. As colunas
+  `Recebeu` e `Respondeu a tempo` ficam ao lado para a taxa nunca ser lida sem
+  base, e o título da barra traz a fração.
+- **Duas ações da perda** (decisão do usuário): "passou adiante" e "voltou ao
+  agente", numa linha sob o número. São faltas do mesmo tamanho com
+  consequências diferentes, e somá-las esconderia a segunda.
+- **A quebra por agente diz em que FLUXO se perde.** A mesma pessoa pode ir bem
+  na reserva de sala e mal na venda, e o agente é a única pista de contexto que
+  o registro do prazo carrega.
+- **"Quem assumiu depois" é carga que não aparecia em lugar nenhum.** O prazo
+  entrega a conversa a outra pessoa (ou de volta ao agente), e isso é trabalho
+  no colo de alguém.
+- **O que não entra na taxa aparece assim mesmo**, no bloco "Fora da conta", com
+  conversa, quem estava com ela e o motivo registrado. Sem ele a taxa seria
   meia-verdade: quem lê precisa ver o tamanho do que ficou de fora antes de
   cobrar alguém pelo resto.
-- **Duas colunas de desfecho** (decisão do usuário): "passou para outra pessoa"
-  e "voltou para o agente". São faltas do mesmo tamanho com consequências
-  diferentes, e somá-las esconderia a segunda.
 - ⚠ **A mesma pessoa não pode virar duas linhas.** `donoNome` fica nulo quando
   quem atendia não estava na lista lida naquele instante; a contagem casa pelo
   `donoId` e busca o nome em qualquer outra linha da mesma pessoa.
 - ⚠ **Recusa com 404, não com "sem permissão".** É a única tela escondida da
   barra lateral, e uma recusa que confirma a existência contaria a quem está
-  sendo contado que a contagem existe. Quem guarda é `alcancaPapel` dentro da
+  sendo medido que a medida existe. Quem guarda é `alcancaPapel` dentro da
   página — o item sumido do menu não é garantia nenhuma.
 - **O corte é por `finalizadoEm`**, quando o prazo venceu, não quando foi
   registrado: um prazo de 1 h criado às 23h30 vence no dia seguinte. O recorte
   de período é o **mesmo módulo** de `/consumo`.
+- ⚠ **O denominador NÃO é "todas as conversas da pessoa"** — esse número não
+  existe no sistema. Cada prazo de EQUIPE é uma entrega: o robô passou a
+  conversa para alguém e o relógio começou. A tela diz isso em letras claras,
+  para ninguém ler "recebeu 30" como o total de atendimentos daquele mês.
 
 ⚠ **O vigia antigo passou a conferir o Chatwoot ao vivo antes de escalar**
 (`queue/escalada.ts`, 14/09/2026). Antes ele confiava só no banco: se uma pessoa
