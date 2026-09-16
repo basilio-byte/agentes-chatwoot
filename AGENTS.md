@@ -1148,6 +1148,18 @@ consegue pagar o caminho certo pega o atalho.
 - **Campo errado aborta o lote inteiro**, e a resposta devolve os nomes que
   existem. Tarefa criada com metade dos dados é pior do que pedir correção.
 - **Escrever em `formula`/`rollup` é recusado aqui**, não na API.
+- ⚠ **Só DOIS campos dizem quem ATENDE, e dois que parecem dizer são do
+  CLIENTE** (decisão do usuário em 16/09/2026, depois da terceira confusão).
+  Da equipe: o campo personalizado **`VENDEDOR`** (`drop_down`) e o
+  **responsável NATIVO** da task. Do cliente: **`RESPONSÁVEL`** (texto) e
+  **`E-mail do responsável`** — escrever o nome do atendente neles apaga o dado
+  do cliente.
+  ⚠ **O nome do Chatwoot não é a opção do dropdown.** As opções são nomes
+  curtos (Alan, Kelly, Diego, Nathã, Auto Venda…), e a pessoa que no Chatwoot é
+  "Wellen Kelly" é a opção **"Kelly"** — não "Wellen". Casar por primeiro nome
+  erraria justamente em quem mais recebe rodízio. A regra é casar QUALQUER
+  palavra do nome e exigir correspondência ÚNICA; sem isso, não se escreve nada
+  (`prazos/vendedor.ts`).
 
 ### Catálogo de tools: 33 em 10 categorias
 
@@ -1761,6 +1773,74 @@ havia ninguém vendo o tempo passar.
     executados depois do corte do histórico). A segunda seria pingue-pongue: o
     agente entrega de novo, o prazo devolve de novo, e ninguém fecha a venda.
   - **Agente desligado não retoma**: a conversa fica com a pessoa, com nota.
+
+##### A task do CRM acompanha a troca
+
+Quando o prazo **reatribui**, `passarTarefaDoCrm` passa junto a task que um
+agente criou NAQUELA conversa (`prazos/crm.ts`, 16/09/2026). Nasceu da conversa
+13986: às 13:22 o rodízio atribuiu a uma pessoa e o CRM criou a task no nome
+dela; às 13:33 ninguém tinha respondido e a conversa foi para outra. A task
+continuou no nome da primeira — e é por ela que se mede quem vendeu.
+
+- ⚠ **Só DOIS campos dizem quem atende** (decisão do usuário, 16/09/2026): o
+  **responsável nativo** da task e o campo personalizado **`VENDEDOR`**.
+  `RESPONSÁVEL` e `E-mail do responsável` são campos do **CLIENTE**; escrever o
+  atendente neles apagaria o dado de quem contratou.
+- **A task é achada pelas `ToolCall`** de `clickup_criar_tarefa` com
+  `criada: true` daquela conversa, em 30 dias — nunca por telefone, que acharia
+  a negociação de outro atendimento. Mesma janela e mesma leitura do NPS.
+- ⚠ **O `VENDEDOR` não é o primeiro nome.** As opções do dropdown são nomes
+  curtos e no Chatwoot a pessoa é "Nome Sobrenome", cuja opção pode ser o
+  SOBRENOME. `opcaoDoVendedor` casa qualquer palavra de três letras ou mais e
+  exige **uma única** opção; nenhuma ou mais de uma não vira palpite, vira
+  recusa registrada na nota. Casar por primeiro nome erraria em silêncio, e a
+  venda apareceria no nome de outra pessoa.
+- **Vai DEPOIS da atribuição no Chatwoot, e nunca lança.** Quem espera é o
+  cliente; o CRM é registro. O que falhar volta em `problemas`, entra na nota
+  interna do prazo e no `resultado` da linha.
+- **Só no `reatribuir`.** Em `voltar_para_o_agente` não há pessoa nova para
+  assumir — a conversa volta para o agente, e trocar o vendedor da task para um
+  robô apagaria quem estava vendendo.
+- **O cliente do ClickUp é o mesmo dos agentes**, aberto por
+  `clickup/sistema.ts` (extraído de `nps/crm.ts`, que passou a usá-lo):
+  credencial, toggle global e allowlist valem igual, e ClickUp desligado no
+  painel vale para o sistema também.
+
+##### `/prazos`: quantas vezes cada pessoa deixou vencer
+
+Tela nova, **só para Proprietário** (pedido do usuário em 16/09/2026: *"um
+contador de troca, somando quantas vezes um atendente perdeu o prazo"*, dentro
+do nosso sistema e **nunca como nota privada na conversa**).
+
+- **Nota privada era o lugar errado por construção.** Ela fica dentro do
+  atendimento: somar exigiria abrir conversa por conversa, e o número apareceria
+  para a equipe inteira — inclusive para quem está sendo contado.
+- **Não há tabela nova nem migration.** Cada vencimento já grava uma linha em
+  `PrazoDeConversa` desde 14/09/2026; a tela só agrupa por `donoId`/`donoNome`.
+- ⚠ **Só `EXECUTADO` conta como falta**, e é a única honesta: é o estado em que
+  o vigia leu o Chatwoot ao vivo e confirmou que ninguém da equipe tinha
+  escrito. `CANCELADO` quer dizer justamente que alguém respondeu, e
+  `DESCARTADO` que não se chegou a conferir. `FALHOU` tenta os dois lados —
+  pode ser falta cuja troca deu errado, pode ser o prazo morrendo antes da
+  conferência —, e o registro não distingue: somar no nome de uma pessoa
+  transformaria falha nossa em falta dela.
+- **O que não conta aparece assim mesmo**, no bloco "Fora da conta", com
+  conversa, quem estava com ela e o motivo registrado. Sem ele o total seria uma
+  meia-verdade: quem lê precisa ver o tamanho do que ficou de fora antes de
+  cobrar alguém pelo resto.
+- **Duas colunas de desfecho** (decisão do usuário): "passou para outra pessoa"
+  e "voltou para o agente". São faltas do mesmo tamanho com consequências
+  diferentes, e somá-las esconderia a segunda.
+- ⚠ **A mesma pessoa não pode virar duas linhas.** `donoNome` fica nulo quando
+  quem atendia não estava na lista lida naquele instante; a contagem casa pelo
+  `donoId` e busca o nome em qualquer outra linha da mesma pessoa.
+- ⚠ **Recusa com 404, não com "sem permissão".** É a única tela escondida da
+  barra lateral, e uma recusa que confirma a existência contaria a quem está
+  sendo contado que a contagem existe. Quem guarda é `alcancaPapel` dentro da
+  página — o item sumido do menu não é garantia nenhuma.
+- **O corte é por `finalizadoEm`**, quando o prazo venceu, não quando foi
+  registrado: um prazo de 1 h criado às 23h30 vence no dia seguinte. O recorte
+  de período é o **mesmo módulo** de `/consumo`.
 
 ⚠ **O vigia antigo passou a conferir o Chatwoot ao vivo antes de escalar**
 (`queue/escalada.ts`, 14/09/2026). Antes ele confiava só no banco: se uma pessoa

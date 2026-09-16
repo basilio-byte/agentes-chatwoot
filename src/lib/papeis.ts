@@ -48,6 +48,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Criar ou editar agentes, integrações e gatilhos",
       "Testar no playground — cada teste gasta crédito da OpenRouter",
       "Ver credenciais ou mexer em contas",
+      "Ver a contagem de prazos perdidos por pessoa",
     ],
   },
 
@@ -67,6 +68,10 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Ver ou trocar as credenciais das integrações",
       "Gerar ou rotacionar o token do gatilho HTTP",
       "Criar contas, mudar papéis ou redefinir a senha de outra pessoa",
+      // A tela Prazos conta falta POR PESSOA, e o painel é aberto à equipe
+      // inteira — inclusive a quem está sendo contado. Quem decide o que fazer
+      // com o número é quem responde pela equipe.
+      "Ver a contagem de prazos perdidos por pessoa (tela Prazos)",
     ],
   },
 
@@ -82,6 +87,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Trocar as credenciais de Chatwoot, ClickUp, Conexa, ZapSign, OpenAI e Google Workspace",
       "Gerar e rotacionar o token do gatilho HTTP",
       "Criar contas, mudar papéis, redefinir senha e desativar pessoas",
+      "Ver a tela Prazos: quantas vezes cada pessoa deixou vencer o prazo de resposta da equipe",
     ],
     naoPode: [
       "Desativar a própria conta",

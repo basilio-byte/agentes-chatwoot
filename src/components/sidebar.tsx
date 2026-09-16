@@ -10,15 +10,22 @@ import {
   MessagesSquare,
   Plug,
   ScrollText,
+  Timer,
   Users,
   Wallet,
 } from "lucide-react";
-import type { UserRole } from "@/generated/prisma/enums";
+import { UserRole } from "@/generated/prisma/enums";
 import { Button } from "@/components/ui";
 import { SeletorDeTema } from "@/components/tema";
-import { PAPEIS } from "@/lib/papeis";
+import { alcancaPapel, PAPEIS } from "@/lib/papeis";
 import { cn } from "@/lib/utils";
 
+/**
+ * ⚠ `papelMinimo` esconde o item, e esconder NÃO é a garantia: quem guarda a
+ * tela é o `exigirPapel` dentro dela. Aqui é para não oferecer à equipe um
+ * caminho que vai terminar em erro — e, no caso de Prazos, para o painel não
+ * anunciar a quem está sendo contado que existe uma contagem.
+ */
 const SECOES = [
   {
     titulo: "Atendimento",
@@ -27,6 +34,12 @@ const SECOES = [
       { href: "/conversas", label: "Conversas", icone: MessagesSquare },
       { href: "/execucoes", label: "Execuções", icone: ScrollText },
       { href: "/consumo", label: "Consumo", icone: Wallet },
+      {
+        href: "/prazos",
+        label: "Prazos",
+        icone: Timer,
+        papelMinimo: UserRole.OWNER,
+      },
     ],
   },
   {
@@ -72,43 +85,51 @@ export function Sidebar({
         </Link>
 
         <nav className="space-y-6">
-          {SECOES.map((secao) => (
-            <div key={secao.titulo} className="space-y-0.5">
-              <p className="px-2 pb-1.5 text-[10px] font-semibold tracking-[0.12em] text-muted/70 uppercase">
-                {secao.titulo}
-              </p>
+          {SECOES.map((secao) => {
+            const itens = secao.itens.filter((item) => {
+              const minimo = "papelMinimo" in item ? item.papelMinimo : null;
+              return !minimo || alcancaPapel(usuario.role, minimo);
+            });
+            if (itens.length === 0) return null;
 
-              {secao.itens.map(({ href, label, icone: Icone }) => {
-                const ativo = caminho === href || caminho.startsWith(`${href}/`);
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    aria-current={ativo ? "page" : undefined}
-                    className={cn(
-                      // A régua da esquerda é sempre desenhada, transparente
-                      // quando inativa: sem isso o item pulava 3px ao ficar
-                      // ativo.
-                      "flex h-9 items-center gap-2.5 rounded-lg border-l-2 pr-2 pl-2 text-sm transition",
-                      ativo
-                        ? "border-accent bg-accent-soft font-medium text-accent"
-                        : "border-transparent text-muted hover:bg-foreground/[0.04] hover:text-foreground",
-                    )}
-                  >
-                    <Icone
-                      size={16}
-                      aria-hidden
+            return (
+              <div key={secao.titulo} className="space-y-0.5">
+                <p className="px-2 pb-1.5 text-[10px] font-semibold tracking-[0.12em] text-muted/70 uppercase">
+                  {secao.titulo}
+                </p>
+
+                {itens.map(({ href, label, icone: Icone }) => {
+                  const ativo = caminho === href || caminho.startsWith(`${href}/`);
+                  return (
+                    <Link
+                      key={href}
+                      href={href}
+                      aria-current={ativo ? "page" : undefined}
                       className={cn(
-                        "shrink-0 transition-opacity",
-                        ativo ? "opacity-100" : "opacity-70",
+                        // A régua da esquerda é sempre desenhada, transparente
+                        // quando inativa: sem isso o item pulava 3px ao ficar
+                        // ativo.
+                        "flex h-9 items-center gap-2.5 rounded-lg border-l-2 pr-2 pl-2 text-sm transition",
+                        ativo
+                          ? "border-accent bg-accent-soft font-medium text-accent"
+                          : "border-transparent text-muted hover:bg-foreground/[0.04] hover:text-foreground",
                       )}
-                    />
-                    {label}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+                    >
+                      <Icone
+                        size={16}
+                        aria-hidden
+                        className={cn(
+                          "shrink-0 transition-opacity",
+                          ativo ? "opacity-100" : "opacity-70",
+                        )}
+                      />
+                      {label}
+                    </Link>
+                  );
+                })}
+              </div>
+            );
+          })}
         </nav>
       </div>
 

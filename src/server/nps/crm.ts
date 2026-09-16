@@ -1,15 +1,12 @@
 import { db } from "@/lib/db";
-import { decifrar } from "@/lib/crypto";
 import { logger } from "@/lib/logger";
-import { IntegrationProvider } from "@/generated/prisma/enums";
 import { DIAS_DE_REGISTRO } from "@/server/conversa-marcada/mensagem";
-import { clickupIntegration, resolverLista } from "@/server/integrations/clickup";
-import { ClickUpClient } from "@/server/integrations/clickup/client";
+import { resolverLista } from "@/server/integrations/clickup";
 import {
-  clickupConfigSchema,
-  type ClickUpConfig,
-} from "@/server/integrations/clickup/config";
-import type { ToolContext } from "@/server/integrations/types";
+  abrirClickUp,
+  type ClickUpDoSistema,
+} from "@/server/integrations/clickup/sistema";
+import type { ClickUpConfig } from "@/server/integrations/clickup/config";
 import type { NpsConfig } from "./config";
 import { notaSemCrm } from "./regras";
 
@@ -29,50 +26,6 @@ import { notaSemCrm } from "./regras";
  */
 
 const DIA = 24 * 60 * 60 * 1000;
-
-type ClickUpDoSistema = {
-  cliente: ClickUpClient;
-  config: ClickUpConfig;
-  executar: (ferramenta: string, entrada: unknown) => Promise<unknown>;
-};
-
-async function abrirClickUp(): Promise<ClickUpDoSistema | { erro: string }> {
-  const integracao = await db.integration.findUnique({
-    where: { provider: IntegrationProvider.CLICKUP },
-    include: { credential: true },
-  });
-  // Desligado no painel é desligado para todo mundo, inclusive para o sistema.
-  if (!integracao?.enabled) return { erro: "a integração do ClickUp está desligada" };
-  if (!integracao.credential) return { erro: "o ClickUp está sem token" };
-
-  const config = clickupConfigSchema.safeParse(integracao.config);
-  if (!config.success) return { erro: "a configuração do ClickUp está incompleta" };
-
-  let credential: string;
-  try {
-    credential = decifrar(integracao.credential);
-  } catch {
-    return { erro: "não consegui decifrar o token do ClickUp" };
-  }
-
-  const ctx: ToolContext = {
-    provider: IntegrationProvider.CLICKUP,
-    config: integracao.config as Record<string, unknown>,
-    credential,
-    // Nenhuma ferramenta do ClickUp lê o agente: o rótulo só diz quem chamou.
-    agentId: "sistema-nps",
-  };
-
-  return {
-    cliente: new ClickUpClient(credential),
-    config: config.data,
-    async executar(ferramenta, entrada) {
-      const definicao = clickupIntegration.tools.find((t) => t.name === ferramenta);
-      if (!definicao) throw new Error(`a ferramenta ${ferramenta} não existe`);
-      return definicao.execute(definicao.inputSchema.parse(entrada), ctx);
-    },
-  };
-}
 
 export type TarefaDoAtendimento = {
   id: string;
@@ -178,7 +131,7 @@ export async function gravarNotaNoCrm(args: {
   try {
     const clickup =
       args.config.listasDaNota.length > 0
-        ? await abrirClickUp()
+        ? await abrirClickUp("nps")
         : { erro: "nenhuma lista do CRM configurada" };
 
     if ("erro" in clickup) {

@@ -11,6 +11,7 @@ import {
   entregarAoHumano,
 } from "@/server/integrations/chatwoot/resolucao";
 import { agendarAtendimento } from "@/server/queue/atendimento";
+import { passarTarefaDoCrm, type AtualizacaoDoCrm } from "./crm";
 import { decidirPrazo, type AcaoDoPrazo } from "./decisao";
 
 /**
@@ -198,6 +199,28 @@ async function tratar(
   }
 }
 
+/** O que dizer na nota sobre o CRM. Silêncio quando não havia task nenhuma. */
+function linhasDoCrm(crm: AtualizacaoDoCrm): string[] {
+  const linhas: string[] = [];
+  for (const t of crm.tarefas) {
+    linhas.push(
+      `CRM: task ${t.url ?? t.id} passada para quem assumiu` +
+        (t.vendedor
+          ? `, VENDEDOR = ${t.vendedor}.`
+          : ", mas o campo VENDEDOR ficou como estava."),
+    );
+  }
+  for (const problema of crm.problemas) linhas.push(`AVISO: ${problema}`);
+  return linhas;
+}
+
+const resumoDoCrm = (crm: AtualizacaoDoCrm) =>
+  crm.tarefas.length
+    ? ` · ${crm.tarefas.length} task(s) do CRM atualizada(s)`
+    : crm.problemas.length
+      ? " · CRM não atualizado"
+      : "";
+
 async function agir(
   cliente: ChatwootClient,
   prazo: Prazo,
@@ -225,16 +248,29 @@ async function agir(
 
       const nome = achado.atendente.name?.trim() || acao.atendente;
       await cliente.atribuir(conversaId, { assigneeId: achado.atendente.id });
+
+      // A task do CRM acompanha a troca: é por ela que se mede quem vendeu, e
+      // ela ficava no nome de quem perdeu o prazo. Vai DEPOIS da atribuição no
+      // Chatwoot, que é o que o cliente sente, e nunca lança.
+      const crm = await passarTarefaDoCrm({
+        chatwootConversationId: conversaId,
+        de: prazo.donoNome,
+        para: nome,
+      });
       await notaInterna(
         cliente,
         conversaId,
         [
           `⏱️ Ninguém da equipe respondeu em ${prazo.minutos} min desde a atribuição a ${antes}. Conversa reatribuída para ${nome}.`,
           `Motivo registrado pelo agente: ${prazo.motivo}`,
+          ...linhasDoCrm(crm),
         ].join("\n"),
       );
       await entregarAoHumano(conversaId, `prazo vencido: reatribuída a ${nome}`);
-      return { status: PrazoStatus.EXECUTADO, resultado: `reatribuída a ${nome}` };
+      return {
+        status: PrazoStatus.EXECUTADO,
+        resultado: `reatribuída a ${nome}${resumoDoCrm(crm)}`,
+      };
     }
 
     case "voltar_para_o_agente": {
