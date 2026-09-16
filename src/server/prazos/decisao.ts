@@ -109,6 +109,39 @@ export function remetente(m: MensagemDaConversa): Remetente {
   return "sistema";
 }
 
+/**
+ * Os motivos que o prazo grava em `PrazoDeConversa.resultado`.
+ *
+ * ⚠ **Este texto é DADO no banco, não mensagem de tela.** A tela `/prazos` lê
+ * linhas gravadas há semanas para dizer se a pessoa respondeu a tempo ou deixou
+ * vencer, e é por estas frases que ela distingue um caso do outro — não há
+ * coluna de desfecho, e criar uma não recuperaria o passado.
+ * Reescrever uma frase aqui reclassifica o histórico em silêncio. A falha pende
+ * para o lado seguro: motivo que a contagem não reconhece vira "sem conclusão"
+ * e NUNCA vira falta de alguém.
+ */
+export const MOTIVO = {
+  /** EQUIPE e CLIENTE. */
+  resolvida: "a conversa foi resolvida",
+  /** EQUIPE: tiraram o dono antes de o prazo vencer. */
+  semDono: "a conversa ficou sem dono",
+  /** EQUIPE: o robô voltou a ser o dono. */
+  naoEhMaisPessoa: "a conversa não está mais com uma pessoa",
+  /** EQUIPE: trocou de mãos antes de vencer. */
+  outraPessoaAssumiu: "outra pessoa assumiu a conversa",
+  /** O oposto exato de perder o prazo: respondeu antes de vencer. */
+  equipeEscreveu: "alguém da equipe escreveu na conversa",
+  /** CLIENTE. */
+  clienteRespondeu: "o cliente respondeu",
+  /**
+   * ⚠ NÃO é desfecho: o agente registrou outro prazo e este caiu. É o que faz o
+   * prazo "zerar a cada resposta" (`registrarPrazo`). Contar isto como uma
+   * conversa recebida faria a mesma entrega virar quatro na conta de quem
+   * atende — ver `prazos/contagem.ts`.
+   */
+  substituido: "substituído por um prazo novo",
+} as const;
+
 const cancelar = (motivo: string): DecisaoDoPrazo => ({ acao: "cancelar", motivo });
 
 /**
@@ -139,22 +172,22 @@ export function decidirPrazo(args: {
     };
   }
 
-  if (ehResolvida(conversa.status)) return cancelar("a conversa foi resolvida");
+  if (ehResolvida(conversa.status)) return cancelar(MOTIVO.resolvida);
 
   const depois = mensagens.filter((m) => m.id > prazo.referenciaMensagemId);
   const pessoaEscreveu = depois.some((m) => remetente(m) === "pessoa");
 
   if (prazo.tipo === "EQUIPE") {
-    if (conversa.assigneeId == null) return cancelar("a conversa ficou sem dono");
+    if (conversa.assigneeId == null) return cancelar(MOTIVO.semDono);
     // Só `false` comprovado tira: tipo desconhecido com o mesmo id do dono
     // original continua sendo aquela pessoa, conferida quando o prazo nasceu.
     if (humanidadeDoDono(conversa.assigneeTipo) === false) {
-      return cancelar("a conversa não está mais com uma pessoa");
+      return cancelar(MOTIVO.naoEhMaisPessoa);
     }
     if (prazo.donoId != null && conversa.assigneeId !== prazo.donoId) {
-      return cancelar("outra pessoa assumiu a conversa");
+      return cancelar(MOTIVO.outraPessoaAssumiu);
     }
-    if (pessoaEscreveu) return cancelar("alguém da equipe escreveu na conversa");
+    if (pessoaEscreveu) return cancelar(MOTIVO.equipeEscreveu);
     return { acao: "executar" };
   }
 
@@ -170,8 +203,8 @@ export function decidirPrazo(args: {
   });
   if (!veredito.pode) return cancelar(veredito.motivo);
   if (depois.some((m) => remetente(m) === "cliente")) {
-    return cancelar("o cliente respondeu");
+    return cancelar(MOTIVO.clienteRespondeu);
   }
-  if (pessoaEscreveu) return cancelar("alguém da equipe escreveu na conversa");
+  if (pessoaEscreveu) return cancelar(MOTIVO.equipeEscreveu);
   return { acao: "executar" };
 }

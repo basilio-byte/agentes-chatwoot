@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { PrazoStatus, PrazoTipo } from "@/generated/prisma/enums";
-import type { AcaoDoPrazo } from "./decisao";
+import { MOTIVO, type AcaoDoPrazo } from "./decisao";
 
 /**
  * Grava um prazo novo, substituindo o pendente do mesmo tipo na conversa.
@@ -34,7 +34,7 @@ export async function registrarPrazo(args: {
       },
       data: {
         status: PrazoStatus.CANCELADO,
-        resultado: "substituído por um prazo novo",
+        resultado: MOTIVO.substituido,
         finalizadoEm: new Date(agora),
       },
     });

@@ -1,62 +1,165 @@
 import { describe, expect, it } from "vitest";
 import { PrazoStatus } from "@/generated/prisma/enums";
+import { MOTIVO } from "./decisao";
 import {
+  acaoDaLinha,
+  baseDaTaxa,
   contarPrazosPerdidos,
-  desfechoDaAcao,
+  desfechoDaLinha,
   type LinhaDePrazo,
 } from "./contagem";
 
 const linha = (over: Partial<LinhaDePrazo> = {}): LinhaDePrazo => ({
   donoId: 7,
-  donoNome: "Atendente A",
+  donoNome: "Atendente Um",
+  agentId: "agente-vendas",
   status: PrazoStatus.EXECUTADO,
-  acao: { tipo: "reatribuir", atendente: "Atendente B" },
-  resultado: "reatribuída a Atendente B",
-  minutos: 10,
+  acao: { tipo: "reatribuir", atendente: "Atendente Dois" },
+  resultado: "reatribuída a Atendente Dois",
   chatwootConversationId: 1000,
   criadoEm: new Date("2026-09-16T13:22:00Z"),
   finalizadoEm: new Date("2026-09-16T13:33:00Z"),
   ...over,
 });
 
-describe("desfechoDaAcao", () => {
-  it("lê as duas ações do prazo da equipe", () => {
-    expect(desfechoDaAcao({ tipo: "reatribuir", atendente: "X" })).toBe("reatribuida");
-    expect(desfechoDaAcao({ tipo: "voltar_para_o_agente" })).toBe("devolvida");
+/** Atalho: uma linha que terminou com a equipe respondendo a tempo. */
+const respondeu = (over: Partial<LinhaDePrazo> = {}) =>
+  linha({ status: PrazoStatus.CANCELADO, resultado: MOTIVO.equipeEscreveu, ...over });
+
+describe("desfechoDaLinha", () => {
+  it("separa os dois lados da mesma conferência ao vivo", () => {
+    expect(desfechoDaLinha({ status: PrazoStatus.EXECUTADO, resultado: null })).toBe("perdeu");
+    expect(
+      desfechoDaLinha({ status: PrazoStatus.CANCELADO, resultado: MOTIVO.equipeEscreveu }),
+    ).toBe("respondeu");
   });
 
-  it("não chuta desfecho para ação que não conhece", () => {
-    expect(desfechoDaAcao({ tipo: "coisa_nova" })).toBeNull();
-    expect(desfechoDaAcao(null)).toBeNull();
-    expect(desfechoDaAcao("reatribuir")).toBeNull();
+  it("os cancelamentos que não dizem se a pessoa respondeu ficam em caixas próprias", () => {
+    const cancelado = (resultado: string) =>
+      desfechoDaLinha({ status: PrazoStatus.CANCELADO, resultado });
+
+    expect(cancelado(MOTIVO.resolvida)).toBe("resolvida");
+    expect(cancelado(MOTIVO.semDono)).toBe("saiu");
+    expect(cancelado(MOTIVO.naoEhMaisPessoa)).toBe("saiu");
+    expect(cancelado(MOTIVO.outraPessoaAssumiu)).toBe("saiu");
+    expect(cancelado(MOTIVO.substituido)).toBe("substituido");
+  });
+
+  it("descartado, falhou e motivo desconhecido caem em sem_conclusao, nunca em perdeu", () => {
+    expect(desfechoDaLinha({ status: PrazoStatus.DESCARTADO, resultado: "tarde demais" })).toBe(
+      "sem_conclusao",
+    );
+    expect(desfechoDaLinha({ status: PrazoStatus.FALHOU, resultado: "Chatwoot fora do ar" })).toBe(
+      "sem_conclusao",
+    );
+    // Uma frase reescrita em decisao.ts some da taxa em vez de virar falta.
+    expect(
+      desfechoDaLinha({ status: PrazoStatus.CANCELADO, resultado: "redação nova qualquer" }),
+    ).toBe("sem_conclusao");
+    expect(desfechoDaLinha({ status: PrazoStatus.CANCELADO, resultado: null })).toBe(
+      "sem_conclusao",
+    );
   });
 });
 
-describe("contarPrazosPerdidos", () => {
-  it("soma por pessoa e separa os dois desfechos", () => {
-    const { pessoas, total } = contarPrazosPerdidos([
-      linha(),
-      linha({ chatwootConversationId: 1001 }),
-      linha({ chatwootConversationId: 1002, acao: { tipo: "voltar_para_o_agente" } }),
-      linha({ donoId: 9, donoNome: "Atendente C", chatwootConversationId: 1003 }),
+describe("acaoDaLinha", () => {
+  it("lê as duas ações do prazo da equipe e não chuta uma terceira", () => {
+    expect(acaoDaLinha({ tipo: "reatribuir", atendente: "X" })).toBe("reatribuida");
+    expect(acaoDaLinha({ tipo: "voltar_para_o_agente" })).toBe("devolvida");
+    expect(acaoDaLinha({ tipo: "coisa_nova" })).toBeNull();
+    expect(acaoDaLinha(null)).toBeNull();
+  });
+});
+
+describe("contarPrazosPerdidos — a taxa", () => {
+  it("a taxa é perdeu sobre perdeu mais respondeu", () => {
+    const { pessoas, totais } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1 }),
+      respondeu({ chatwootConversationId: 2 }),
+      respondeu({ chatwootConversationId: 3 }),
+      respondeu({ chatwootConversationId: 4 }),
     ]);
 
-    expect(total).toBe(4);
-    expect(pessoas.map((p) => [p.nome, p.total, p.reatribuidas, p.devolvidas])).toEqual([
-      ["Atendente A", 3, 2, 1],
-      ["Atendente C", 1, 1, 0],
+    expect(pessoas[0].perdeu).toBe(1);
+    expect(pessoas[0].respondeu).toBe(3);
+    expect(pessoas[0].taxa).toBeCloseTo(0.25);
+    expect(totais.taxa).toBeCloseTo(0.25);
+  });
+
+  it("quem atende mais não fica pior que quem atende pouco", () => {
+    const muitas = [
+      ...Array.from({ length: 27 }, (_, i) => respondeu({ chatwootConversationId: 100 + i })),
+      ...Array.from({ length: 3 }, (_, i) => linha({ chatwootConversationId: 200 + i })),
+    ];
+    const poucas = [
+      respondeu({ donoId: 9, donoNome: "Atendente Dois", chatwootConversationId: 300 }),
+      respondeu({ donoId: 9, donoNome: "Atendente Dois", chatwootConversationId: 301 }),
+      linha({ donoId: 9, donoNome: "Atendente Dois", chatwootConversationId: 302 }),
+      linha({ donoId: 9, donoNome: "Atendente Dois", chatwootConversationId: 303 }),
+    ];
+
+    const { pessoas } = contarPrazosPerdidos([...muitas, ...poucas]);
+    const um = pessoas.find((p) => p.nome === "Atendente Um")!;
+    const dois = pessoas.find((p) => p.nome === "Atendente Dois")!;
+
+    // Em números absolutos o Um parece o pior (3 contra 2); na taxa, não.
+    expect(um.perdeu).toBeGreaterThan(dois.perdeu);
+    expect(um.taxa).toBeCloseTo(0.1);
+    expect(dois.taxa).toBeCloseTo(0.5);
+    expect(um.recebeu).toBe(30);
+    expect(dois.recebeu).toBe(4);
+  });
+
+  it("sem perdeu nem respondeu, a taxa é nula em vez de zero", () => {
+    const { pessoas } = contarPrazosPerdidos([
+      linha({ status: PrazoStatus.CANCELADO, resultado: MOTIVO.resolvida }),
+      linha({ status: PrazoStatus.DESCARTADO, resultado: "tarde demais" }),
+    ]);
+
+    expect(pessoas[0].recebeu).toBe(2);
+    expect(pessoas[0].taxa).toBeNull();
+    expect(baseDaTaxa(pessoas[0])).toBe(0);
+  });
+
+  it("⚠ prazo substituído não conta nem como entrega", () => {
+    // Uma entrega só, com o prazo zerado três vezes antes de vencer.
+    const { pessoas, totais } = contarPrazosPerdidos([
+      linha({ status: PrazoStatus.CANCELADO, resultado: MOTIVO.substituido }),
+      linha({ status: PrazoStatus.CANCELADO, resultado: MOTIVO.substituido }),
+      linha({ status: PrazoStatus.CANCELADO, resultado: MOTIVO.substituido }),
+      linha(),
+    ]);
+
+    expect(totais.recebeu).toBe(1);
+    expect(pessoas[0].recebeu).toBe(1);
+    expect(pessoas[0].taxa).toBe(1);
+  });
+});
+
+describe("contarPrazosPerdidos — os desfechos e o resto", () => {
+  it("soma por pessoa e separa as duas ações da perda", () => {
+    const { pessoas } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1 }),
+      linha({ chatwootConversationId: 2 }),
+      linha({ chatwootConversationId: 3, acao: { tipo: "voltar_para_o_agente" } }),
+      linha({ donoId: 9, donoNome: "Atendente Dois", chatwootConversationId: 4 }),
+    ]);
+
+    expect(pessoas.map((p) => [p.nome, p.perdeu, p.reatribuidas, p.devolvidas])).toEqual([
+      ["Atendente Um", 3, 2, 1],
+      ["Atendente Dois", 1, 1, 0],
     ]);
   });
 
   it("a mesma pessoa sem nome numa das linhas não vira duas pessoas", () => {
     const { pessoas } = contarPrazosPerdidos([
-      linha({ donoNome: null }),
-      linha({ chatwootConversationId: 1001 }),
+      linha({ donoNome: null, chatwootConversationId: 1 }),
+      linha({ chatwootConversationId: 2 }),
     ]);
 
     expect(pessoas).toHaveLength(1);
-    expect(pessoas[0].nome).toBe("Atendente A");
-    expect(pessoas[0].total).toBe(2);
+    expect(pessoas[0].nome).toBe("Atendente Um");
+    expect(pessoas[0].perdeu).toBe(2);
   });
 
   it("sem nome em lugar nenhum, identifica pelo id em vez de sumir", () => {
@@ -64,69 +167,105 @@ describe("contarPrazosPerdidos", () => {
     expect(pessoas[0].nome).toBe("Atendente #7");
   });
 
-  it("ação desconhecida ainda conta como falta, mas não inventa coluna", () => {
-    const { pessoas, total } = contarPrazosPerdidos([linha({ acao: { tipo: "?" } })]);
-    expect(total).toBe(1);
-    expect([pessoas[0].reatribuidas, pessoas[0].devolvidas]).toEqual([0, 0]);
+  it("agrupa por agente, que é o fluxo onde a perda acontece", () => {
+    const { porAgente } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1 }),
+      linha({ chatwootConversationId: 2 }),
+      respondeu({ chatwootConversationId: 3 }),
+      linha({ agentId: "agente-salas", chatwootConversationId: 4 }),
+    ]);
+
+    expect(porAgente.map((a) => [a.agentId, a.perdeu, a.recebeu])).toEqual([
+      ["agente-vendas", 2, 3],
+      ["agente-salas", 1, 1],
+    ]);
+    expect(porAgente[0].taxa).toBeCloseTo(2 / 3);
   });
 
-  it("só EXECUTADO é falta; cancelado, descartado e falhou ficam fora da conta", () => {
-    const { pessoas, total, foraDaConta } = contarPrazosPerdidos([
-      linha(),
+  it("conta quem assumiu depois, e as voltas ao agente à parte", () => {
+    const { destinos, devolvidasAoAgente } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1 }),
+      linha({ chatwootConversationId: 2 }),
+      linha({ chatwootConversationId: 3, acao: { tipo: "reatribuir", atendente: "Atendente Três" } }),
+      linha({ chatwootConversationId: 4, acao: { tipo: "voltar_para_o_agente" } }),
+    ]);
+
+    expect(destinos).toEqual([
+      { nome: "Atendente Dois", vezes: 2 },
+      { nome: "Atendente Três", vezes: 1 },
+    ]);
+    expect(devolvidasAoAgente).toBe(1);
+  });
+
+  it("conta conversas afetadas e as que perderam prazo mais de uma vez", () => {
+    const { conversas } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1 }),
+      linha({ chatwootConversationId: 1 }),
+      linha({ chatwootConversationId: 2 }),
+      // Respondida não é conversa afetada.
+      respondeu({ chatwootConversationId: 3 }),
+    ]);
+
+    expect(conversas).toEqual({ afetadas: 2, maisDeUmaVez: 1 });
+  });
+
+  it("só o que não teve conclusão vai para o bloco Fora da conta", () => {
+    const { foraDaConta } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1 }),
+      respondeu({ chatwootConversationId: 2 }),
       linha({
-        chatwootConversationId: 1001,
-        status: PrazoStatus.CANCELADO,
-        resultado: "a equipe respondeu",
-        finalizadoEm: new Date("2026-09-16T09:00:00Z"),
-      }),
-      linha({
-        chatwootConversationId: 1002,
+        chatwootConversationId: 3,
         status: PrazoStatus.DESCARTADO,
         resultado: "tarde demais",
         finalizadoEm: new Date("2026-09-16T10:00:00Z"),
       }),
       linha({
-        chatwootConversationId: 1003,
+        chatwootConversationId: 4,
         status: PrazoStatus.FALHOU,
         resultado: "Chatwoot fora do ar",
         finalizadoEm: new Date("2026-09-16T11:00:00Z"),
       }),
     ]);
 
-    expect(total).toBe(1);
-    expect(pessoas[0].total).toBe(1);
     // Mais recente primeiro: é a ordem em que alguém confere à mão.
     expect(foraDaConta.map((f) => [f.conversa, f.status])).toEqual([
-      [1003, PrazoStatus.FALHOU],
-      [1002, PrazoStatus.DESCARTADO],
-      [1001, PrazoStatus.CANCELADO],
+      [4, PrazoStatus.FALHOU],
+      [3, PrazoStatus.DESCARTADO],
     ]);
-    // Quem estava com a conversa aparece no bloco, mas não na conta de ninguém.
-    expect(foraDaConta[0].quem).toBe("Atendente A");
+    expect(foraDaConta[0].quem).toBe("Atendente Um");
   });
 
-  it("a última ocorrência é a mais recente, com a conversa", () => {
+  it("a última perda é a mais recente, com destino e conversa", () => {
     const { pessoas } = contarPrazosPerdidos([
-      linha({ chatwootConversationId: 1001, finalizadoEm: new Date("2026-09-10T10:00:00Z") }),
+      linha({ chatwootConversationId: 1, finalizadoEm: new Date("2026-09-10T10:00:00Z") }),
       linha({
-        chatwootConversationId: 1002,
+        chatwootConversationId: 2,
         finalizadoEm: new Date("2026-09-15T10:00:00Z"),
-        acao: { tipo: "voltar_para_o_agente" },
+        acao: { tipo: "reatribuir", atendente: "Atendente Três" },
       }),
-      linha({ chatwootConversationId: 1003, finalizadoEm: new Date("2026-09-12T10:00:00Z") }),
+      // Mais nova, mas não é perda: não pode virar "última vez que perdeu".
+      respondeu({ chatwootConversationId: 3, finalizadoEm: new Date("2026-09-16T10:00:00Z") }),
     ]);
 
-    expect(pessoas[0].ultima).toMatchObject({ conversa: 1002, desfecho: "devolvida" });
+    expect(pessoas[0].ultimaPerda).toMatchObject({
+      conversa: 2,
+      acao: "reatribuida",
+      destino: "Atendente Três",
+    });
   });
 
   it("sem finalizadoEm, a ocorrência vale pelo instante em que o prazo nasceu", () => {
     const { pessoas } = contarPrazosPerdidos([
       linha({ finalizadoEm: null, criadoEm: new Date("2026-09-14T10:00:00Z") }),
     ]);
-    expect(pessoas[0].ultima?.quando).toEqual(new Date("2026-09-14T10:00:00Z"));
+    expect(pessoas[0].ultimaPerda?.quando).toEqual(new Date("2026-09-14T10:00:00Z"));
   });
 
   it("lista vazia não quebra", () => {
-    expect(contarPrazosPerdidos([])).toEqual({ pessoas: [], total: 0, foraDaConta: [] });
+    const vazio = contarPrazosPerdidos([]);
+    expect(vazio.pessoas).toEqual([]);
+    expect(vazio.totais.recebeu).toBe(0);
+    expect(vazio.totais.taxa).toBeNull();
+    expect(vazio.conversas).toEqual({ afetadas: 0, maisDeUmaVez: 0 });
   });
 });
