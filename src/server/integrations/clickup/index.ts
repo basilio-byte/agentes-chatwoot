@@ -80,7 +80,7 @@ function espacoBloqueado(config: ClickUpConfig, spaceId: string): string | null 
  * a lista for recriada), ilegível na revisão, e força uma chamada de descoberta
  * quando quem escreve o prompt não sabe o id.
  */
-function resolverLista(
+export function resolverLista(
   termo: string | undefined,
   config: ClickUpConfig,
 ): { listaId: string | null; apelidos: string[] } {

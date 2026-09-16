@@ -13,14 +13,10 @@ const worker = iniciarWorker();
 async function encerrar(sinal: string) {
   logger.info({ sinal }, "encerrando worker");
   // `close()` espera os jobs em andamento terminarem antes de sair, para não
-  // deixar cliente sem resposta no meio de um deploy. Os dois workers, não
-  // só o de atendimento — matar um sem esperar o outro corta jobs de gatilho
-  // em andamento sem necessidade.
-  await Promise.all([
-    worker.atendimento.close(),
-    worker.gatilho.close(),
-    worker.agendamento.close(),
-  ]);
+  // deixar cliente sem resposta no meio de um deploy. Todos os workers, não só
+  // o de atendimento: a lista escrita à mão tinha ficado nos três primeiros, e
+  // os gatilhos de conversa e a pesquisa de satisfação eram cortados no meio.
+  await Promise.all(Object.values(worker).map((w) => w.close()));
   process.exit(0);
 }
 

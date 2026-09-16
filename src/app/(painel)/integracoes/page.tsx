@@ -25,6 +25,9 @@ import { LeiturasDeMidia } from "@/components/leituras-de-midia";
 import { DocumentosConfigForm } from "@/components/documentos-config";
 import { PrazosConfigForm } from "@/components/prazos-config";
 import { GoogleConfigForm } from "@/components/google-config";
+import { NpsConfigForm } from "@/components/nps-config";
+import { lerConfigNps } from "@/server/nps/config";
+import { SITUACAO_DA_PESQUISA } from "@/server/nps/rotulos";
 import {
   Building2,
   Ear,
@@ -32,11 +35,12 @@ import {
   IdCard,
   ListChecks,
   MessagesSquare,
+  Star,
   Table2,
   Timer,
 } from "lucide-react";
 import { Abas } from "@/components/abas";
-import { Aviso, Badge, Card, PageHeader } from "@/components/ui";
+import { Aviso, Badge, Card, PageHeader, Tabela } from "@/components/ui";
 import { formatarData } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -99,6 +103,25 @@ export default async function IntegracoesPage({
   );
   const toolsPrazos =
     obterIntegracao(IntegrationProvider.PRAZOS)?.tools.length ?? 0;
+  const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
+  const configNps = lerConfigNps(nps?.config);
+  // Sem telefone nem nome: a tela é aberta pela equipe inteira.
+  const pesquisasNps = await db.pesquisaNps.findMany({
+    orderBy: { criadaEm: "desc" },
+    take: 15,
+    select: {
+      id: true,
+      chatwootConversationId: true,
+      status: true,
+      nota: true,
+      marcadaEm: true,
+      resultado: true,
+    },
+  });
+  const linkDaConversa = (id: number) =>
+    configChatwoot.success
+      ? `${configChatwoot.data.baseUrl}/app/accounts/${configChatwoot.data.accountId}/conversations/${id}`
+      : null;
   const agentesComMidia = openai
     ? await db.agentIntegration.count({
         where: { integrationId: openai.id, enabled: true },
@@ -497,6 +520,145 @@ export default async function IntegracoesPage({
                   somenteLeitura={!editavel}
                 />
               </Card>
+            ),
+          },
+          {
+            id: "nps",
+            rotulo: "NPS",
+            icone: <Star size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Pesquisa de satisfação (NPS)</h2>
+                    {nps?.enabled ? (
+                      <Badge tone="success">ligada</Badge>
+                    ) : (
+                      <Badge>desligada</Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    Quando alguém da equipe marca o checkbox numa conversa, o
+                    robô da caixa desatribui a conversa e manda a pesquisa.{" "}
+                    <strong>Sem modelo</strong>: as mensagens são as fixas
+                    abaixo, e a nota é lida pelo sistema antes de chegar a
+                    qualquer agente.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-muted">
+                    <li>
+                      <strong>Nota é a mensagem que é só o número de 1 a 5</strong>{" "}
+                      — com estrelas, “nota” ou pontuação em volta. Qualquer
+                      outra resposta encerra a pesquisa, sem lembrete, e o agente
+                      atende.
+                    </li>
+                    <li>
+                      Sem nota: lembrete depois de{" "}
+                      {configNps.horasAteLembrete.toLocaleString("pt-BR")} h, e a
+                      conversa é resolvida{" "}
+                      {configNps.horasAteEncerrar.toLocaleString("pt-BR")} h
+                      depois. Se uma pessoa assumir ou escrever antes, a pesquisa
+                      não faz mais nada.
+                    </li>
+                    <li>
+                      Com nota: a resposta sai na hora, e a conversa é resolvida
+                      quando o cliente fica {configNps.minutosAposNota} min sem
+                      escrever. O que ele escrever nesse meio é complemento e{" "}
+                      <strong>não aciona o agente</strong>.
+                    </li>
+                    <li>
+                      A nota vai para a task que um agente criou nesta conversa;
+                      sem ela, para a mais recente do telefone nos últimos 30
+                      dias, em cada lista. Sem nenhuma, fica numa nota interna.{" "}
+                      <strong>O status da task não é alterado.</strong>
+                    </li>
+                    <li>
+                      O mesmo telefone não recebe a pesquisa de novo em{" "}
+                      {configNps.horasEntrePesquisas} h.
+                    </li>
+                  </ul>
+
+                  <Aviso tone="danger">
+                    Com o fluxo “NPS SEAHUB” publicado no n8n, ligar aqui faz o
+                    cliente receber a pesquisa <strong>em dobro</strong>.
+                  </Aviso>
+
+                  <NpsConfigForm
+                    valores={{
+                      checkbox: configNps.checkbox,
+                      caixas: configNps.caixas.join(", "),
+                      listasDaNota: configNps.listasDaNota.join("\n"),
+                      campoDaNota: configNps.campoDaNota,
+                      campoDoTelefone: configNps.campoDoTelefone,
+                      horasAteLembrete: String(configNps.horasAteLembrete).replace(".", ","),
+                      horasAteEncerrar: String(configNps.horasAteEncerrar).replace(".", ","),
+                      minutosAposNota: String(configNps.minutosAposNota),
+                      horasEntrePesquisas: String(configNps.horasEntrePesquisas),
+                      textoAgradecimento: configNps.textos.agradecimento,
+                      textoConvite: configNps.textos.convite,
+                      textoPergunta: configNps.textos.pergunta,
+                      textoLembrete: configNps.textos.lembrete,
+                      textoNotaBaixa: configNps.textos.notaBaixa,
+                      textoNotaAlta: configNps.textos.notaAlta,
+                    }}
+                    habilitada={nps?.enabled ?? false}
+                    somenteLeitura={!editavel}
+                  />
+                </Card>
+
+                <Card className="space-y-3">
+                  <h2 className="text-sm font-semibold">Últimas pesquisas</h2>
+                  {pesquisasNps.length === 0 ? (
+                    <p className="text-sm text-muted">Nenhuma pesquisa ainda.</p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>Conversa</th>
+                          <th>Situação</th>
+                          <th>Nota</th>
+                          <th>Marcada em</th>
+                          <th>O que aconteceu</th>
+                        </>
+                      }
+                    >
+                      {pesquisasNps.map((p) => {
+                        const situacao = SITUACAO_DA_PESQUISA[p.status];
+                        const link = linkDaConversa(p.chatwootConversationId);
+                        return (
+                          <tr key={p.id}>
+                            <td className="whitespace-nowrap">
+                              {link ? (
+                                <a
+                                  href={link}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-accent hover:underline"
+                                >
+                                  #{p.chatwootConversationId}
+                                </a>
+                              ) : (
+                                `#${p.chatwootConversationId}`
+                              )}
+                            </td>
+                            <td>
+                              <Badge tone={situacao.tom}>{situacao.rotulo}</Badge>
+                            </td>
+                            <td>{p.nota ?? "—"}</td>
+                            <td className="whitespace-nowrap text-muted">
+                              {formatarData(p.marcadaEm)}
+                            </td>
+                            <td className="min-w-64 text-xs leading-relaxed text-muted">
+                              {p.resultado ?? "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
             ),
           },
           {

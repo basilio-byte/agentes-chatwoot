@@ -5,6 +5,7 @@ import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
 import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
 import { executarPrazosVencidos } from "@/server/prazos/executar";
+import { executarPesquisasVencidas } from "@/server/nps/executar";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -18,7 +19,8 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  *
  * Roda de minuto em minuto no worker e entrega a uma pessoa toda conversa em
  * que o cliente esperou além do tempo configurado. No mesmo relógio, executa os
- * prazos que os agentes registraram (`prazos/executar.ts`).
+ * prazos que os agentes registraram (`prazos/executar.ts`) e as etapas vencidas
+ * da pesquisa de satisfação (`nps/executar.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -154,8 +156,8 @@ async function escalar(conversa: Parada, minutos: number): Promise<boolean> {
 
 export function iniciarVigia(): NodeJS.Timeout {
   const rodar = async () => {
-    // As duas tarefas são independentes de propósito: falha nos prazos não pode
-    // calar a escalada que já existia, nem o contrário.
+    // As tarefas são independentes de propósito: falha nos prazos não pode calar
+    // a escalada que já existia, nem a pesquisa de satisfação, nem o contrário.
     try {
       const n = await vigiarEsperas();
       if (n > 0) logger.warn({ escaladas: n }, "vigia escalou conversas paradas");
@@ -168,6 +170,13 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.vistos > 0) logger.info(rodada, "prazos da conversa conferidos");
     } catch (erro) {
       logger.error({ erro }, "prazos da conversa falharam");
+    }
+
+    try {
+      const rodada = await executarPesquisasVencidas();
+      if (rodada.vistas > 0) logger.info(rodada, "pesquisas de satisfação conferidas");
+    } catch (erro) {
+      logger.error({ erro }, "pesquisas de satisfação falharam");
     }
   };
 

@@ -66,12 +66,16 @@ export function variacoesDoTelefone(bruto: string): string[] {
  * antes de chegar ao modelo — que gravaria a nota nela.
  */
 export function mesmoTelefone(a: string, b: string): boolean {
-  const x = canonico(a);
-  return x !== null && x === canonico(b);
+  const x = telefoneCanonico(a);
+  return x !== null && x === telefoneCanonico(b);
 }
 
-/** DDD + nove dígitos no celular; fixo fica como está. */
-function canonico(bruto: string): string | null {
+/**
+ * DDD + nove dígitos no celular; fixo fica como está. `null` quando não é número
+ * brasileiro com DDD. É também como a pesquisa de satisfação guarda o telefone,
+ * para "o mesmo número" valer com ou sem o nono dígito.
+ */
+export function telefoneCanonico(bruto: string): string | null {
   const nacional = nacionalDe(bruto);
   if (!nacional) return null;
 

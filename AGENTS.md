@@ -777,8 +777,9 @@ agendamento: o que avaliar, onde gravar e com que critério não é código.
   e ligar é `ADMIN`. O worker reconfere gatilho e agente antes de ler a
   conversa, então desligar vale também para o que já está na fila.
 - **`EventoDeConversa` ganhou `ATRIBUTO_MARCADO`** para os fluxos de checkbox —
-  ver "Checkbox marcado", logo abaixo: outro evento, mesma tabela. O NPS, quando
-  vier, é mais um checkbox.
+  ver "Checkbox marcado", logo abaixo: outro evento, mesma tabela. O NPS também
+  nasce de checkbox, mas NÃO é gatilho de agente: é função do sistema, sem
+  modelo — ver "Pesquisa de satisfação".
 
 ⚠ **A rota de conta ainda descarta os eventos de conversa no formato de topo**
 (achado em 15/09/2026, não corrigido). Ela lê só `evento.conversation` e sai em
@@ -849,6 +850,90 @@ sem este gatilho ligado, marcar o checkbox não faz nada.
   gatilho ficaria ligado sem nunca disparar.
 - **A tarefa mora no prompt**: o que registrar e com qual vendedor está na seção
   de checkbox de cada CRM, como a avaliação está no prompt do Olho de Tudo.
+
+### Pesquisa de satisfação (NPS): função do sistema, sem modelo
+
+Integração `NPS`, na aba NPS de Integrações, e **fora do registry**: não tem
+ferramenta nem liga por agente; a linha guarda só o liga/desliga e a
+configuração. Módulos em `src/server/nps/`, com a leitura da nota, a conferência
+de quem escreveu e os textos puros e testados em `regras.ts`. Substitui o fluxo
+"NPS SEAHUB" do n8n (15/09/2026), que usava dois modelos para mandar mensagens
+fixas e gravar um número — e levou 59 s e quatro idas ao modelo para gravar um
+"5".
+
+- **O caminho:** checkbox `nps_perdido` na caixa 29 → `dispararPesquisaNps`, na
+  rota de conta, grava a `PesquisaNps` AGENDADA → o robô da caixa desmarca,
+  desatribui e manda as três mensagens → a nota chega pela rota do bot →
+  resposta conforme a nota, e nota no campo NPS dos dois CRMs → conversa
+  resolvida. Sem nota: lembrete em 3 h, e resolve 1 h depois.
+- **O estado mora no banco e o vigia executa**, como nos prazos; a fila `nps` só
+  adianta o relógio. Cada etapa se trava trocando o status com `updateMany`
+  ANTES de falar com o cliente: nenhuma mensagem sai duas vezes, e uma queda no
+  meio deixa a etapa pela metade, nunca repetida. Falha antes da troca (Chatwoot
+  fora do ar) tenta de novo no minuto seguinte, até `TENTATIVAS_MAXIMAS`.
+- ⚠ **A nota é capturada na rota do bot ANTES de `decidirSeResponde`.** Depois
+  dela, a nota numa conversa ainda atribuída seria descartada como "conversa
+  atribuída a um humano", e a de conversa sem dono viraria turno do agente
+  respondendo ao "5". Capturada, a entrega fica `nps` e nenhum job de
+  atendimento nasce.
+- **Nota é a mensagem que é SÓ a nota** (decisão do usuário): o número de 1 a 5,
+  com pontuação, emoji, "nota", "estrelas", "5/5", por extenso ou as estrelas
+  copiadas da pergunta. ⚠ O Switch do n8n casava "contém 1..5": "chego dia 15"
+  levava o "sentimos muito" e a conversa resolvida. "5, obrigado pelo
+  atendimento" NÃO é nota.
+- ⚠ **Resposta que não é nota encerra a pesquisa** — sem lembrete e sem resolver
+  — e a mensagem vai para o agente. Nota que chegasse depois seria lida no meio
+  de outra conversa: "2" pode ser a opção de um menu. O preço conhecido: quem
+  escreve "obrigado" antes do número perde a nota.
+- **Ao enviar, a conversa volta a ser do robô no banco** (`HUMAN` → `BOT`),
+  porque no Chatwoot ela fica sem dono — é o que a rota de conta gravaria se
+  lesse o evento de topo. Sem isso, a mensagem do cliente que não é nota ficaria
+  sem ninguém: o worker recusa conversa `HUMAN`.
+- **Depois da nota, a conversa é resolvida quando o cliente fica
+  `minutosAposNota` sem escrever** — 10 por padrão. O n8n usava 1 minuto; o
+  usuário pediu 5 ou 10 (15/09/2026), para quem responde "o que aconteceu?" ter
+  tempo de contar. O que o cliente escreve nessa janela é complemento: empurra
+  o prazo e **não aciona o agente**. ⚠ Um pedido de verdade feito ali fica sem
+  resposta até a conversa ser resolvida; quando o cliente escrever de novo, ela
+  reabre e o agente atende.
+- **Nunca por cima de uma pessoa.** Antes de lembrar e de resolver, a conversa é
+  lida ao vivo: dono humano (ou de tipo desconhecido), ou alguém da equipe que
+  escreveu depois da pesquisa — nota interna conta —, e a pesquisa para. "Depois"
+  é por id de mensagem, como nos prazos.
+- **Resolver é exceção consciente** à regra de que o robô nunca resolve (decisão
+  do usuário): o n8n já resolvia, e a pesquisa é o fim do atendimento. Resolve no
+  Chatwoot e no banco (`marcarResolvida`), sem esperar o webhook.
+- **Onde a nota vai** (decisão do usuário), em cada lista de `listasDaNota`: a
+  task que um agente criou nesta conversa (`ToolCall` de `clickup_criar_tarefa`
+  com `criada: true`, conferida pela lista da própria task); sem ela, a mais
+  recente do telefone criada ou atualizada em 30 dias; sem nenhuma, nota interna
+  com a nota. Na conversa 9738 o n8n gravou a nota numa task de maio, com a
+  task do dia criada pelo nosso CRM na mesma conversa.
+- ⚠ **Pelas MESMAS ferramentas do ClickUp que os agentes usam**, chamadas sem
+  modelo (`nps/crm.ts`): a busca por telefone confere o número gravado e a janela
+  de dias, e a gravação converte o campo emoji. Reescrever seria capacidade
+  duplicada, e a cópia é a que diverge. ClickUp desligado no painel vale para o
+  sistema também: a nota vai para a nota interna.
+- ⚠ **A pesquisa NÃO mexe no status de task nenhuma** (decisão do usuário,
+  16/09/2026): *"dentro do CRM, a task deve se manter no status em que estiver"*.
+  O webhook do n8n movia para "analise" TODAS as tasks daquele telefone no CRM de
+  Atendimentos quando a pesquisa saía, inclusive as fechadas havia meses; a
+  primeira versão daqui movia só a task do atendimento, e o usuário cortou também
+  essa. Sobrou uma escrita só: a nota no campo.
+- **O mesmo telefone não recebe a pesquisa de novo em 24 h**
+  (`horasEntrePesquisas`), comparado pela forma canônica (`telefoneCanonico`):
+  com ou sem o nono dígito, é o mesmo número. E uma pesquisa em andamento por
+  conversa, pelo índice parcial `PesquisaNps_uma_em_andamento`: a segunda
+  marcação é desmarcada e cancelada com o motivo.
+- ⚠ **Desligada, não faz NADA — nem desmarca o checkbox.** É o que permite o
+  código estar no ar com o NPS do n8n publicado; com os dois ligados, o cliente
+  recebe a pesquisa em dobro. Desligar também é o botão de parada: o que estava
+  em andamento é cancelado na etapa seguinte, sem agir.
+- **Os padrões são os do n8n, letra por letra** (`TEXTOS_PADRAO`), inclusive o
+  ".:" do convite; a tela edita os textos. O lembrete diz "1 hora": mudou
+  `horasAteEncerrar`, mude o texto.
+- **A tela lista as últimas 15 pesquisas** com situação, nota e o rastro do que
+  foi feito (`resultado`), sem telefone nem nome.
 
 ### Conexa: armadilhas da API v2
 
@@ -1384,7 +1469,8 @@ As regras:
   conversa de caixa com Agent Bot, e `pending` não aparece na visualização
   padrão — ficaria invisível para a equipe. O bot **age** em `open` e
   `pending`, mas **termina sempre em `open`** (`precisaAbrir`). E nunca
-  resolve: encerrar é decisão de pessoa.
+  resolve: encerrar é decisão de pessoa. A exceção consciente é a pesquisa de
+  satisfação, que resolve no fim dela — ver "Pesquisa de satisfação".
 - **Resolver corta o histórico** (`Conversation.historicoDesde`). Reabriu, começa
   do zero: o mesmo cliente costuma voltar por outro assunto, e arrastar contexto
   antigo faz o agente responder a pergunta errada.

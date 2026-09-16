@@ -12,6 +12,7 @@ import { entregarAoHumano, sincronizarResolucao } from "@/server/integrations/ch
 import { ConversationStatus } from "@/generated/prisma/enums";
 import { dispararGatilhosDeConversa } from "@/server/conversa-encerrada/disparar";
 import { dispararGatilhosDeCheckbox } from "@/server/conversa-marcada/disparar";
+import { dispararPesquisaNps } from "@/server/nps/disparar";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +65,9 @@ export async function POST(req: Request) {
   // O checkbox marcado vem em `conversation_updated`, no mesmo formato de topo,
   // e cairia na mesma saída. Nunca lança — ver `conversa-marcada/disparar.ts`.
   await dispararGatilhosDeCheckbox(evento);
+  // A pesquisa de satisfação também nasce de um checkbox, no mesmo evento. Nunca
+  // lança — ver `nps/disparar.ts`.
+  await dispararPesquisaNps(evento);
 
   const conversa = evento.conversation;
   const conversationId = conversa?.id;

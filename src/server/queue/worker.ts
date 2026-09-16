@@ -29,6 +29,8 @@ import {
   type JobConversaMarcada,
 } from "./conversa-marcada";
 import { processarConversaMarcada } from "./conversa-marcada-worker";
+import { FILA_NPS, type JobNps } from "./nps";
+import { processarNps } from "./nps-worker";
 import { executarAgente } from "@/server/agents/runner";
 import {
   clienteDoAgente,
@@ -908,6 +910,7 @@ export type Workers = {
   agendamento: Worker<JobAgendamento>;
   conversaEncerrada: Worker<JobConversaEncerrada>;
   conversaMarcada: Worker<JobConversaMarcada>;
+  nps: Worker<JobNps>;
 };
 
 export function iniciarWorker(): Workers {
@@ -998,6 +1001,17 @@ export function iniciarWorker(): Workers {
     );
   });
 
+  // Sexta fila, mesmo processo. A pesquisa de satisfação só manda texto fixo,
+  // sem modelo, e o vigia cobre qualquer job que ela perder.
+  const workerNps = new Worker<JobNps>(FILA_NPS, processarNps, {
+    connection: getRedis(),
+    concurrency: 2,
+  });
+
+  workerNps.on("failed", (job, erro) => {
+    logger.error({ jobId: job?.id, erro: erro.message }, "pesquisa de satisfação falhou");
+  });
+
   // O relógio vive no Redis, mas quem sabe o que DEVERIA existir é o Postgres.
   // Sem esta reconciliação, um Redis limpo apagaria todos os agendamentos em
   // silêncio — a tela continuaria mostrando "ligado" e nada dispararia nunca.
@@ -1020,5 +1034,6 @@ export function iniciarWorker(): Workers {
     agendamento: workerAgendamento,
     conversaEncerrada: workerConversaEncerrada,
     conversaMarcada: workerConversaMarcada,
+    nps: workerNps,
   };
 }

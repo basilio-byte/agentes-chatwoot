@@ -441,6 +441,11 @@ enum IntegrationProvider {
   /// OPT-IN por agente: tool nova no Chatwoot apareceria para todo agente com
   /// as ferramentas dele liberadas, como aconteceu com a chamada interna.
   PRAZOS
+  /// Pesquisa de satisfação (NPS) como função do sistema, sem modelo: o
+  /// checkbox manda a pesquisa, a nota é capturada antes dos agentes, vai para o
+  /// CRM e a conversa é resolvida. FORA do registry de propósito: não tem tool
+  /// nem liga por agente. A linha guarda só o liga/desliga e a configuração.
+  NPS
 }
 
 enum IntegrationStatus {
@@ -926,6 +931,67 @@ model PrazoDeConversa {
 
   @@index([status, venceEm])
   @@index([chatwootConversationId, tipo, status])
+}
+
+/// Onde a pesquisa de satisfação está. As transições em `src/server/nps/executar.ts`.
+enum PesquisaNpsStatus {
+  /// O checkbox foi marcado; a pesquisa ainda não saiu.
+  AGENDADA
+  /// Enviada, esperando a nota. `venceEm` é a hora do lembrete.
+  AGUARDANDO
+  /// Lembrete enviado, esperando a nota. `venceEm` é a hora de resolver.
+  LEMBRADA
+  /// A nota chegou; falta responder e gravar no CRM.
+  RESPONDIDA
+  /// Respondida e gravada. Recebe complementos; `venceEm` é a hora de resolver.
+  AGRADECIDA
+  /// Nota recebida e fim do prazo depois dela.
+  CONCLUIDA
+  /// Sem nota até o fim do prazo depois do lembrete.
+  EXPIRADA
+  /// Não cabia agir: alguém assumiu, o cliente falou de outra coisa, a
+  /// pesquisa foi desligada, o telefone já tinha recebido.
+  CANCELADA
+  FALHOU
+}
+
+/// Uma pesquisa de satisfação, do checkbox marcado ao fim. O estado mora aqui
+/// e o vigia executa, como nos prazos: a fila só adianta o relógio.
+model PesquisaNps {
+  id                     String            @id @default(cuid())
+  chatwootConversationId Int
+  inboxId                Int?
+  /// O robô da caixa, dono da credencial que manda as mensagens.
+  portaAgentId           String?
+  /// DDD + número (`telefoneCanonico`): "o mesmo telefone em 24 h".
+  telefone               String?
+  status                 PesquisaNpsStatus @default(AGENDADA)
+  /// Instante da marcação do checkbox. Com a conversa, é a idempotência.
+  marcadaEm              DateTime
+  /// Quando a etapa atual deve rodar.
+  venceEm                DateTime
+  enviadaEm              DateTime?
+  /// Maior id de mensagem ao enviar: "depois da pesquisa" é id maior que este.
+  referenciaMensagemId   Int?
+  lembreteEm             DateTime?
+  nota                   Int?
+  notaMensagemId         Int?
+  respondidaEm           DateTime?
+  /// Última mensagem do cliente depois da nota. O encerramento conta daqui.
+  ultimaMensagemEm       DateTime?
+  /// Onde a nota foi gravada: `RegistroDaNota` em `nps/crm.ts`.
+  registro               Json?
+  /// Rastro para a tela: o que foi feito e o que não foi, em ordem.
+  resultado              String?           @db.Text
+  /// Falhas seguidas da etapa atual.
+  tentativas             Int               @default(0)
+  criadaEm               DateTime          @default(now())
+  finalizadaEm           DateTime?
+
+  @@unique([chatwootConversationId, marcadaEm])
+  @@index([status, venceEm])
+  @@index([chatwootConversationId, status])
+  @@index([telefone, enviadaEm])
 }
 
 model AuditLog {

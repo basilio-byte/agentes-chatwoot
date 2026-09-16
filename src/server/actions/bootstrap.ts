@@ -29,6 +29,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.DOCUMENTOS]: "Documentos (CPF, CNH, CNPJ)",
   [IntegrationProvider.GOOGLE]: "Google Workspace",
   [IntegrationProvider.PRAZOS]: "Prazos da conversa",
+  [IntegrationProvider.NPS]: "Pesquisa de satisfação (NPS)",
 };
 
 /**

@@ -13,6 +13,7 @@ import { decidirSeResponde } from "@/server/integrations/chatwoot/eventos";
 import { leituraDeMidiaLigada } from "@/server/integrations/openai/credenciais";
 import { agendarAtendimento } from "@/server/queue/atendimento";
 import { lerConversa, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
+import { capturarRespostaDoNps } from "@/server/nps/resposta";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,6 +112,15 @@ export async function POST(
   if (resolvida) {
     await marcarEntrega(entrega, "resolvido", "conversa zerada: volta do começo");
     return NextResponse.json({ ok: true, resolvida: true });
+  }
+
+  // A resposta à pesquisa de satisfação é da pesquisa, não dos agentes. Vem
+  // antes da decisão de responder, que calaria a nota numa conversa atribuída,
+  // e antes do relógio da espera. Nunca lança — ver `nps/resposta.ts`.
+  const nps = await capturarRespostaDoNps(payload, agentId);
+  if (nps.capturada) {
+    await marcarEntrega(entrega, "nps", nps.detalhe);
+    return NextResponse.json({ ok: true, nps: true });
   }
 
   // Decisão barata aqui para não encher a fila de ruído (typing, eco, nota
