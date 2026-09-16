@@ -1,4 +1,5 @@
 import * as React from "react";
+import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** Primitivas de UI do painel. Conjunto pequeno de propósito — cresce sob demanda. */
@@ -220,6 +221,21 @@ export function Ponto({ ligado }: { ligado: boolean }) {
   );
 }
 
+/**
+ * O ícone só aparece quando o aviso tem TOM — recusa, alerta ou confirmação.
+ *
+ * O tom neutro é o mais usado do painel e quase sempre é explicação, não
+ * aviso: pôr um ícone nele encheria a tela de setinhas dizendo "atenção" sobre
+ * texto que ninguém precisa interromper a leitura para ver.
+ */
+const ICONE_DO_TOM = {
+  danger: AlertTriangle,
+  warning: AlertTriangle,
+  success: CheckCircle2,
+  info: Info,
+  neutral: null,
+} as const;
+
 export function Aviso({
   tone = "neutral",
   children,
@@ -227,10 +243,12 @@ export function Aviso({
   tone?: "neutral" | "danger" | "success" | "warning";
   children: React.ReactNode;
 }) {
+  const Icone = ICONE_DO_TOM[tone];
+
   return (
-    <p
+    <div
       className={cn(
-        "rounded-lg border px-3 py-2 text-[13px] leading-relaxed",
+        "flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px] leading-relaxed",
         tone === "danger" && "border-danger/25 bg-danger/[0.06] text-danger",
         tone === "success" &&
           "border-success/25 bg-success/[0.06] text-success",
@@ -238,8 +256,13 @@ export function Aviso({
         tone === "neutral" && "border-line bg-foreground/[0.02] text-muted",
       )}
     >
-      {children}
-    </p>
+      {Icone ? (
+        // `mt-0.5` alinha o ícone com a PRIMEIRA linha do texto, e não com o
+        // bloco inteiro — em aviso de três linhas, centrado, ele flutua no meio.
+        <Icone size={15} aria-hidden className="mt-0.5 shrink-0" />
+      ) : null}
+      <span className="min-w-0">{children}</span>
+    </div>
   );
 }
 

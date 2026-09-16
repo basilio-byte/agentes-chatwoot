@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Send, Trash2 } from "lucide-react";
+import { MessageSquare, Send, Trash2 } from "lucide-react";
 import { Aviso, Badge, Button, Card, Input } from "@/components/ui";
 import { cn, formatarDuracao, formatarUsd } from "@/lib/utils";
 import { estaNoFim } from "@/lib/rolagem";
@@ -172,9 +172,15 @@ export function Playground({
         className="flex-1 space-y-3 overflow-y-auto pr-1"
       >
         {turnos.length === 0 ? (
-          <p className="pt-16 text-center text-sm text-muted">
-            Mande uma mensagem como se fosse um cliente.
-          </p>
+          <div className="flex flex-col items-center gap-3 pt-16 text-center">
+            <span className="flex size-10 items-center justify-center rounded-full bg-foreground/[0.04] text-muted">
+              <MessageSquare size={18} aria-hidden />
+            </span>
+            <p className="max-w-xs text-sm leading-relaxed text-muted">
+              Mande uma mensagem como se fosse um cliente. Nada daqui vai para o
+              Chatwoot.
+            </p>
+          </div>
         ) : null}
 
         {turnos.map((turno, indice) => (

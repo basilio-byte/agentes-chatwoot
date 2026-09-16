@@ -55,7 +55,7 @@ export function Sidebar({
       <div className="min-h-0 flex-1 space-y-7 overflow-y-auto p-4">
         <Link
           href="/agentes"
-          className="block px-2 pt-1"
+          className="block border-b border-line px-2 pt-1 pb-5"
           aria-label="Seahub Agentes"
         >
           <Image
@@ -66,7 +66,7 @@ export function Sidebar({
             className="logo-seahub h-6 w-auto"
             priority
           />
-          <span className="mt-1.5 block text-[11px] tracking-wide text-muted">
+          <span className="mt-2 block text-[11px] tracking-wide text-muted">
             Agentes de atendimento
           </span>
         </Link>
@@ -74,7 +74,7 @@ export function Sidebar({
         <nav className="space-y-6">
           {SECOES.map((secao) => (
             <div key={secao.titulo} className="space-y-0.5">
-              <p className="px-2 pb-1 text-[11px] font-medium tracking-wide text-muted/70 uppercase">
+              <p className="px-2 pb-1.5 text-[10px] font-semibold tracking-[0.12em] text-muted/70 uppercase">
                 {secao.titulo}
               </p>
 
@@ -89,13 +89,20 @@ export function Sidebar({
                       // A régua da esquerda é sempre desenhada, transparente
                       // quando inativa: sem isso o item pulava 3px ao ficar
                       // ativo.
-                      "flex items-center gap-2.5 rounded-lg border-l-2 py-1.5 pr-2 pl-1.5 text-sm transition",
+                      "flex h-9 items-center gap-2.5 rounded-lg border-l-2 pr-2 pl-2 text-sm transition",
                       ativo
                         ? "border-accent bg-accent-soft font-medium text-accent"
                         : "border-transparent text-muted hover:bg-foreground/[0.04] hover:text-foreground",
                     )}
                   >
-                    <Icone size={16} aria-hidden />
+                    <Icone
+                      size={16}
+                      aria-hidden
+                      className={cn(
+                        "shrink-0 transition-opacity",
+                        ativo ? "opacity-100" : "opacity-70",
+                      )}
+                    />
                     {label}
                   </Link>
                 );
@@ -111,7 +118,7 @@ export function Sidebar({
         <div className="flex items-center gap-2.5">
           <span
             aria-hidden
-            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-medium text-accent"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-medium text-accent ring-1 ring-accent/15"
           >
             {(usuario.name ?? usuario.email ?? "?").slice(0, 1).toUpperCase()}
           </span>

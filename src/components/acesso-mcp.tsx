@@ -122,7 +122,9 @@ export function AcessoMcp({
         </TituloDeBloco>
 
         <form action={gerar} className="flex flex-wrap items-end gap-3">
-          <div className="min-w-56 flex-1">
+          {/* Campo curto não ocupa a linha inteira: um input de 900 px para
+              caber "Claude Code no notebook" faz a tela parecer esticada. */}
+          <div className="min-w-56 max-w-sm flex-1">
             <Field
               label="Nome"
               hint="Onde ele vai ficar. Ex.: Claude Code no notebook."

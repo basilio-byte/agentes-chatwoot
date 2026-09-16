@@ -1,5 +1,11 @@
 import Link from "next/link";
-import { Bot, CheckCheck, MessagesSquare, UserRound } from "lucide-react";
+import {
+  Bot,
+  CheckCheck,
+  ExternalLink,
+  MessagesSquare,
+  UserRound,
+} from "lucide-react";
 import { Abas } from "@/components/abas";
 import { EstadoDoWorker } from "@/components/estado-do-worker";
 import { estadoDoWorker } from "@/server/queue/batimento";
@@ -119,9 +125,10 @@ export default async function ConversasPage({
               href={url}
               target="_blank"
               rel="noreferrer"
-              className="ml-auto underline"
+              className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-accent"
             >
-              abrir no Chatwoot
+              Abrir no Chatwoot
+              <ExternalLink size={12} aria-hidden />
             </a>
           ) : null}
         </div>

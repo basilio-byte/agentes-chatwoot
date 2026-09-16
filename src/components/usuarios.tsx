@@ -112,14 +112,20 @@ export function GestaoDeUsuarios({
 
   return (
     <div className="space-y-4">
-      {souOwner ? (
-        <div className="flex justify-end">
+      {/* O botão ficava sozinho numa linha vazia, sem nada que o ancorasse. Ao
+          lado da contagem ele passa a fazer parte de um cabeçalho de lista. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Meta>
+          {usuarios.length} {usuarios.length === 1 ? "conta" : "contas"} com
+          acesso ao painel
+        </Meta>
+        {souOwner ? (
           <Button size="sm" onClick={() => setCriando((v) => !v)}>
             <UserPlus size={14} aria-hidden />
             {criando ? "Cancelar" : "Nova conta"}
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       {criando ? (
         <Card>
@@ -312,7 +318,9 @@ export function TrocarMinhaSenha() {
         <p className="text-xs text-muted">Vale para qualquer papel.</p>
       </div>
 
-      <form action={acao} className="grid gap-4 sm:grid-cols-2">
+      {/* Coluna estreita: dois campos de senha esticados num cartão de mil
+          pixels é o tipo de campo que parece pedir uma frase, não uma senha. */}
+      <form action={acao} className="grid max-w-xl gap-4 sm:grid-cols-2">
         <Field label="Senha atual" erro={estado.camposComErro?.atual}>
           <Input name="atual" type="password" required autoComplete="current-password" />
         </Field>
