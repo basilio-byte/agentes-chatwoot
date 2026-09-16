@@ -133,7 +133,9 @@ export function Abas({
                 {item.contador ? (
                   <span
                     className={cn(
-                      "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
+                      // Pílula, como os selos de estado: o mesmo formato para
+                      // a mesma coisa (um rótulo curto sobre um fundo fraco).
+                      "rounded-full px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
                       selecionada
                         ? "bg-accent/12 text-accent"
                         : "bg-foreground/[0.06] text-muted",

@@ -7,6 +7,20 @@ import { cn } from "@/lib/utils";
 export const FOCO =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
+/**
+ * O mesmo visual do `<Button variant="primary">` para quem precisa ser `<a>`.
+ *
+ * Existe porque o link "Novo agente" tinha sombra e hover próprios: dois botões
+ * primários lado a lado na mesma tela, cada um reagindo de um jeito, é o tipo
+ * de detalhe que faz o painel parecer montado por pessoas diferentes.
+ */
+export const BOTAO_PRIMARIO = cn(
+  "inline-flex h-9 items-center justify-center gap-2 rounded-lg px-4",
+  "bg-accent text-sm font-medium text-white shadow-[var(--shadow-botao)]",
+  "transition hover:bg-accent/90 active:translate-y-px",
+  FOCO,
+);
+
 export function Button({
   className,
   variant = "primary",
@@ -23,13 +37,17 @@ export function Button({
         "disabled:pointer-events-none disabled:opacity-50",
         FOCO,
         size === "sm" ? "h-8 px-3 text-[13px]" : "h-9 px-4 text-sm",
+        // `active:translate-y-px` é o que dá sensação de clique; clarear a cor
+        // no hover lavava o acento, então ele escurece de leve.
+        "active:translate-y-px",
         variant === "primary" &&
-          "bg-accent text-white shadow-sm hover:brightness-110 active:brightness-95",
+          "bg-accent text-white shadow-[var(--shadow-botao)] hover:bg-accent/90",
         variant === "secondary" &&
-          "border border-line bg-surface hover:border-accent/40 hover:bg-accent-soft",
+          "border border-line bg-surface shadow-[var(--shadow-card)] hover:border-accent/40 hover:bg-accent-soft",
         variant === "ghost" &&
           "text-muted hover:bg-accent-soft hover:text-foreground",
-        variant === "danger" && "bg-danger text-white hover:brightness-110",
+        variant === "danger" &&
+          "bg-danger text-white shadow-[var(--shadow-botao)] hover:bg-danger/90",
         className,
       )}
       {...props}
@@ -169,7 +187,10 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap",
+        // Pílula, não retângulo: num painel cheio de cantos retos de campo e
+        // cartão, o selo de estado é a única coisa que ganha em ser redonda —
+        // ela se lê como rótulo, e não como mais uma caixinha.
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
         tone === "neutral" && "bg-foreground/[0.06] text-muted",
         tone === "success" && "bg-success/12 text-success",
         tone === "danger" && "bg-danger/12 text-danger",
@@ -188,8 +209,12 @@ export function Ponto({ ligado }: { ligado: boolean }) {
     <span
       aria-hidden
       className={cn(
-        "inline-block size-1.5 shrink-0 rounded-full",
-        ligado ? "bg-success" : "bg-muted/40",
+        "inline-block size-2 shrink-0 rounded-full",
+        // Anel da mesma cor, esmaecido: dá presença sem engordar o ponto, e é
+        // o que o torna visível no tema claro.
+        ligado
+          ? "bg-success ring-4 ring-success/15"
+          : "bg-muted/50 ring-4 ring-muted/10",
       )}
     />
   );
@@ -394,17 +419,17 @@ export function Tabela({
   return (
     <div
       className={cn(
-        "overflow-x-auto rounded-lg border border-line",
+        "overflow-x-auto rounded-xl border border-line bg-surface shadow-[var(--shadow-card)]",
         className,
       )}
     >
       <table className="w-full border-collapse text-sm">
         <thead className="bg-surface-2 text-left">
-          <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-xs [&>th]:font-medium [&>th]:whitespace-nowrap [&>th]:text-muted">
+          <tr className="[&>th]:px-3 [&>th]:py-2.5 [&>th]:text-[11px] [&>th]:font-medium [&>th]:tracking-wide [&>th]:whitespace-nowrap [&>th]:text-muted [&>th]:uppercase">
             {cabecalho}
           </tr>
         </thead>
-        <tbody className="divide-y divide-line [&>tr>td]:px-3 [&>tr>td]:py-2">
+        <tbody className="divide-y divide-line [&>tr]:transition-colors [&>tr:hover]:bg-surface-2/60 [&>tr>td]:px-3 [&>tr>td]:py-2.5">
           {children}
         </tbody>
       </table>

@@ -455,22 +455,32 @@ export function Execucao({
         >
           {resumo.agente.nome}
         </Link>
-        <span className="text-muted">
-          {formatarData(resumo.createdAt)} ·{" "}
-          {formatarDuracao(resumo.latencyMs)} · {formatarUsd(resumo.costUsd)} ·{" "}
-          {formatarNumero(resumo.inputTokens + resumo.outputTokens)} tokens
+        {/* Os números vão para a direita, juntos e em figuras tabulares: na
+            fila corrida de seis valores separados por ponto, ninguém compara
+            custo de uma execução com o da outra — e é isso que se quer ver
+            numa lista de cinquenta. */}
+        <span className="ml-auto flex flex-wrap items-center gap-x-3 text-muted tabular-nums">
+          {resumo.model ? (
+            <Meta className="max-w-40 truncate font-mono" title={resumo.model}>
+              {resumo.model}
+            </Meta>
+          ) : null}
+          <span title="Quando rodou">{formatarData(resumo.createdAt)}</span>
+          <span title="Quanto o turno levou">
+            {formatarDuracao(resumo.latencyMs)}
+          </span>
+          <span title="Custo real cobrado pela OpenRouter">
+            {formatarUsd(resumo.costUsd)}
+          </span>
+          <span title="Tokens de entrada mais os de saída">
+            {formatarNumero(resumo.inputTokens + resumo.outputTokens)} tok
+          </span>
         </span>
-        {resumo.model ? (
-          <Meta className="truncate font-mono" title={resumo.model}>
-            {resumo.model}
-          </Meta>
-        ) : null}
 
         {rodando && editavel ? (
           <Button
             variant="danger"
             size="sm"
-            className="ml-auto"
             disabled={parando}
             onClick={() =>
               pararTransicao(async () => setParada(await pararExecucao(resumo.id)))

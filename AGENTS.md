@@ -1948,6 +1948,21 @@ que **não carimba nada** e é resolvido por `prefers-color-scheme`.
 - **O tema é carimbado por script inline no `<head>`.** Qualquer coisa assíncrona
   chegaria depois do primeiro quadro e quem escolheu claro veria o painel escuro
   piscar. O `<html>` leva `suppressHydrationWarning` por causa disso.
+- **Sombra de cartão tem DUAS camadas** (`--shadow-card`): um fio de contato e
+  uma sombra larga e rasa. Uma só, dura, faz o cartão parecer adesivo colado no
+  fundo. `--shadow-card-alto` é para o que sobe (bloco aberto, hover), e
+  `--shadow-botao` para o botão primário — que escurece no hover em vez de
+  clarear, porque `brightness-110` lavava o acento.
+- **Selo de estado é pílula; campo e cartão são retos.** O contraste é
+  proposital: num painel cheio de cantos retos, o que é rótulo curto sobre
+  fundo fraco se lê melhor redondo — e o contador das abas segue o mesmo
+  formato, porque é a mesma coisa.
+- **`-webkit-font-smoothing: antialiased` no `body`.** Sem isso o peso médio da
+  Geist engorda no Windows, e o painel inteiro parece um rascunho impresso.
+- **Número em lista vai à direita, junto e em `tabular-nums`.** Em Execuções,
+  data, duração, custo e tokens vinham numa fila corrida separada por pontos;
+  ninguém comparava o custo de uma execução com o da outra, que é para o que
+  serve uma lista de cinquenta.
 - **Gráfico não inventa cor.** Série única, sempre no accent: a categoria é o
   dia (ou o modelo), que não tem identidade para uma cor carregar, e escurecer
   conforme o valor só repetiria em cor o que o comprimento já diz. Duas medidas

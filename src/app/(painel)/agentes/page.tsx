@@ -10,6 +10,7 @@ import {
   EmptyState,
   Meta,
   PageHeader,
+  BOTAO_PRIMARIO,
   Ponto,
 } from "@/components/ui";
 import { Abas } from "@/components/abas";
@@ -61,10 +62,11 @@ export default async function AgentesPage({
         key={agente.id}
         className="flex flex-wrap items-center gap-x-4 gap-y-3 p-4"
       >
-        <Ponto ligado={agente.active} />
-
         <div className="min-w-0 flex-1 space-y-1">
+          {/* O ponto vive na linha do nome: centrado no cartão, ele caía no
+              vão entre as duas linhas de texto e não pertencia a nenhuma. */}
           <div className="flex flex-wrap items-center gap-2">
+            <Ponto ligado={agente.active} />
             <Link
               href={`/agentes/${agente.id}`}
               className="text-sm font-medium hover:text-accent hover:underline"
@@ -143,7 +145,7 @@ export default async function AgentesPage({
   const criar = editavel ? (
     <Link
       href="/agentes/novo"
-      className="inline-flex h-9 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white shadow-sm transition hover:brightness-110"
+      className={BOTAO_PRIMARIO}
     >
       <Plus size={16} aria-hidden />
       Novo agente
