@@ -242,6 +242,8 @@ export class GoogleClient {
     properties?: { title?: string };
     sheets?: {
       properties?: {
+        /** `updateCells` endereça a aba por ESTE id, nunca pelo nome. */
+        sheetId?: number;
         title?: string;
         gridProperties?: { rowCount?: number; columnCount?: number };
       };
@@ -353,6 +355,65 @@ export class GoogleClient {
         corpo: { valueInputOption: "RAW", data: dados },
       },
     );
+  }
+
+  /**
+   * Grava um texto com LINK numa célula — o "OK" clicável.
+   *
+   * ⚠ Não é fórmula, e essa é a questão inteira. Um `=HYPERLINK(...)` exigiria
+   * `valueInputOption: USER_ENTERED`, que interpreta tudo o que chega: o zero à
+   * esquerda do CPF some, a data vira o que o locale disser, e um valor que
+   * comece com `=` vira fórmula — texto de terceiro executando fórmula em
+   * planilha corporativa é exfiltração. Por isso toda escrita deste módulo é
+   * `RAW`, e continua sendo.
+   *
+   * O link aqui é FORMATAÇÃO: a célula guarda a string ("OK") e o trecho de
+   * texto carrega o `link`. É exatamente como o Sheets grava um Ctrl+K, e foi
+   * como os links que já existem na planilha real foram conferidos —
+   * `userEnteredValue: {stringValue: "OK"}` com `hyperlink` ao lado, sem
+   * fórmula nenhuma.
+   */
+  async gravarCelulaComLink(
+    planilhaId: string,
+    celulas: {
+      /** Id numérico da aba, de `estruturaDaPlanilha`. */
+      sheetId: number;
+      /** Base 0, como a API pede — a linha 3 da planilha é o índice 2. */
+      linha: number;
+      coluna: number;
+      texto: string;
+      url: string;
+    }[],
+  ): Promise<unknown> {
+    return this.requisitar("sheets", `/v4/spreadsheets/${planilhaId}:batchUpdate`, {
+      method: "POST",
+      corpo: {
+        requests: celulas.map((c) => ({
+          updateCells: {
+            range: {
+              sheetId: c.sheetId,
+              startRowIndex: c.linha,
+              endRowIndex: c.linha + 1,
+              startColumnIndex: c.coluna,
+              endColumnIndex: c.coluna + 1,
+            },
+            rows: [
+              {
+                values: [
+                  {
+                    userEnteredValue: { stringValue: c.texto },
+                    textFormatRuns: [{ startIndex: 0, format: { link: { uri: c.url } } }],
+                  },
+                ],
+              },
+            ],
+            // Só o valor e o trecho formatado: sem isto, o `updateCells`
+            // limparia cor, borda e formato de número da célula.
+            fields: "userEnteredValue,textFormatRuns",
+          },
+        })),
+      },
+    });
   }
 
   // ─── Docs ─────────────────────────────────────────────────────────────────

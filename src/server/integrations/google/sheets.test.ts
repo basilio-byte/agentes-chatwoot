@@ -14,6 +14,7 @@ import {
   posicoesDasColunas,
   procurarNaColuna,
   recortarCabecalho,
+  urlDeLinkValida,
 } from "./sheets";
 
 /**
@@ -524,5 +525,27 @@ describe("chave composta: a linha que bate com todas as condições", () => {
 
   it("preserva a ordem da primeira lista", () => {
     expect(linhasEmComum([9, 2, 5], [5, 9])).toEqual([9, 5]);
+  });
+});
+
+describe("link na célula: o que pode virar link", () => {
+  it("aceita http e https", () => {
+    expect(urlDeLinkValida("https://drive.google.com/file/d/abc/view")).toBe(true);
+    expect(urlDeLinkValida("http://exemplo.com.br")).toBe(true);
+    expect(urlDeLinkValida("  https://com.espaco/x  ")).toBe(true);
+  });
+
+  it("⚠ recusa esquema que executa: a planilha é clicada por gente", () => {
+    // O texto vem do modelo, que leu o retorno de uma ferramenta. Um link
+    // `javascript:` numa planilha corporativa é código esperando um clique.
+    expect(urlDeLinkValida("javascript:alert(1)")).toBe(false);
+    expect(urlDeLinkValida("data:text/html,<script>x</script>")).toBe(false);
+    expect(urlDeLinkValida("file:///C:/Windows")).toBe(false);
+  });
+
+  it("recusa o que não é endereço", () => {
+    expect(urlDeLinkValida("drive.google.com/file")).toBe(false);
+    expect(urlDeLinkValida("")).toBe(false);
+    expect(urlDeLinkValida("OK")).toBe(false);
   });
 });

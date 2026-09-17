@@ -1531,6 +1531,36 @@ nas quatro ferramentas de planilha, e sem nada específico de caso de uso.
   A descrição é paga em toda mensagem de todo agente; o erro só é lido por quem
   esbarrou no problema. Foi assim que a capacidade coube no orçamento.
 
+#### O "OK" clicável, sem abrir a porta da fórmula
+
+`google_sheets_atualizar_linha` aceita `url` no par de coluna: a célula recebe o
+TEXTO de `valor` e fica clicável, apontando para o endereço.
+
+- ⚠ **Não é `=HYPERLINK(...)`, e essa é a questão inteira.** A fórmula exigiria
+  `valueInputOption: USER_ENTERED`, que interpreta tudo o que chega — o zero à
+  esquerda do CPF some, a data vira o que o locale disser, e um valor começando
+  com `=` vira fórmula, que é exfiltração quando o texto veio de terceiro. O
+  link aqui é **formatação** (`updateCells` com `textFormatRuns[].format.link`),
+  e toda escrita continua `RAW`.
+- **Foi conferido contra a planilha real antes de escolher o caminho**: os links
+  que já existem lá são `userEnteredValue: {stringValue: "OK"}` com `hyperlink`
+  ao lado, sem fórmula — é como o Sheets grava um Ctrl+K. O que gravamos sai
+  byte a byte igual, e lido como fórmula devolve só `"OK"`.
+- ⚠ **`updateCells` endereça a aba pelo `sheetId` numérico**, nunca pelo nome —
+  daí `idDaAba`. E o `fields` é `userEnteredValue,textFormatRuns`: sem ele, a
+  escrita limparia cor, borda e formato de número da célula.
+- ⚠ **As duas gravações não são atômicas**, e por isso o link vem DEPOIS do
+  valor: falhando, o que entrou são os valores comuns, e o retorno nomeia as
+  colunas que ficaram sem link mandando **não tentar de novo** — o valor já
+  está lá.
+- **Só `http` e `https`** (`urlDeLinkValida`). O endereço vem do modelo, que leu
+  o retorno de uma ferramenta; um `javascript:` numa planilha que a equipe
+  clica é código esperando alguém clicar. A validação acontece ANTES de
+  qualquer escrita, senão meia linha entraria e a outra metade não.
+- **Só em `atualizar_linha`.** O append não sabe de antemão em que linha caiu, e
+  formatar exigiria uma segunda ida para descobrir — quem precisa de link numa
+  linha nova grava a linha e depois atualiza.
+
 #### Ler o conteúdo de um arquivo do Drive
 
 `google_drive_ler_arquivo` baixa o arquivo de uma pasta cadastrada e devolve o

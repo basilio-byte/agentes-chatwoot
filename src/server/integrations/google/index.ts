@@ -11,6 +11,7 @@ import {
   type GoogleConfig,
   type TipoDeCadastro,
 } from "./config";
+import { logger } from "@/lib/logger";
 import { ArquivoGrandeDemaisError, GoogleApiError, GoogleClient } from "./client";
 import { camposDoModelo, textoDoDocumento } from "./docs";
 import { capacidadeDeMidia } from "@/server/integrations/openai/credenciais";
@@ -28,7 +29,9 @@ import {
   paraRegistros,
   posicoesDasColunas,
   procurarNaColuna,
+  letraParaColuna,
   recortarCabecalho,
+  urlDeLinkValida,
   type FaixaDeColunas,
 } from "./sheets";
 
@@ -190,6 +193,25 @@ function naoCadastrado(termo: string, tipo: TipoDeCadastro, nomes: string[]) {
 }
 
 /** Lê o cabeçalho da aba. É a primeira linha, e ela manda em toda gravação. */
+/**
+ * O id numérico da aba, que `updateCells` exige — ele não aceita o nome.
+ *
+ * `null` quando a aba não está na planilha: quem chama trata como "não deu para
+ * pôr o link", nunca como erro fatal, porque a essa altura os valores já foram
+ * gravados.
+ */
+async function idDaAba(
+  cliente: GoogleClient,
+  planilhaId: string,
+  aba: string,
+): Promise<number | null> {
+  const estrutura = await cliente.estruturaDaPlanilha(planilhaId);
+  const achada = (estrutura.sheets ?? []).find(
+    (s) => normalizarNome(s.properties?.title ?? "") === normalizarNome(aba),
+  );
+  return achada?.properties?.sheetId ?? null;
+}
+
 /** A chave em texto, para a mensagem de erro dizer o que foi procurado. */
 function descreverChave(chave: { coluna: string; valor: string }[]): string {
   return chave.map((c) => `${c.coluna} = "${c.valor}"`).join(" e ");
@@ -658,7 +680,16 @@ export const googleIntegration: IntegrationDefinition = {
             'Opcional. Faixa da tabela, como "A:J", quando a aba tem tabelas lado a lado.',
           ),
         dados: z
-          .array(parSchema)
+          .array(
+            parSchema.extend({
+              url: z
+                .string()
+                .optional()
+                .describe(
+                  "Opcional. Com isto, a célula fica com o texto de `valor` CLICÁVEL, apontando para este endereço — é como se alguém tivesse inserido o link à mão. Só http e https.",
+                ),
+            }),
+          )
           .min(1)
           .describe("As colunas a alterar, e os novos valores."),
       }),
@@ -668,7 +699,7 @@ export const googleIntegration: IntegrationDefinition = {
           aba: string;
           chave: { coluna: string; valor: string }[];
           faixaDeColunas?: string;
-          dados: { coluna: string; valor: string }[];
+          dados: { coluna: string; valor: string; url?: string }[];
         };
         const { cliente, config } = contexto(ctx);
 
@@ -677,6 +708,17 @@ export const googleIntegration: IntegrationDefinition = {
 
         const recorte = lerRecorte(faixaDeColunas);
         if (!recorte.ok) return { atualizado: false, nadaFoiAlterado: true, erro: recorte.erro };
+
+        // Antes de tudo: link inválido não pode gravar metade da linha e falhar
+        // na outra metade.
+        const urlRuim = dados.find((d) => d.url && !urlDeLinkValida(d.url));
+        if (urlRuim) {
+          return {
+            atualizado: false,
+            nadaFoiAlterado: true,
+            erro: `O endereço informado para a coluna "${urlRuim.coluna}" não serve como link: use um endereço http ou https completo.`,
+          };
+        }
 
         const achado = await localizar(cliente, id, aba, chave, recorte.faixa);
         if ("erro" in achado) return achado;
@@ -721,12 +763,21 @@ export const googleIntegration: IntegrationDefinition = {
         }
 
         const linha = achado.linhas[0];
+
+        // Quem leva link vai por outro caminho: o valor comum é gravado em RAW
+        // pela API de valores, e o link é FORMATAÇÃO, gravada por updateCells.
+        const comLink = posicoes.alvos.filter(
+          (alvo) => dados.find((d) => d.coluna === alvo.coluna || normalizarNome(d.coluna) === normalizarNome(alvo.coluna))?.url,
+        );
+        const semLink = posicoes.alvos.filter((alvo) => !comLink.includes(alvo));
+
         // Célula a célula: um `values.update` da faixa inteira apagaria todas
         // as colunas que o agente não informou.
         try {
+          if (semLink.length > 0)
           await cliente.atualizarCelulas(
             id,
-            posicoes.alvos.map((alvo) => ({
+            semLink.map((alvo) => ({
               range: a1(aba, `${alvo.letra}${linha}`),
               values: [[alvo.valor]],
             })),
@@ -740,12 +791,57 @@ export const googleIntegration: IntegrationDefinition = {
           });
         }
 
+        // ⚠ As duas gravações não são atômicas, e é por isso que os links vêm
+        // DEPOIS: falhando aqui, o que já entrou são os valores comuns — e o
+        // retorno diz exatamente quais colunas ficaram sem link, em vez de
+        // afirmar que a linha inteira foi atualizada.
+        let semLinkPorFalha: string[] = [];
+        if (comLink.length > 0) {
+          try {
+            const abaId = await idDaAba(cliente, id, aba);
+            if (abaId === null) {
+              semLinkPorFalha = comLink.map((a) => a.coluna);
+            } else {
+              await cliente.gravarCelulaComLink(
+                id,
+                comLink.map((alvo) => ({
+                  sheetId: abaId,
+                  // A API é base 0 e `linha` é o número da planilha.
+                  linha: linha - 1,
+                  coluna: letraParaColuna(alvo.letra),
+                  texto: alvo.valor,
+                  url:
+                    dados.find(
+                      (d) => normalizarNome(d.coluna) === normalizarNome(alvo.coluna),
+                    )?.url ?? "",
+                })),
+              );
+            }
+          } catch (erro) {
+            logger.warn(
+              { planilha, aba, linha, erro },
+              "os valores entraram, mas o link não",
+            );
+            semLinkPorFalha = comLink.map((a) => a.coluna);
+          }
+        }
+
         return {
           atualizado: true,
           planilha,
           aba,
           linha,
           colunasAtualizadas: posicoes.alvos.map((a) => a.coluna),
+          ...(comLink.length > 0 && semLinkPorFalha.length === 0
+            ? { colunasComLink: comLink.map((a) => a.coluna) }
+            : {}),
+          ...(semLinkPorFalha.length > 0
+            ? {
+                avisoImportante: `O valor foi gravado, mas NÃO consegui deixar clicável: ${semLinkPorFalha.join(
+                  ", ",
+                )}. Avise que o link precisa ser posto à mão nessa(s) célula(s) — não tente de novo, o valor já está lá.`,
+              }
+            : {}),
         };
       },
     },

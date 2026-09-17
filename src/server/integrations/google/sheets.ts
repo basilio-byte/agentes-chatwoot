@@ -112,6 +112,23 @@ export function linhasEmComum(a: number[], b: number[]): number[] {
   return a.filter((linha) => naOutra.has(linha));
 }
 
+/**
+ * A URL serve para virar link numa célula?
+ *
+ * ⚠ Só `http` e `https`. O texto vem do modelo, que por sua vez leu o retorno de
+ * uma ferramenta — e um link `javascript:` ou `data:` numa planilha que a equipe
+ * clica é código esperando alguém clicar. Recusar aqui é barato; descobrir
+ * depois, não.
+ */
+export function urlDeLinkValida(url: string): boolean {
+  try {
+    const { protocol } = new URL(url.trim());
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export type ParDeColuna = { coluna: string; valor: string };
 
 export type ResultadoDoCasamento =
