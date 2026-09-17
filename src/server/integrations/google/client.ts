@@ -561,6 +561,40 @@ export class GoogleClient {
   }
 
   /**
+   * Move um arquivo de uma pasta para outra.
+   *
+   * ⚠ **Mover não cria arquivo**, então não esbarra na quota zero da conta de
+   * serviço — ao contrário de copiar, que esbarra. É o que torna este caminho
+   * possível sem Drive compartilhado.
+   *
+   * ⚠ E o **id do arquivo não muda**: o link que já foi gravado numa planilha
+   * continua funcionando depois da mudança de pasta. Sem isso, mover o arquivo
+   * quebraria o "OK" clicável que acabou de ser escrito.
+   *
+   * O Drive trata pasta como PAI, e um arquivo pode ter vários: por isso a
+   * mudança é `addParents` + `removeParents`, e não um campo de destino. Sem o
+   * `removeParents`, o arquivo passaria a aparecer nas duas pastas.
+   */
+  async moverArquivo(
+    arquivoId: string,
+    paraPastaId: string,
+    dePastaId: string,
+  ): Promise<ArquivoDrive> {
+    return this.requisitar("drive", `/drive/v3/files/${arquivoId}`, {
+      method: "PATCH",
+      query: {
+        addParents: paraPastaId,
+        removeParents: dePastaId,
+        fields: "id,name,mimeType,webViewLink,parents",
+        ...this.paramsDeDrive(false),
+      },
+      // Sem corpo: o que muda vai todo na query. Um corpo vazio faria a API
+      // interpretar como "nenhum campo a alterar" e devolver 200 sem mover.
+      corpo: {},
+    });
+  }
+
+  /**
    * Ping da configuração.
    *
    * Não usa um endpoint amplo de propósito: `drive/v3/about` responde para

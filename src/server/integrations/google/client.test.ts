@@ -427,3 +427,55 @@ describe("política de repetição", () => {
     expect(chamadas).toHaveLength(1);
   });
 });
+
+describe("mover arquivo entre pastas", () => {
+  /**
+   * ⚠ Mover é `PATCH` com `addParents` e `removeParents` na QUERY, não um
+   * campo de destino no corpo: no Drive, pasta é PAI e um arquivo pode ter
+   * vários. Sem o `removeParents`, ele passaria a aparecer nas duas pastas — e
+   * a pasta de entrada, que existe para mostrar o que falta tratar, nunca
+   * esvaziaria.
+   */
+  it("troca o pai, e tira o antigo", async () => {
+    await cliente().moverArquivo("arq1", "destino", "origem");
+
+    expect(chamadas[0].method).toBe("PATCH");
+    expect(url().pathname).toBe("/drive/v3/files/arq1");
+    expect(query().get("addParents")).toBe("destino");
+    expect(query().get("removeParents")).toBe("origem");
+  });
+
+  it("⚠ pede os parents de volta: é como quem chamou confere que moveu", async () => {
+    await cliente().moverArquivo("arq1", "destino", "origem");
+    expect(query().get("fields")).toContain("parents");
+  });
+
+  it("⚠ e o webViewLink, porque o link não pode mudar", async () => {
+    // O link já foi gravado na planilha antes de mover. Se o id mudasse, o
+    // "OK" clicável apontaria para lugar nenhum — conferido contra o Drive
+    // real em 17/09/2026: não muda.
+    await cliente().moverArquivo("arq1", "destino", "origem");
+    expect(query().get("fields")).toContain("webViewLink");
+  });
+
+  it("vale para Drive compartilhado", async () => {
+    await cliente().moverArquivo("arq1", "destino", "origem");
+    expect(query().get("supportsAllDrives")).toBe("true");
+  });
+
+  it("⚠ 500 NÃO é repetido: mover é escrita, e pode ter sido aplicado", async () => {
+    comRespostas((_c, n) => (n === 1 ? erroDoGoogle(500, "backendError") : responder({ id: "arq1" })));
+
+    await expect(cliente().moverArquivo("arq1", "destino", "origem")).rejects.toThrow();
+    expect(chamadas).toHaveLength(1);
+  });
+
+  it("429 é repetido: é recusa antes de aplicar", async () => {
+    comRespostas((_c, n) =>
+      n === 1 ? erroDoGoogle(429, "rateLimitExceeded") : responder({ id: "arq1" }),
+    );
+
+    await comRelogioAdiantado(() => cliente().moverArquivo("arq1", "destino", "origem"));
+    expect(chamadas.length).toBeGreaterThan(1);
+  });
+});

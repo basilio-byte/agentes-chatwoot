@@ -12,7 +12,12 @@ import {
   type TipoDeCadastro,
 } from "./config";
 import { logger } from "@/lib/logger";
-import { ArquivoGrandeDemaisError, GoogleApiError, GoogleClient } from "./client";
+import {
+  ArquivoGrandeDemaisError,
+  GoogleApiError,
+  GoogleClient,
+  type ArquivoDrive,
+} from "./client";
 import { camposDoModelo, textoDoDocumento } from "./docs";
 import { capacidadeDeMidia } from "@/server/integrations/openai/credenciais";
 import { criarClienteOpenAI } from "@/server/integrations/openai/client";
@@ -210,6 +215,43 @@ async function idDaAba(
     (s) => normalizarNome(s.properties?.title ?? "") === normalizarNome(aba),
   );
   return achada?.properties?.sheetId ?? null;
+}
+
+/**
+ * Exatamente UM arquivo daquela pasta, pelo começo do nome.
+ *
+ * Nenhum e mais de um são recusas distintas, e as duas dizem o que fazer: ler
+ * ou mover o arquivo errado é um estrago que ninguém percebe na hora.
+ */
+async function umArquivo(
+  cliente: GoogleClient,
+  config: GoogleConfig,
+  pastaId: string,
+  nome: string,
+  rotuloDaPasta: string,
+): Promise<{ arquivo: ArquivoDrive } | { erro: string; arquivos?: (string | undefined)[] }> {
+  const q = [
+    `'${literalDaQuery(pastaId)}' in parents`,
+    "trashed = false",
+    `name contains '${literalDaQuery(nome)}'`,
+  ].join(" and ");
+
+  const achados = (await cliente.listarArquivos(q, config.limiteDeLinhas)).files ?? [];
+
+  if (achados.length === 0) {
+    return {
+      erro: `Não achei nenhum arquivo começando por "${nome}" na pasta "${rotuloDaPasta}". A busca casa o COMEÇO do nome e não entra em subpastas — tente a primeira palavra, ou liste a pasta para ver o que há nela.`,
+    };
+  }
+
+  if (achados.length > 1) {
+    return {
+      erro: `Achei ${achados.length} arquivos começando por "${nome}" nesta pasta. Não vou escolher no escuro: informe um nome mais completo.`,
+      arquivos: achados.map((a) => a.name),
+    };
+  }
+
+  return { arquivo: achados[0] };
 }
 
 /** A chave em texto, para a mensagem de erro dizer o que foi procurado. */
@@ -1201,32 +1243,13 @@ export const googleIntegration: IntegrationDefinition = {
         const { id, nomes } = resolverCadastro(pasta, config, "pastas");
         if (!id) return naoCadastrado(pasta, "pastas", nomes);
 
-        const q = [
-          `'${literalDaQuery(id)}' in parents`,
-          "trashed = false",
-          `name contains '${literalDaQuery(nome)}'`,
-        ].join(" and ");
+        // ⚠ Escolher "o primeiro" seria ler o arquivo errado e gravar os dados
+        // dele como se fossem do certo — sem erro nenhum. Quem recusa é
+        // `umArquivo`, o mesmo helper que a ferramenta de mover usa.
+        const achado = await umArquivo(cliente, config, id, nome, pasta);
+        if ("erro" in achado) return { lido: false, ...achado };
 
-        const achados = (await cliente.listarArquivos(q, config.limiteDeLinhas)).files ?? [];
-
-        if (achados.length === 0) {
-          return {
-            lido: false,
-            erro: `Não achei nenhum arquivo começando por "${nome}" na pasta "${pasta}". A busca casa o COMEÇO do nome e não entra em subpastas — tente a primeira palavra, ou liste a pasta para ver o que há nela.`,
-          };
-        }
-
-        // Escolher "o primeiro" seria ler o arquivo errado e gravar os dados
-        // dele como se fossem do certo — sem erro nenhum.
-        if (achados.length > 1) {
-          return {
-            lido: false,
-            erro: `Achei ${achados.length} arquivos começando por "${nome}" nesta pasta. Não vou escolher no escuro: informe um nome mais completo.`,
-            arquivos: achados.map((a) => a.name),
-          };
-        }
-
-        const arquivo = achados[0];
+        const arquivo = achado.arquivo;
         const mime = arquivo.mimeType ?? "";
 
         // ⚠ Documento nativo do Google não tem bytes para baixar: `alt=media`
@@ -1289,6 +1312,63 @@ export const googleIntegration: IntegrationDefinition = {
           texto: leitura.texto,
           ...(leitura.texto == null ? { erro: leitura.motivo } : {}),
         };
+      },
+    },
+
+    {
+      name: "google_drive_mover_arquivo",
+      categoria: "Arquivos e pastas",
+      description:
+        "Move um arquivo de uma pasta cadastrada para outra — use para tirar da pasta de entrada o que já foi tratado. O link do arquivo NÃO muda, então o que já foi anotado em planilha continua valendo.",
+      requiresConfirmation: true,
+      inputSchema: z.object({
+        pasta: z.string().min(1).describe("Nome cadastrado da pasta onde o arquivo está."),
+        nome: z.string().min(2).describe("O começo do nome do arquivo."),
+        para: z.string().min(1).describe("Nome cadastrado da pasta de destino."),
+      }),
+      async execute(entrada, ctx) {
+        const { pasta, nome, para } = entrada as {
+          pasta: string;
+          nome: string;
+          para: string;
+        };
+        const { cliente, config } = contexto(ctx);
+
+        const origem = resolverCadastro(pasta, config, "pastas");
+        if (!origem.id) return naoCadastrado(pasta, "pastas", origem.nomes);
+
+        const destino = resolverCadastro(para, config, "pastas");
+        if (!destino.id) return naoCadastrado(para, "pastas", destino.nomes);
+
+        if (origem.id === destino.id) {
+          return {
+            movido: false,
+            erro: "A pasta de origem e a de destino são a mesma. Nada foi movido.",
+          };
+        }
+
+        const achado = await umArquivo(cliente, config, origem.id, nome, pasta);
+        if ("erro" in achado) return { movido: false, ...achado };
+
+        try {
+          const movido = await cliente.moverArquivo(achado.arquivo.id!, destino.id, origem.id);
+          return {
+            movido: true,
+            arquivo: movido.name ?? achado.arquivo.name,
+            de: pasta,
+            para,
+            // O link continua o mesmo: o id não muda ao trocar de pasta.
+            link: movido.webViewLink ?? achado.arquivo.webViewLink ?? null,
+          };
+        } catch (erro) {
+          // ⚠ Mover é uma escrita, e falha depois do envio é ambígua: pode ter
+          // sido aplicada. Mesma doutrina das escritas da planilha.
+          return escritaIndeterminada(erro, {
+            planilha: pasta,
+            aba: para,
+            oQueFazer: `Liste a pasta "${para}" para ver se o arquivo já está lá antes de tentar de novo.`,
+          });
+        }
       },
     },
 

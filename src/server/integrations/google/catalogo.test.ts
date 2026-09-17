@@ -55,6 +55,9 @@ describe("catálogo do Google Workspace", () => {
     expect(escrevem).toEqual([
       "google_docs_anexar_texto",
       "google_docs_criar_de_modelo",
+      // Mover não altera conteúdo, mas TIRA o arquivo de onde ele estava — e
+      // quem abre a pasta de origem deixa de achá-lo. Escreve.
+      "google_drive_mover_arquivo",
       "google_sheets_adicionar_linha",
       "google_sheets_atualizar_linha",
     ]);
@@ -137,7 +140,13 @@ describe("catálogo do Google Workspace", () => {
     // nenhuma instrução), e o "como sair da ambiguidade" ficou na MENSAGEM DE
     // ERRO em vez da descrição: a descrição é paga em toda mensagem de todo
     // agente, o erro só é lido por quem esbarrou no problema.
-    expect(total).toBeLessThan(2900);
+    //
+    // 2900 → 3000 no mesmo 17/09, por `google_drive_mover_arquivo` (~90). Ela
+    // não é conveniência: sem tirar o arquivo já lançado da pasta de entrada, o
+    // agente percorre tudo o que já tratou antes de achar o que chegou, e bate
+    // o teto de iterações com cinco arquivos parados lá. O que ela evita é o
+    // agente parar de funcionar sozinho quando a pasta enche.
+    expect(total).toBeLessThan(3000);
   });
 
   it("o caminho mínimo do caso de uso existe", () => {

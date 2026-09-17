@@ -1597,6 +1597,31 @@ Antes disso o agente só enxergava nome e link.
   compartilhado, `403 storageQuotaExceeded`. Baixar não cria nada e não toca
   quota, e é por isso que este caminho funciona até com conta comum.
 
+#### Mover o arquivo é o que mantém a pasta de entrada pequena
+
+`google_drive_mover_arquivo` tira o arquivo de uma pasta cadastrada e põe em
+outra. Nasceu de uma pergunta do usuário em 17/09/2026 — *"e se ele colocar 3
+contas de uma vez?"* — que expôs um limite do desenho anterior.
+
+- ⚠ **Não é conveniência, é o que impede o agente de parar sozinho.** Sem
+  mover, quem varre uma pasta precisa percorrer tudo o que já tratou antes de
+  achar o que chegou: `listar + (ler + conferir) × já tratados + gravar`. Com o
+  teto de 12 iterações, isso trava com **cinco arquivos** parados na pasta — e
+  contas de energia chegam em lote no fechamento do mês.
+- ⚠ **O id do arquivo NÃO muda ao trocar de pasta**, e é isso que salva o link
+  já gravado na planilha. Conferido contra o Drive real antes de confiar: o
+  `webViewLink` volta idêntico.
+- **Pasta é PAI, não destino**: a mudança é `addParents` + `removeParents` na
+  query. Sem o segundo, o arquivo passa a aparecer nas DUAS pastas, e a de
+  entrada nunca esvazia — que é justamente o que ela existe para mostrar.
+- **Mover não cria arquivo**, então não esbarra na quota zero da conta de
+  serviço. Copiar esbarra.
+- **As duas pastas precisam estar cadastradas**, e origem igual a destino é
+  recusado. A allowlist continua sendo a contenção.
+- **Conta como escrita** (`requiresConfirmation`): não altera conteúdo, mas
+  quem abre a pasta de origem deixa de achar o arquivo. E `500` não é repetido,
+  como toda escrita — pode ter sido aplicado.
+
 #### Docs: índice nenhum, e conferir antes de copiar
 
 - ⚠ **Os índices do Docs são UTF-16 e cascateiam**: toda inserção desloca os
