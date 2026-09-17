@@ -29,6 +29,16 @@ import {
   type JobConversaMarcada,
 } from "./conversa-marcada";
 import { processarConversaMarcada } from "./conversa-marcada-worker";
+import {
+  processarConversaParada,
+  processarVarredura,
+} from "./conversa-parada-worker";
+import {
+  FILA_CONVERSA_PARADA,
+  reconciliarVarredores,
+  type JobConversaParada,
+  type JobVarredura,
+} from "./conversa-parada";
 import { FILA_NPS, type JobNps } from "./nps";
 import { processarNps } from "./nps-worker";
 import { executarAgente } from "@/server/agents/runner";
@@ -960,6 +970,7 @@ export type Workers = {
   agendamento: Worker<JobAgendamento>;
   conversaEncerrada: Worker<JobConversaEncerrada>;
   conversaMarcada: Worker<JobConversaMarcada>;
+  conversaParada: Worker<JobVarredura | JobConversaParada>;
   nps: Worker<JobNps>;
 };
 
@@ -1051,6 +1062,29 @@ export function iniciarWorker(): Workers {
     );
   });
 
+  // Sétima fila, mesmo processo, e a única com DOIS tipos de job: a varredura
+  // do relógio (barata, sem modelo) e a análise de uma conversa (paga). Quem
+  // separa é o nome do job — `varrer` e `analisar`.
+  //
+  // Concorrência 2 pelo mesmo motivo das outras de segundo plano: ninguém está
+  // esperando por uma conversa que já está parada há um dia, e o atendimento,
+  // que tem cliente esperando, não pode perder vaga para ela.
+  const workerConversaParada = new Worker<JobVarredura | JobConversaParada>(
+    FILA_CONVERSA_PARADA,
+    async (job) =>
+      job.name === "varrer"
+        ? processarVarredura(job as Job<JobVarredura>)
+        : processarConversaParada(job as Job<JobConversaParada>),
+    { connection: getRedis(), concurrency: 2 },
+  );
+
+  workerConversaParada.on("failed", (job, erro) => {
+    logger.error(
+      { jobId: job?.id, tentativa: job?.attemptsMade, erro: erro.message },
+      "varredura de conversas paradas falhou",
+    );
+  });
+
   // Sexta fila, mesmo processo. A pesquisa de satisfação só manda texto fixo,
   // sem modelo, e o vigia cobre qualquer job que ela perder.
   const workerNps = new Worker<JobNps>(FILA_NPS, processarNps, {
@@ -1069,6 +1103,13 @@ export function iniciarWorker(): Workers {
     logger.error({ erro }, "falha ao reconciliar os agendadores");
   });
 
+  // Mesma razão, para o relógio da varredura de conversas paradas.
+  void reconciliarVarredores()
+    .then((r) => logger.info(r, "varredores de conversas paradas reconciliados"))
+    .catch((erro) => {
+      logger.error({ erro }, "falha ao reconciliar os varredores");
+    });
+
   // Sinal de vida para o painel poder responder "o worker está rodando?".
   iniciarBatimento();
   // Poda o histórico de entregas — sem isto a tabela cresce para sempre.
@@ -1084,6 +1125,7 @@ export function iniciarWorker(): Workers {
     agendamento: workerAgendamento,
     conversaEncerrada: workerConversaEncerrada,
     conversaMarcada: workerConversaMarcada,
+    conversaParada: workerConversaParada,
     nps: workerNps,
   };
 }

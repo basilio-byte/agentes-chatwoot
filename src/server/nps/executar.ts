@@ -11,6 +11,7 @@ import {
   clienteDeLeitura,
   clienteDoAgente,
 } from "@/server/integrations/chatwoot/credenciais";
+import { portaDaCaixa } from "@/server/integrations/chatwoot/porta";
 import { ehResolvida } from "@/server/integrations/chatwoot/regras";
 import { marcarResolvida } from "@/server/integrations/chatwoot/resolucao";
 import { telefoneCanonico } from "@/server/integrations/clickup/telefone";
@@ -498,27 +499,6 @@ async function anotar(p: Pesquisa, partes: (string | null)[]) {
 
 async function clienteDaPesquisa(p: Pesquisa): Promise<ChatwootClient | null> {
   return p.portaAgentId ? clienteDoAgente(p.portaAgentId) : null;
-}
-
-/**
- * O robô da caixa: a porta por onde a conversa entrou e, se ela nunca passou por
- * um agente nosso, a porta mais recente da mesma caixa — o Chatwoot amarra um
- * bot por caixa.
- */
-async function portaDaCaixa(conversa: number, inboxId: number | null): Promise<string | null> {
-  const local = await db.conversation.findUnique({
-    where: { chatwootConversationId: conversa },
-    select: { portaAgentId: true },
-  });
-  if (local?.portaAgentId) return local.portaAgentId;
-  if (inboxId == null) return null;
-
-  const vizinha = await db.conversation.findFirst({
-    where: { chatwootInboxId: inboxId, portaAgentId: { not: null } },
-    orderBy: { updatedAt: "desc" },
-    select: { portaAgentId: true },
-  });
-  return vizinha?.portaAgentId ?? null;
 }
 
 /**

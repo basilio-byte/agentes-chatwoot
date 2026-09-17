@@ -246,6 +246,85 @@ export class ChatwootClient {
     return resposta.payload ?? [];
   }
 
+  /**
+   * Uma página de conversas da conta, com os filtros da tela do Chatwoot.
+   *
+   * ⚠ São **25 por página** e não há como pedir mais (conferido no payload real
+   * em 17/09/2026). A ordem é por atividade **decrescente**, então quem pede
+   * "as conversas paradas" recebe justamente as ÚLTIMAS páginas — ler só a
+   * primeira, como o fluxo do n8n fazia, devolve as mais ativas e esconde
+   * exatamente o que se estava procurando: naquele dia eram 107 conversas e 25
+   * lidas, e as 82 mais paradas nunca chegaram a ser analisadas.
+   *
+   * `meta.assigned_count`/`all_count` vêm em toda página e dizem quantas
+   * existem no filtro — é por eles que quem pagina sabe onde parar.
+   *
+   * Leitura: vai com o token de usuário, porque o do Agent Bot não lê.
+   */
+  async listarConversas(filtros: {
+    inboxId?: number | null;
+    /** `assigned`, `unassigned` ou `all`. */
+    tipoDeResponsavel?: "assigned" | "unassigned" | "all";
+    status?: "open" | "pending" | "resolved" | "snoozed" | "all";
+    pagina?: number;
+  }) {
+    const consulta = new URLSearchParams();
+    if (filtros.inboxId != null) consulta.set("inbox_id", String(filtros.inboxId));
+    if (filtros.tipoDeResponsavel) consulta.set("assignee_type", filtros.tipoDeResponsavel);
+    if (filtros.status) consulta.set("status", filtros.status);
+    consulta.set("page", String(filtros.pagina ?? 1));
+
+    const resposta = await this.requisitar<{
+      data?: {
+        meta?: {
+          all_count?: number;
+          assigned_count?: number;
+          unassigned_count?: number;
+        } | null;
+        payload?: ConversaListada[] | null;
+      } | null;
+    }>(`/conversations?${consulta.toString()}`, {}, true);
+
+    // ⚠ O envelope desta rota é `{ data: { meta, payload } }`, e não o `payload`
+    // no topo que as outras devolvem. Ler `payload` direto aqui volta vazio,
+    // sem erro — e "nenhuma conversa" é indistinguível de "nada a fazer".
+    const dados = resposta.data ?? null;
+
+    return {
+      conversas: (dados?.payload ?? []).map((bruta) => ({
+        id: bruta.id,
+        inboxId: bruta.inbox_id ?? null,
+        status: bruta.status ?? null,
+        assigneeId: bruta.meta?.assignee?.id ?? null,
+        /** `User` ou `AgentBot` — a mesma distinção de `obterConversa`. */
+        assigneeTipo: bruta.meta?.assignee_type ?? null,
+        assigneeNome: bruta.meta?.assignee?.name?.trim() || null,
+        contatoNome: bruta.meta?.sender?.name?.trim() || null,
+        telefone: bruta.meta?.sender?.phone_number?.trim() || null,
+        /**
+         * A última mensagem que não é atividade do sistema.
+         *
+         * ⚠ Ela inclui **nota privada**, e é por isso que ninguém decide
+         * "parada há quanto tempo" só com este campo: a nota que nós mesmos
+         * escrevemos passa a ser a última, e a conversa que ninguém respondeu
+         * há uma semana parece ativa de hoje. Serve para descartar barato o que
+         * está claramente vivo; quem decide é a última mensagem PÚBLICA, lida
+         * das mensagens.
+         */
+        ultimaMensagem: bruta.last_non_activity_message
+          ? {
+              id: bruta.last_non_activity_message.id,
+              criadaEm: bruta.last_non_activity_message.created_at ?? null,
+              privada: bruta.last_non_activity_message.private === true,
+              tipo: bruta.last_non_activity_message.message_type ?? null,
+            }
+          : null,
+      })),
+      /** Quantas existem no filtro inteiro, não nesta página. */
+      total: dados?.meta?.assigned_count ?? dados?.meta?.all_count ?? null,
+    };
+  }
+
   async enviarMensagem(
     conversationId: number,
     conteudo: string,
@@ -464,6 +543,24 @@ export class ChatwootClient {
     return { labels: novos, mudou: true };
   }
 }
+
+/** Uma conversa como a listagem da conta devolve. Só o que lemos dela. */
+type ConversaListada = {
+  id: number;
+  inbox_id?: number | null;
+  status?: string | null;
+  meta?: {
+    assignee?: { id?: number; name?: string | null } | null;
+    assignee_type?: string | null;
+    sender?: { name?: string | null; phone_number?: string | null } | null;
+  } | null;
+  last_non_activity_message?: {
+    id: number;
+    created_at?: number | null;
+    private?: boolean | null;
+    message_type?: number | null;
+  } | null;
+};
 
 export type MensagemChatwoot = {
   id: number;

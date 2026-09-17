@@ -35,4 +35,6 @@ export const ONDE_RODA: Record<RunSource, "painel" | "worker"> = {
   [RunSource.CONVERSA_ENCERRADA]: "worker",
   // Sai da fila do gatilho de checkbox, pelo mesmo caminho.
   [RunSource.CONVERSA_MARCADA]: "worker",
+  // Sai da varredura do relógio, também pela fila do gatilho de conversa.
+  [RunSource.CONVERSA_PARADA]: "worker",
 };

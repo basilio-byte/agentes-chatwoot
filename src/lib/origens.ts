@@ -27,6 +27,7 @@ export const ROTULO_DA_FONTE: Record<RunSource, string> = {
   [RunSource.INTERNO]: "Chamada interna",
   [RunSource.CONVERSA_ENCERRADA]: "Conversa encerrada",
   [RunSource.CONVERSA_MARCADA]: "Checkbox marcado",
+  [RunSource.CONVERSA_PARADA]: "Conversa parada",
 };
 
 /** O que veio na URL, quando é uma origem de verdade. Senão, sem filtro. */

@@ -336,6 +336,16 @@ enum EventoDeConversa {
   /// Alguém da equipe marcou um checkbox (atributo personalizado) da conversa.
   /// Quais checkboxes: `GatilhoDeConversa.atributos`.
   ATRIBUTO_MARCADO
+
+  /// A conversa está aberta, com alguém da equipe atendendo, e ninguém falou
+  /// com o cliente há mais de `GatilhoDeConversa.horasParadas`.
+  ///
+  /// ⚠ Os outros dois eventos são REATIVOS: o Chatwoot avisa e nós agimos.
+  /// Este é ATIVO — quem aciona é o relógio (`cron`), e é preciso varrer as
+  /// conversas para descobrir quais se encaixam. É a diferença que obriga a
+  /// fila a ter dois passos: uma varredura por rodada e uma execução por
+  /// conversa.
+  SEM_RESPOSTA
 }
 
 /// Quando algo acontece numa conversa do Chatwoot, este agente roda sobre ela
@@ -375,8 +385,36 @@ model GatilhoDeConversa {
   /// dois — e a unique continua sendo agente + evento.
   atributos String[] @default([])
 
+  /// Só em `SEM_RESPOSTA`: quando varrer, em 5 campos, sempre em
+  /// `America/Sao_Paulo` — o container roda em UTC, e "7h" sem fuso dispara às
+  /// 4h da manhã. Mesmo relógio de `AgentSchedule`.
+  cron String?
+
+  /// Só em `SEM_RESPOSTA`: a conversa só entra se ninguém falou com o cliente
+  /// há mais horas que isto.
+  ///
+  /// ⚠ Contado pela última mensagem PÚBLICA, nunca pela última atividade da
+  /// conversa: a nota interna que este mesmo agente escreve é a última
+  /// mensagem não-atividade, e pelo outro critério comentar uma conversa a
+  /// faria parecer ativa — o filtro passaria a esconder justamente o que
+  /// acabou de ser marcado como parado.
+  horasParadas Int @default(24)
+
+  /// Só em `SEM_RESPOSTA`: teto de execuções pagas por rodada.
+  ///
+  /// A varredura não custa modelo; cada conversa analisada custa. Sem teto, um
+  /// dia atípico — mutirão de conversas antigas reabertas — vira fatura que
+  /// ninguém aprovou. Estourou, as excedentes ficam para a rodada seguinte e
+  /// o resumo diz quantas foram.
+  tetoPorRodada Int @default(60)
+
   ultimaExecucaoEm DateTime?
   /// `executado` · `ignorado` · `falhou` · `interrompido`.
+  ///
+  /// Em `SEM_RESPOSTA` quem escreve aqui é a VARREDURA, com o resumo da rodada
+  /// inteira ("107 conversas, 82 paradas, 12 analisadas"): é a pergunta que
+  /// quem abre a tela faz, e ela não seria respondida pelo desfecho da última
+  /// conversa a terminar.
   ultimoResultado  String?
   ultimoDetalhe    String?
 
@@ -658,6 +696,20 @@ enum RunSource {
   /// que a conversa foi resolvida — e aqui ela costuma estar aberta, com a
   /// pessoa que marcou atendendo. Regra falsa é pior que regra ausente.
   CONVERSA_MARCADA
+
+  /// O relógio varreu as conversas abertas e esta está parada há mais de
+  /// `GatilhoDeConversa.horasParadas`: o agente lê o atendimento e deixa uma
+  /// nota interna para quem está com ela (`server/conversa-parada/`).
+  ///
+  /// Substitui o fluxo "Comercial - Assistente Vendedor" do n8n, despublicado
+  /// pelo usuário em 17/09/2026.
+  ///
+  /// ⚠ É a única origem em que o agente age numa conversa de OUTRA pessoa, e
+  /// de propósito: quem atende é gente, continua atendendo, e o agente só
+  /// escreve para ela. A garantia de que nada vaza para o cliente não é o
+  /// prompt — é o turno em segundo plano, sem as ferramentas de canal, e o
+  /// texto final que não é enviado a ninguém.
+  CONVERSA_PARADA
 }
 
 enum RunStatus {

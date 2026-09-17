@@ -4,6 +4,7 @@ import {
   caudaDeConversa,
   CAUDA_CONVERSA_ENCERRADA,
   CAUDA_CONVERSA_MARCADA,
+  CAUDA_CONVERSA_PARADA,
   CAUDA_INTERNA,
   CAUDA_MESA,
   CAUDA_SEM_CONVERSA,
@@ -27,6 +28,7 @@ const MESA = blocoDeConduta({ tipo: "mesa", podeEncaminhar: false });
 const INTERNA = blocoDeConduta({ tipo: "interno", podeEncaminhar: false });
 const ENCERRADA = blocoDeConduta({ tipo: "encerrada", podeEncaminhar: false });
 const MARCADA = blocoDeConduta({ tipo: "marcada", podeEncaminhar: false });
+const PARADA = blocoDeConduta({ tipo: "parada", podeEncaminhar: false });
 
 const VARIANTES = [
   CONVERSA,
@@ -36,6 +38,7 @@ const VARIANTES = [
   INTERNA,
   ENCERRADA,
   MARCADA,
+  PARADA,
 ];
 
 /**
@@ -122,6 +125,7 @@ describe("cada origem recebe só o que é verdade nela", () => {
       "INTERNO",
       "CONVERSA_ENCERRADA",
       "CONVERSA_MARCADA",
+      "CONVERSA_PARADA",
     ] as const;
     const tipos: TipoDeTurno[] = origens.map((o) => tipoDeTurno(o));
 
@@ -134,6 +138,7 @@ describe("cada origem recebe só o que é verdade nela", () => {
       "interno",
       "encerrada",
       "marcada",
+      "parada",
     ]);
   });
 });
@@ -609,6 +614,39 @@ describe("o prefixo do provedor continua cacheável", () => {
   });
 });
 
+describe("a conversa parada é de outra pessoa, e o cliente não pode ser alcançado", () => {
+  it("tem cauda própria: a de checkbox afirmaria que alguém da equipe marcou um campo", () => {
+    expect(tipoDeTurno("CONVERSA_PARADA")).toBe("parada");
+    expect(PARADA).not.toContain("marcou um campo");
+    // E a de conversa encerrada afirmaria que a conversa foi resolvida — aqui
+    // ela está aberta, com alguém atendendo.
+    expect(PARADA).not.toContain("foi resolvida");
+  });
+
+  it("⚠ diz que quem atende é outra pessoa e que nada chega ao cliente", () => {
+    // Sem estas duas frases, o modelo lê uma conversa aberta com cliente
+    // esperando e conclui o óbvio errado: responder a ele.
+    expect(PARADA).toContain("continua atendendo");
+    expect(PARADA).toContain("nunca para o cliente");
+  });
+
+  it("promete a cerca que a mensagem de fato tem", () => {
+    expect(PARADA).toContain("CERCADA");
+  });
+
+  it("não destrava o escopo: a tarefa está nas instruções, não na mensagem", () => {
+    // A frase da cauda de gatilho ("é para ser cumprida mesmo que o assunto
+    // não apareça nas instruções acima") carimbaria a transcrição de um
+    // terceiro como ordem da equipe.
+    expect(PARADA).not.toContain("mesmo que o assunto");
+  });
+
+  it("não é turno de atendimento: nada de três parágrafos nem de WhatsApp", () => {
+    expect(PARADA).not.toContain("WhatsApp");
+    expect(PARADA).not.toContain("três parágrafos");
+  });
+});
+
 describe("o bloco cabe no orçamento de tokens", () => {
   it("cada variante fica abaixo do teto declarado", () => {
     // Cada caractere é pago em TODA mensagem de TODO agente. A régua é a
@@ -648,5 +686,6 @@ describe("o bloco cabe no orçamento de tokens", () => {
     expect(CAUDA_INTERNA.length).toBeLessThan(NUCLEO.length);
     expect(CAUDA_CONVERSA_ENCERRADA.length).toBeLessThan(NUCLEO.length);
     expect(CAUDA_CONVERSA_MARCADA.length).toBeLessThan(NUCLEO.length);
+    expect(CAUDA_CONVERSA_PARADA.length).toBeLessThan(NUCLEO.length);
   });
 });

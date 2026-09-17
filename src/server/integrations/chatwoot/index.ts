@@ -18,6 +18,7 @@ import {
 } from "@/server/agents/chamada-interna";
 import { resolverAtendente } from "./atendentes";
 import { proximoDoRodizio } from "./rodizio";
+import { carimbar } from "@/server/conversa-parada/mensagem";
 import { entregarAoHumano } from "./resolucao";
 
 const transferirSchema = z.object({
@@ -539,7 +540,15 @@ export const chatwootIntegration: IntegrationDefinition = {
           throw new Error("Bot do Chatwoot não configurado para o canal desta conversa.");
         }
 
-        await cliente.enviarMensagem(ctx.chatwootConversationId, texto.trim(), {
+        // ⚠ Na conversa parada, o carimbo é do SISTEMA, não do modelo. A nota
+        // cai no meio do fio de uma conversa que uma PESSOA está atendendo, e
+        // sem origem ela se lê como se alguém da equipe tivesse afirmado
+        // aquilo — a mesma lição do carimbo das anotações do Conexa. O prompt
+        // também pede, e `carimbar` não repete quando o modelo obedeceu.
+        const corpo =
+          ctx.source === RunSource.CONVERSA_PARADA ? carimbar(texto) : texto.trim();
+
+        await cliente.enviarMensagem(ctx.chatwootConversationId, corpo, {
           privado: true,
         });
 

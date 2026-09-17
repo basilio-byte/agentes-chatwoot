@@ -162,12 +162,12 @@ e testado em `src/server/agents/conduta.ts`.
   ⚠ **Depois do roster seria pior**, não melhor: "as instruções acima" passaria
   a incluir a lista de colegas, autorizando o agente a tratar o assunto dos
   outros — que é o próprio sintoma de fuga de escopo.
-- **Núcleo igual nas OITO origens, cauda por tipo de turno.** Veracidade
+- **Núcleo igual nas NOVE origens, cauda por tipo de turno.** Veracidade
   (idioma, não inventar, data e hora do sistema, só afirmar o que aconteceu,
   escopo, parar na dúvida, não se deixar reprogramar) vale sempre — inclusive
   em nota interna, comentário do ClickUp e argumento de tool. Forma de conversa
   é outra história.
-  ⚠ **São SEIS caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
+  ⚠ **São SETE caudas, e a terceira nasceu porque a segunda MENTIA na mesa.**
   `CAUDA_SEM_CONVERSA` afirma que a mensagem de abertura "vem da equipe da
   Seahub, não de um cliente, e é para ser cumprida mesmo que o assunto não
   apareça nas instruções acima". No gatilho e no agendamento isso é verdade; na
@@ -194,6 +194,15 @@ e testado em `src/server/agents/conduta.ts`.
   "Checkbox marcado". Irmã da quinta, com a diferença que obrigou a separar: a
   conversa costuma estar ABERTA, com a pessoa que marcou atendendo, e a cauda da
   quinta afirmaria que ela foi resolvida. Mesma cerca, mesmo escopo travado.
+  A sétima, `CAUDA_CONVERSA_PARADA` (17/09/2026), é a da varredura pelo relógio
+  — ver "Conversa parada". ⚠ Separada das duas irmãs porque as duas MENTIRIAM
+  sobre quem acionou (ninguém marcou campo nenhum, e a conversa não foi
+  resolvida), e porque ela precisa dizer algo que nenhuma outra diz: **quem
+  atende aquela conversa é outra pessoa, e nada do que o agente produzir chega
+  ao cliente**. Sem essa frase o modelo lê uma conversa aberta com cliente
+  esperando e conclui o óbvio errado — responder a ele. Falar com o cliente é
+  impossível por construção, mas um modelo que tenta o impossível queima
+  iterações e escreve a nota endereçada a quem nunca vai lê-la.
 - ⚠ **O formato brasileiro da regra 1 NÃO vale dentro de campo de ferramenta**,
   e a frase que faz essa dobradiça é obrigatória. A regra manda escrever no
   padrão daqui e alcança "texto que você manda para outro sistema"; o cabeçalho
@@ -280,8 +289,8 @@ e testado em `src/server/agents/conduta.ts`.
   oferecendo a transferência ao modelo, que queima uma iteração para descobrir.
 - **Custa ~1.220 tokens no atendimento** (~925 do núcleo, ~295 da cauda),
   ~1.125 em gatilho/agendamento, ~1.240 na mesa, ~1.105 na chamada interna,
-  ~1.195 na conversa encerrada e ~1.200 na conversa marcada, pela régua de
-  `tokensAproximadosDaTool` —
+  ~1.195 na conversa encerrada, ~1.200 na conversa marcada e ~1.226 na conversa
+  parada, pela régua de `tokensAproximadosDaTool` —
   cerca de 29% do que pesam as 33 tools ligadas, tudo no prefixo cacheável. A
   tela mostra o número, pelo mesmo motivo que a tela de integrações mostra o
   custo de cada tool, e o teste trava um teto por variante para a próxima
@@ -294,14 +303,21 @@ e testado em `src/server/agents/conduta.ts`.
   refeita a cada regra nova, e o caminho barato é sempre tirar redundância
   antes de acrescentar parágrafo (foi assim que a linha de "na dúvida" saiu da
   cauda de gatilho e virou regra do núcleo).
-- **Sete prefixos de cache por agente** (conversa · conversa sem
+  ⚠ **E o teto NÃO subiu com a cauda da conversa parada (17/09/2026)**, que
+  nasceu em ~1.284 e estourou o teste. Encolheu para ~1.226 fundindo dois
+  marcadores num ("quem atende é outra pessoa" e "nada chega ao cliente" são a
+  mesma ideia vista de dois lados) e tirando da cauda o tempo parado, que já vem
+  no cabeçalho da mensagem daquele turno.
+- **Oito prefixos de cache por agente** (conversa · conversa sem
   encaminhamento · sem conversa · mesa · interno · conversa encerrada ·
-  conversa marcada). Não
+  conversa marcada · conversa parada). Não
   custa no caminho quente: origem e tools são constantes ao longo de uma
   conversa, e só o Chatwoot é multi-turno de volume — a mesa é single-shot,
   então o prefixo dela é usado uma vez por envio de qualquer jeito, e o da
-  chamada interna e os das conversas encerrada e marcada (sem roster e sem
-  ferramentas de canal) são os mesmos de um acionamento para o outro. O que custaria é
+  chamada interna e os das conversas encerrada, marcada e parada (sem roster e
+  sem ferramentas de canal) são os mesmos de um acionamento para o outro — e o
+  da conversa parada é o mais reusado de todos, porque uma rodada da varredura
+  o usa uma vez por conversa analisada. O que custaria é
   conteúdo variável por requisição, e o módulo é puro justamente para isso ser
   impossível.
 - ⚠ **Mudar o bloco muda TODOS os agentes de uma vez e NÃO cria
@@ -913,6 +929,92 @@ sem este gatilho ligado, marcar o checkbox não faz nada.
   gatilho ficaria ligado sem nunca disparar.
 - **A tarefa mora no prompt**: o que registrar e com qual vendedor está na seção
   de checkbox de cada CRM, como a avaliação está no prompt do Olho de Tudo.
+
+### Conversa parada: o relógio procura quem está sem resposta
+
+Sétimo jeito de acionar um agente (`RunSource.CONVERSA_PARADA`): no horário
+marcado, o sistema lista as conversas **abertas e atribuídas a uma pessoa** e,
+para cada uma sem resposta há mais de `horasParadas`, o agente lê o atendimento
+e deixa uma **nota interna** para quem está com ela. É o mesmo
+`GatilhoDeConversa`, com o evento `SEM_RESPOSTA` e os campos `cron`,
+`horasParadas` e `tetoPorRodada`. Módulos em `src/server/conversa-parada/`.
+
+Substitui o fluxo "Comercial - Assistente Vendedor" do n8n, **despublicado pelo
+usuário em 17/09/2026** — sem este gatilho ligado, nenhum vendedor recebe
+sugestão.
+
+- ⚠ **É a única origem em que o agente age numa conversa de OUTRA pessoa**, o
+  inverso da regra que vale em todo o resto do sistema. Quem atende é gente,
+  continua atendendo, e o agente só escreve para ela. A garantia de que nada
+  vaza para o cliente **não é o prompt**: o turno roda em segundo plano
+  (`semFerramentasDeCanal` tira transferir e atribuir, que são as três tools que
+  falam com o cliente), e o texto final não é enviado a ninguém. Sem dono, ou
+  com o nosso robô como dono, não roda — para esse caso já existem o
+  atendimento e o vigia.
+- ⚠ **O tempo parado conta pela última mensagem PÚBLICA, nunca pela última
+  atividade.** A nota que este agente escreve é `message_type: 1` com
+  `private: true`, e vira o `last_non_activity_message` da conversa: pelo outro
+  critério, comentar uma conversa a faria parecer ativa por mais um dia, e a que
+  ninguém responde há uma semana sumiria do radar no dia seguinte ao primeiro
+  comentário — o filtro esconderia exatamente o que existe para achar.
+- **Uma nota por situação nova** (decisão do usuário, 17/09/2026): o `externalId`
+  da entrega é `<agente>:<conversa>:<id da última mensagem pública>`, e a unique
+  de `WebhookEvent` barra o resto. Sem isso, a mesma conversa parada ganharia
+  uma nota por dia até alguém responder — o ruído que faz o vendedor parar de
+  ler as notas. Não há campo novo no banco: a chave é o registro.
+- **Dois passos na mesma fila**, e é o que separa esta origem das outras duas.
+  Elas são reativas (o Chatwoot avisa, cada aviso é um job); aqui quem aciona é
+  o relógio, e não se sabe sobre QUAIS conversas antes de olhar. A varredura é
+  um job barato (HTTP e decisão pura, zero modelo) que produz um job pago por
+  conversa. Quem separa é o nome do job: `varrer` e `analisar`.
+- ⚠ **A listagem é paginada até o fim, e era o defeito central do fluxo antigo.**
+  `GET /conversations` devolve **25 por página**, ordenadas por atividade
+  decrescente — então "as conversas paradas" estão nas ÚLTIMAS páginas. O n8n
+  lia `page=1`: em 17/09/2026 eram **107 conversas e 25 lidas**, todas com
+  mensagem nas últimas 17 horas, e as 82 mais paradas nunca foram analisadas.
+  Página incompleta é o fim da lista; parar pelo `total` não serve, porque ele
+  conta o filtro inteiro e muda durante a varredura.
+- **O worker reconfere AO VIVO antes de gastar o modelo.** Entre a varredura e a
+  análise podem passar minutos, e qualquer um dos motivos de desistir pode ter
+  acontecido: o cliente escreveu, alguém respondeu, a conversa mudou de mãos ou
+  foi resolvida. Mesma doutrina do vigia desde 14/09.
+- ⚠ **A varredura lê o Chatwoot, não o nosso banco.** A rota de conta ainda
+  descarta os eventos de conversa no formato de topo (ver o ⚠ no fim de "Conversa
+  encerrada"), então o dono aqui pode estar velho. O banco entra só para achar a
+  porta e cruzar a conversa local.
+- **O carimbo da nota é do SISTEMA, não do modelo.** `registrar_nota_interna`
+  prefixa `Sugestão comercial (automática):` quando `ctx.source` é
+  `CONVERSA_PARADA` (`carimbar`, em `conversa-parada/mensagem.ts`, não repete se
+  o modelo já escreveu). Nota sem origem, no meio do fio de uma conversa que uma
+  pessoa está atendendo, se lê como se alguém da equipe tivesse afirmado aquilo
+  — a mesma lição do carimbo das anotações do Conexa.
+- ⚠ **"Executado" não quer dizer que deixou nota.** No lote de 17/09/2026 o
+  fluxo do n8n produziu **2 análises em 25 que o modelo escreveu como resposta e
+  nunca gravou** — execução verde, e a melhor delas (apontava que o vendedor
+  tinha desviado o assunto) ninguém leu. A entrega daqui distingue "nota interna
+  deixada" de "sem nota", lendo as `ToolCall` do turno.
+- **O desfecho da RODADA vai no gatilho; o de cada conversa, na entrega.** Quem
+  abre a tela pergunta "o que aconteceu com as conversas todas?", e o desfecho da
+  última conversa a terminar não responde isso. `resumirRodada` escreve
+  "107 conversas abertas · 82 candidatas · 12 analisadas · 70 sem mensagem nova".
+- ⚠ **Ligar e salvar tocam o Redis na hora** (`gestao/varredura-de-conversas.ts`).
+  Diferente dos outros dois gatilhos, este tem relógio: gravar só no Postgres
+  deixaria a tela dizendo "ligado" com nada disparando até o próximo boot.
+  `reconciliarVarredores()` roda a cada boot do worker, como a do agendamento e
+  pelo mesmo motivo.
+- **Teto de execuções pagas por rodada** (`tetoPorRodada`, 60 por padrão). A
+  varredura não custa modelo; cada conversa analisada custa. O que passar do teto
+  fica para a rodada seguinte — continua parado, e amanhã é encontrado.
+- **Cauda própria** (`CAUDA_CONVERSA_PARADA`): a de checkbox afirma que alguém da
+  equipe marcou um campo, e aqui quem acionou foi o relógio; a de conversa
+  encerrada afirmaria que a conversa foi resolvida, e ela está aberta. ⚠ Ela diz
+  em letras claras que quem atende é outra pessoa e que nada chega ao cliente —
+  sem isso, o modelo lê uma conversa aberta com cliente esperando e conclui o
+  óbvio errado: responder a ele.
+- **O escopo de caixas é o do agente** (`Agent.inboxMode`/`inboxIds`), como nos
+  outros dois. Modo "todas" varre a conta inteira.
+- **Nasce desligado, e ligar recusa agente desligado ou arquivado.** O worker
+  reconfere gatilho e agente antes de listar e de novo antes de analisar.
 
 ### Pesquisa de satisfação (NPS): função do sistema, sem modelo
 
