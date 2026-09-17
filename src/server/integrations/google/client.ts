@@ -19,6 +19,21 @@ const HOSTS = {
 
 type Host = keyof typeof HOSTS;
 
+/** O arquivo passa do teto — recusado sem gastar leitura paga. */
+export class ArquivoGrandeDemaisError extends Error {
+  constructor(
+    readonly bytes: number,
+    readonly limiteBytes: number,
+  ) {
+    // Vírgula, não ponto: a mensagem vai para o retorno da tool e daí para o
+    // texto que uma pessoa lê — a regra 1 das Regras da Casa vale aqui também.
+    const emMb = (n: number) =>
+      (n / 1_048_576).toFixed(1).replace(".", ",");
+    super(`O arquivo tem ${emMb(bytes)} MB e o limite é ${emMb(limiteBytes)} MB.`);
+    this.name = "ArquivoGrandeDemaisError";
+  }
+}
+
 export class GoogleApiError extends Error {
   constructor(
     readonly status: number,
@@ -299,11 +314,16 @@ export class GoogleClient {
      * último valor cai fora do cabeçalho, com `200` e `gravado: true`.
      */
     ultimaColuna: string,
+    /**
+     * Primeira coluna da tabela, ex.: `"K"`. Só difere de `A` quando a aba tem
+     * mais de uma tabela lado a lado e quem chamou recortou uma delas.
+     */
+    primeiraColuna = "A",
   ): Promise<{ updates?: { updatedRange?: string } }> {
     return this.requisitar(
       "sheets",
       `/v4/spreadsheets/${planilhaId}/values/${encodeURIComponent(
-        a1(aba, `A:${ultimaColuna}`),
+        a1(aba, `${primeiraColuna}:${ultimaColuna}`),
       )}:append`,
       {
         method: "POST",
@@ -399,6 +419,66 @@ export class GoogleClient {
       },
       idempotente: true,
     });
+  }
+
+  /**
+   * Baixa os bytes de um arquivo do Drive.
+   *
+   * Fora do `requisitar`, e não por preguiça: aquele método existe para JSON —
+   * ele parseia a resposta e repete a chamada com backoff. Aqui o corpo é
+   * binário e pode ter megabytes, e repetir um download grande em cima de um
+   * `5xx` é caro sem ser mais correto (o arquivo não muda).
+   *
+   * ⚠ O teto é conferido DUAS vezes: no `content-length`, que evita começar a
+   * baixar o que não cabe, e nos bytes que chegaram, porque o cabeçalho é
+   * opcional e pode mentir. Sem a segunda, um arquivo enorme derrubaria o
+   * worker, que atende quatro conversas ao mesmo tempo.
+   */
+  async baixarArquivo(
+    arquivoId: string,
+    limiteBytes: number,
+  ): Promise<{ bytes: Buffer; mimeType: string | null }> {
+    const token = await obterAccessToken(
+      this.chave,
+      ESCOPOS,
+      this.config.personificar || undefined,
+    );
+
+    const url = new URL(
+      `${HOSTS.drive}/drive/v3/files/${encodeURIComponent(arquivoId)}`,
+    );
+    url.searchParams.set("alt", "media");
+    // Sem isto, arquivo que viva num Drive compartilhado responde 404 — o mesmo
+    // 404 de "não existe", que é o erro mais confuso desta API.
+    url.searchParams.set("supportsAllDrives", "true");
+
+    const resposta = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!resposta.ok) {
+      const corpo = await resposta.text().catch(() => "");
+      throw new GoogleApiError(
+        resposta.status,
+        // O corpo do download vem como texto solto quando falha, sem o
+        // envelope de erro que `requisitar` sabe ler — daí o motivo vazio.
+        "",
+        corpo.slice(0, 500) || `O Google respondeu ${resposta.status} ao baixar o arquivo.`,
+      );
+    }
+
+    const declarado = Number(resposta.headers.get("content-length") ?? "");
+    if (Number.isFinite(declarado) && declarado > limiteBytes) {
+      throw new ArquivoGrandeDemaisError(declarado, limiteBytes);
+    }
+
+    const bytes = Buffer.from(await resposta.arrayBuffer());
+    if (bytes.length > limiteBytes) {
+      throw new ArquivoGrandeDemaisError(bytes.length, limiteBytes);
+    }
+
+    return { bytes, mimeType: resposta.headers.get("content-type") };
   }
 
   async copiarArquivo(

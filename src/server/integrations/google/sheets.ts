@@ -41,6 +41,77 @@ export function colunaParaLetra(indice: number): string {
   return letra;
 }
 
+/** O inverso de `colunaParaLetra`: `"A"` → 0, `"AA"` → 26. */
+export function letraParaColuna(letra: string): number {
+  let n = 0;
+  for (const c of letra.toUpperCase()) {
+    n = n * 26 + (c.charCodeAt(0) - 64);
+  }
+  return n - 1;
+}
+
+/**
+ * Um recorte de colunas da aba, como `"A:J"`.
+ *
+ * Existe porque **uma aba pode ter mais de uma tabela lado a lado**, e aí o
+ * cabeçalho inteiro tem nomes repetidos — `DATA` numa tabela e `DATA` na outra.
+ * `indexarCabecalho` recusa isso, e com razão: escolher "o primeiro CUSTO"
+ * significa que um dia escolheria o outro, gravando por cima do relatório
+ * consolidado sem erro e sem desfazer.
+ *
+ * Com o recorte, quem chama diz qual tabela está usando, e as colunas
+ * repetidas da vizinha simplesmente ficam de fora.
+ */
+export type FaixaDeColunas = { inicio: number; fim: number };
+
+const FORMATO_DA_FAIXA = /^([A-Za-z]{1,3}):([A-Za-z]{1,3})$/;
+
+/**
+ * Lê `"A:J"` e devolve os índices (0 = A).
+ *
+ * `null` quando o texto não é uma faixa de colunas — inclusive `"J:A"`, que
+ * está invertida. Aceitar invertido e "consertar" silenciosamente esconderia um
+ * engano de quem escreveu, e o recorte errado não dá erro: dá outra tabela.
+ */
+export function lerFaixaDeColunas(texto: string): FaixaDeColunas | null {
+  const casou = FORMATO_DA_FAIXA.exec(texto.trim());
+  if (!casou) return null;
+
+  const inicio = letraParaColuna(casou[1]);
+  const fim = letraParaColuna(casou[2]);
+  if (fim < inicio) return null;
+
+  return { inicio, fim };
+}
+
+/**
+ * O cabeçalho recortado pela faixa.
+ *
+ * Devolve sempre o comprimento da faixa, completando com vazio: a API corta o
+ * rabo vazio (ver `normalizarLinhas`), e sem o preenchimento uma coluna do fim
+ * da faixa apareceria como inexistente em vez de vazia.
+ */
+export function recortarCabecalho(
+  cabecalho: string[],
+  faixa: FaixaDeColunas,
+): string[] {
+  const recorte: string[] = [];
+  for (let i = faixa.inicio; i <= faixa.fim; i++) recorte.push(cabecalho[i] ?? "");
+  return recorte;
+}
+
+/**
+ * As linhas que aparecem nas duas listas.
+ *
+ * É o miolo da chave composta: cada condição devolve as linhas em que ela bate,
+ * e a linha procurada é a que bate em todas. Pura e separada porque é a conta
+ * que decide QUAL linha vai ser sobrescrita — numa planilha sem desfazer.
+ */
+export function linhasEmComum(a: number[], b: number[]): number[] {
+  const naOutra = new Set(b);
+  return a.filter((linha) => naOutra.has(linha));
+}
+
 export type ParDeColuna = { coluna: string; valor: string };
 
 export type ResultadoDoCasamento =
@@ -180,6 +251,14 @@ export function casarComCabecalho(
 export function posicoesDasColunas(
   cabecalho: string[],
   dados: ParDeColuna[],
+  /**
+   * Índice da primeira coluna do `cabecalho` na aba de verdade.
+   *
+   * ⚠ Obrigatório quando o cabeçalho veio recortado por uma faixa: sem ele, a
+   * posição 0 do recorte vira a letra `A`, e a gravação cai em outra tabela —
+   * exatamente o que a faixa existe para impedir.
+   */
+  offset = 0,
 ):
   | { ok: true; alvos: { letra: string; valor: string; coluna: string }[] }
   | {
@@ -225,7 +304,7 @@ export function posicoesDasColunas(
     alvos: dados.map((d) => {
       const posicao = posicaoPorNome.get(normalizarNome(d.coluna))!;
       return {
-        letra: colunaParaLetra(posicao),
+        letra: colunaParaLetra(posicao + offset),
         valor: d.valor,
         coluna: cabecalho[posicao],
       };

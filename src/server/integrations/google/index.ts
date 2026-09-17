@@ -11,18 +11,25 @@ import {
   type GoogleConfig,
   type TipoDeCadastro,
 } from "./config";
-import { GoogleApiError, GoogleClient } from "./client";
+import { ArquivoGrandeDemaisError, GoogleApiError, GoogleClient } from "./client";
 import { camposDoModelo, textoDoDocumento } from "./docs";
+import { capacidadeDeMidia } from "@/server/integrations/openai/credenciais";
+import { criarClienteOpenAI } from "@/server/integrations/openai/client";
+import { lerArquivoEnviado } from "@/server/integrations/openai/upload";
 import {
   a1,
   casarComCabecalho,
   colunaParaLetra,
   cortarCelula,
+  lerFaixaDeColunas,
+  linhasEmComum,
   nomesAmbiguos,
   normalizarLinhas,
   paraRegistros,
   posicoesDasColunas,
   procurarNaColuna,
+  recortarCabecalho,
+  type FaixaDeColunas,
 } from "./sheets";
 
 /**
@@ -138,11 +145,14 @@ function motivoDoCabecalho(
         ", ",
       )}. NADA foi alterado — mande cada coluna uma vez só.`;
     case "cabecalhoAmbiguo":
-      // Problema da planilha, não do agente: nenhuma reformulação do pedido
-      // resolve, então o retorno manda escalar em vez de tentar de novo.
+      // ⚠ Desde 17/09/2026 existe UMA saída, e ela precisa estar escrita aqui:
+      // o nome repetido costuma ser de outra tabela na MESMA aba, e o recorte
+      // resolve. Sem esta frase, a descrição da ferramenta teria de carregar a
+      // explicação inteira — e ela é paga em toda mensagem de todo agente,
+      // enquanto isto só é lido por quem esbarrou no problema.
       return `A aba "${aba}" tem mais de uma coluna com o mesmo nome (${problematicas.join(
         ", ",
-      )}), e não dá para saber em qual gravar. NADA foi alterado. Avise que uma pessoa precisa renomear as colunas repetidas — não é algo que você possa resolver.`;
+      )}), e não dá para saber em qual gravar. NADA foi alterado. Se as colunas repetidas forem de OUTRA tabela na mesma aba, informe a faixa da sua tabela em faixaDeColunas (por exemplo "A:J") e chame de novo. Se estiverem na mesma tabela, avise que uma pessoa precisa renomeá-las — aí não é algo que você possa resolver.`;
     case "desconhecidas":
       return `Estas colunas não existem no cabeçalho desta aba: ${problematicas.join(
         ", ",
@@ -180,15 +190,54 @@ function naoCadastrado(termo: string, tipo: TipoDeCadastro, nomes: string[]) {
 }
 
 /** Lê o cabeçalho da aba. É a primeira linha, e ela manda em toda gravação. */
+/** A chave em texto, para a mensagem de erro dizer o que foi procurado. */
+function descreverChave(chave: { coluna: string; valor: string }[]): string {
+  return chave.map((c) => `${c.coluna} = "${c.valor}"`).join(" e ");
+}
+
 async function lerCabecalho(
   cliente: GoogleClient,
   planilhaId: string,
   aba: string,
+  faixa?: FaixaDeColunas | null,
 ): Promise<string[]> {
-  const resposta = await cliente.lerValores(planilhaId, a1(aba, "1:1"));
+  const intervalo = faixa
+    ? `${colunaParaLetra(faixa.inicio)}1:${colunaParaLetra(faixa.fim)}1`
+    : "1:1";
+  const resposta = await cliente.lerValores(planilhaId, a1(aba, intervalo));
   const bruto = resposta.values?.[0];
-  if (!Array.isArray(bruto)) return [];
-  return bruto.map((c) => (c === null || c === undefined ? "" : String(c)));
+  const linha = Array.isArray(bruto)
+    ? bruto.map((c) => (c === null || c === undefined ? "" : String(c)))
+    : [];
+
+  if (!faixa) return linha;
+  // A API corta o rabo vazio, então a faixa volta curta. Completar aqui é o que
+  // faz uma coluna vazia do fim aparecer como vazia, e não como inexistente.
+  const largura = faixa.fim - faixa.inicio + 1;
+  return Array.from({ length: largura }, (_, i) => linha[i] ?? "");
+}
+
+/**
+ * Lê o parâmetro `colunas` das ferramentas de planilha.
+ *
+ * Recusar o que não é faixa, em vez de ignorar, é o que impede o pior caso: um
+ * `"A1:J20"` silenciosamente ignorado devolveria o cabeçalho inteiro e a
+ * gravação cairia na tabela vizinha — que é justamente o que o parâmetro
+ * existe para evitar.
+ */
+function lerRecorte(colunas?: string):
+  | { ok: true; faixa: FaixaDeColunas | null }
+  | { ok: false; erro: string } {
+  if (!colunas?.trim()) return { ok: true, faixa: null };
+
+  const faixa = lerFaixaDeColunas(colunas);
+  if (!faixa) {
+    return {
+      ok: false,
+      erro: `"${colunas}" não é uma faixa de colunas. Use duas letras separadas por dois pontos, da esquerda para a direita — por exemplo "A:J".`,
+    };
+  }
+  return { ok: true, faixa };
 }
 
 const parSchema = z.object({
@@ -323,20 +372,30 @@ export const googleIntegration: IntegrationDefinition = {
           .min(2)
           .optional()
           .describe("Última linha a ler. Omita para ler até o fim."),
+        faixaDeColunas: z
+          .string()
+          .optional()
+          .describe(
+            'Opcional. Faixa da tabela, como "A:J", quando a aba tem tabelas lado a lado.',
+          ),
       }),
       async execute(entrada, ctx) {
-        const { planilha, aba, daLinha, ateLinha } = entrada as {
+        const { planilha, aba, daLinha, ateLinha, faixaDeColunas } = entrada as {
           planilha: string;
           aba: string;
           daLinha?: number;
           ateLinha?: number;
+          faixaDeColunas?: string;
         };
         const { cliente, config } = contexto(ctx);
 
         const { id, nomes } = resolverCadastro(planilha, config, "planilhas");
         if (!id) return naoCadastrado(planilha, "planilhas", nomes);
 
-        const cabecalho = await lerCabecalho(cliente, id, aba);
+        const recorte = lerRecorte(faixaDeColunas);
+        if (!recorte.ok) return { erro: recorte.erro };
+
+        const cabecalho = await lerCabecalho(cliente, id, aba, recorte.faixa);
         if (cabecalho.filter((c) => c.trim()).length === 0) {
           return {
             erro: `A aba "${aba}" não tem cabeçalho na linha 1, então não dá para montar registros. Confira o nome da aba com a ferramenta de ver estrutura.`,
@@ -370,8 +429,11 @@ export const googleIntegration: IntegrationDefinition = {
           };
         }
 
-        const ultima = colunaParaLetra(Math.max(cabecalho.length - 1, 0));
-        const faixa = `A${inicio}:${ultima}${ateLinha ?? ""}`;
+        const primeiraColuna = colunaParaLetra(recorte.faixa?.inicio ?? 0);
+        const ultima = colunaParaLetra(
+          (recorte.faixa?.inicio ?? 0) + Math.max(cabecalho.length - 1, 0),
+        );
+        const faixa = `${primeiraColuna}${inicio}:${ultima}${ateLinha ?? ""}`;
 
         const resposta = await cliente.lerValores(id, a1(aba, faixa));
         const todas = normalizarLinhas(resposta.values, cabecalho.length);
@@ -400,29 +462,47 @@ export const googleIntegration: IntegrationDefinition = {
       name: "google_sheets_procurar_linha",
       categoria: "Planilhas",
       description:
-        "Procura uma linha pelo valor de uma coluna — por exemplo, achar o cliente pelo CPF antes de cadastrar de novo. Use SEMPRE antes de adicionar uma linha que não pode aparecer duas vezes: a planilha aceita duplicata sem reclamar e não existe desfazer. A comparação ignora pontuação, acento e maiúsculas.",
+        "Procura uma linha pelo valor de uma ou mais colunas — com mais de uma, só entram as que batem com TODAS. Use SEMPRE antes de adicionar uma linha que não pode aparecer duas vezes: a planilha aceita duplicata sem reclamar e não existe desfazer. A comparação ignora pontuação, acento e maiúsculas.",
       inputSchema: z.object({
         planilha: z.string().min(1).describe("Nome cadastrado da planilha."),
         aba: z.string().min(1).describe("Nome da aba."),
-        coluna: z
-          .string()
+        chave: z
+          .array(
+            z.object({
+              coluna: z
+                .string()
+                .min(1)
+                .describe("Nome da coluna, como no cabeçalho."),
+              valor: z.string().min(1).describe("O valor nessa coluna."),
+            }),
+          )
           .min(1)
-          .describe('Nome da coluna onde procurar, como está no cabeçalho. Ex.: "CPF".'),
-        valor: z.string().min(1).describe("O valor procurado, com ou sem pontuação."),
+          .describe(
+            "O que identifica a linha. Uma condição basta quando a coluna é única; use duas ou mais quando nenhuma sozinha identifica — numa planilha mensal, cliente e mês se repetem.",
+          ),
+        faixaDeColunas: z
+          .string()
+          .optional()
+          .describe(
+            'Opcional. Faixa da tabela, como "A:J", quando a aba tem tabelas lado a lado.',
+          ),
       }),
       async execute(entrada, ctx) {
-        const { planilha, aba, coluna, valor } = entrada as {
+        const { planilha, aba, chave, faixaDeColunas } = entrada as {
           planilha: string;
           aba: string;
-          coluna: string;
-          valor: string;
+          chave: { coluna: string; valor: string }[];
+          faixaDeColunas?: string;
         };
         const { cliente, config } = contexto(ctx);
 
         const { id, nomes } = resolverCadastro(planilha, config, "planilhas");
         if (!id) return naoCadastrado(planilha, "planilhas", nomes);
 
-        const achado = await localizar(cliente, id, aba, coluna, valor);
+        const recorte = lerRecorte(faixaDeColunas);
+        if (!recorte.ok) return { erro: recorte.erro };
+
+        const achado = await localizar(cliente, id, aba, chave, recorte.faixa);
         if ("erro" in achado) return achado;
 
         if (achado.linhas.length === 0) {
@@ -452,7 +532,7 @@ export const googleIntegration: IntegrationDefinition = {
       name: "google_sheets_adicionar_linha",
       categoria: "Planilhas",
       description:
-        "Acrescenta UMA linha ao final de uma aba. Informe os valores por NOME DE COLUNA: o sistema lê o cabeçalho da aba e põe cada valor no lugar certo, então a ordem em que você mandar não importa. Coluna do cabeçalho que você não informar fica em branco. Se algum nome de coluna não existir no cabeçalho, NADA é gravado e a resposta traz o cabeçalho real para você corrigir e chamar de novo. Grave datas como AAAA-MM-DD e CPF, CNPJ, telefone e CEP com os zeros à esquerda. NÃO EXISTE DESFAZER: confira os dados antes de chamar, e procure antes se a linha não puder aparecer duas vezes.",
+        "Acrescenta UMA linha ao final de uma aba. Informe os valores por NOME DE COLUNA — a ordem não importa, e coluna que você não informar fica em branco. Nome que não existir no cabeçalho faz NADA ser gravado, e a resposta traz o cabeçalho real para corrigir. Datas como AAAA-MM-DD; CPF, CNPJ, telefone e CEP com os zeros à esquerda. NÃO EXISTE DESFAZER: procure antes se a linha não puder aparecer duas vezes.",
       requiresConfirmation: true,
       inputSchema: z.object({
         planilha: z.string().min(1).describe("Nome cadastrado da planilha."),
@@ -461,19 +541,29 @@ export const googleIntegration: IntegrationDefinition = {
           .array(parSchema)
           .min(1)
           .describe("Os valores da linha, um item por coluna."),
+        faixaDeColunas: z
+          .string()
+          .optional()
+          .describe(
+            'Opcional. Faixa da tabela, como "A:J", quando a aba tem tabelas lado a lado.',
+          ),
       }),
       async execute(entrada, ctx) {
-        const { planilha, aba, dados } = entrada as {
+        const { planilha, aba, dados, faixaDeColunas } = entrada as {
           planilha: string;
           aba: string;
           dados: { coluna: string; valor: string }[];
+          faixaDeColunas?: string;
         };
         const { cliente, config } = contexto(ctx);
 
         const { id, nomes } = resolverCadastro(planilha, config, "planilhas");
         if (!id) return naoCadastrado(planilha, "planilhas", nomes);
 
-        const cabecalho = await lerCabecalho(cliente, id, aba);
+        const recorte = lerRecorte(faixaDeColunas);
+        if (!recorte.ok) return { gravado: false, nadaFoiAlterado: true, erro: recorte.erro };
+
+        const cabecalho = await lerCabecalho(cliente, id, aba, recorte.faixa);
         const casamento = casarComCabecalho(
           cabecalho,
           dados.map((d) => ({ coluna: d.coluna, valor: cortarCelula(d.valor) })),
@@ -493,7 +583,9 @@ export const googleIntegration: IntegrationDefinition = {
           };
         }
 
-        const ultimaColuna = colunaParaLetra(cabecalho.length - 1);
+        const inicioDaTabela = recorte.faixa?.inicio ?? 0;
+        const primeiraColuna = colunaParaLetra(inicioDaTabela);
+        const ultimaColuna = colunaParaLetra(inicioDaTabela + cabecalho.length - 1);
 
         let resposta: { updates?: { updatedRange?: string } };
         try {
@@ -502,6 +594,7 @@ export const googleIntegration: IntegrationDefinition = {
             aba,
             casamento.linha,
             ultimaColuna,
+            primeiraColuna,
           );
         } catch (erro) {
           return escritaIndeterminada(erro, {
@@ -523,11 +616,12 @@ export const googleIntegration: IntegrationDefinition = {
           linha: faixa,
           colunasGravadas: casamento.gravadas,
           // Última defesa contra o deslocamento: a faixa escrita tem de começar
-          // na coluna A. Se a Sheets detectou a tabela a partir de outra
-          // coluna, os valores saíram de lugar e o único jeito de saber é este.
-          ...(faixa && !/![A-Z]*A\d/.test(faixa)
+          // na primeira coluna da tabela. Se a Sheets detectou a tabela a
+          // partir de outra coluna, os valores saíram de lugar e o único jeito
+          // de saber é este.
+          ...(faixa && !new RegExp(`!${primeiraColuna}\d`).test(faixa)
             ? {
-                avisoImportante: `A linha foi gravada em ${faixa}, que não começa na coluna A como esperado — os valores podem ter saído deslocados. Avise que uma pessoa precisa conferir esta linha na planilha.`,
+                avisoImportante: `A linha foi gravada em ${faixa}, que não começa na coluna ${primeiraColuna} como esperado — os valores podem ter saído deslocados. Avise que uma pessoa precisa conferir esta linha na planilha.`,
               }
             : {}),
         };
@@ -538,30 +632,42 @@ export const googleIntegration: IntegrationDefinition = {
       name: "google_sheets_atualizar_linha",
       categoria: "Planilhas",
       description:
-        "Corrige ou completa uma linha que já existe. Você identifica a linha pelo valor de uma coluna (por exemplo o CPF), não pelo número dela — o sistema localiza na hora e recusa se achar nenhuma ou mais de uma. Só as colunas que você informar mudam; as outras ficam como estão. Use isto em vez de gravar uma segunda linha do mesmo cliente. NÃO EXISTE DESFAZER.",
+        "Corrige ou completa uma linha que já existe. Você identifica a linha pelo VALOR de uma ou mais colunas, nunca pelo número dela — o sistema localiza na hora e recusa se achar nenhuma ou mais de uma. Só as colunas que você informar mudam. Use isto em vez de gravar uma segunda linha do mesmo cliente. NÃO EXISTE DESFAZER.",
       requiresConfirmation: true,
       inputSchema: z.object({
         planilha: z.string().min(1).describe("Nome cadastrado da planilha."),
         aba: z.string().min(1).describe("Nome da aba."),
-        colunaChave: z
-          .string()
+        chave: z
+          .array(
+            z.object({
+              coluna: z
+                .string()
+                .min(1)
+                .describe("Nome da coluna, como no cabeçalho."),
+              valor: z.string().min(1).describe("O valor nessa coluna."),
+            }),
+          )
           .min(1)
-          .describe('Coluna que identifica a linha, como no cabeçalho. Ex.: "CPF".'),
-        valorChave: z
+          .describe(
+            "O que identifica a linha a alterar. Uma condição basta quando a coluna é única; use duas ou mais quando nenhuma sozinha identifica — numa planilha mensal, cliente e mês se repetem.",
+          ),
+        faixaDeColunas: z
           .string()
-          .min(1)
-          .describe("O valor que identifica a linha a alterar."),
+          .optional()
+          .describe(
+            'Opcional. Faixa da tabela, como "A:J", quando a aba tem tabelas lado a lado.',
+          ),
         dados: z
           .array(parSchema)
           .min(1)
           .describe("As colunas a alterar, e os novos valores."),
       }),
       async execute(entrada, ctx) {
-        const { planilha, aba, colunaChave, valorChave, dados } = entrada as {
+        const { planilha, aba, chave, faixaDeColunas, dados } = entrada as {
           planilha: string;
           aba: string;
-          colunaChave: string;
-          valorChave: string;
+          chave: { coluna: string; valor: string }[];
+          faixaDeColunas?: string;
           dados: { coluna: string; valor: string }[];
         };
         const { cliente, config } = contexto(ctx);
@@ -569,7 +675,10 @@ export const googleIntegration: IntegrationDefinition = {
         const { id, nomes } = resolverCadastro(planilha, config, "planilhas");
         if (!id) return naoCadastrado(planilha, "planilhas", nomes);
 
-        const achado = await localizar(cliente, id, aba, colunaChave, valorChave);
+        const recorte = lerRecorte(faixaDeColunas);
+        if (!recorte.ok) return { atualizado: false, nadaFoiAlterado: true, erro: recorte.erro };
+
+        const achado = await localizar(cliente, id, aba, chave, recorte.faixa);
         if ("erro" in achado) return achado;
 
         // ⚠ Localizar aqui dentro, e não aceitar o número da linha do modelo,
@@ -583,7 +692,7 @@ export const googleIntegration: IntegrationDefinition = {
           return {
             atualizado: false,
             nadaFoiAlterado: true,
-            erro: `Não achei nenhuma linha com ${colunaChave} = "${valorChave}" na aba "${aba}". Confira o valor, ou use a ferramenta de adicionar linha se o registro ainda não existir.`,
+            erro: `Não achei nenhuma linha com ${descreverChave(chave)} na aba "${aba}". Confira os valores, ou use a ferramenta de adicionar linha se o registro ainda não existir.`,
           };
         }
 
@@ -591,15 +700,16 @@ export const googleIntegration: IntegrationDefinition = {
           return {
             atualizado: false,
             nadaFoiAlterado: true,
-            erro: `Achei ${achado.linhas.length} linhas com ${colunaChave} = "${valorChave}" (linhas ${achado.linhas.join(
+            erro: `Achei ${achado.linhas.length} linhas com ${descreverChave(chave)} (linhas ${achado.linhas.join(
               ", ",
-            )}). Não vou alterar nenhuma no escuro. Avise que há registros duplicados e peça que uma pessoa resolva.`,
+            )}). Não vou alterar nenhuma no escuro. Se houver outra coluna que separe essas linhas, acrescente-a à chave e chame de novo; se forem mesmo duplicadas, avise que uma pessoa precisa resolver.`,
           };
         }
 
         const posicoes = posicoesDasColunas(
           achado.cabecalho,
           dados.map((d) => ({ coluna: d.coluna, valor: cortarCelula(d.valor) })),
+          recorte.faixa?.inicio ?? 0,
         );
         if (!posicoes.ok) {
           return {
@@ -626,7 +736,7 @@ export const googleIntegration: IntegrationDefinition = {
             planilha,
             aba,
             linha,
-            oQueFazer: `Use a ferramenta de procurar linha com ${colunaChave} = "${valorChave}" para conferir o que está gravado antes de qualquer nova tentativa.`,
+            oQueFazer: `Use a ferramenta de procurar linha com ${descreverChave(chave)} para conferir o que está gravado antes de qualquer nova tentativa.`,
           });
         }
 
@@ -965,6 +1075,113 @@ export const googleIntegration: IntegrationDefinition = {
     },
 
     {
+      name: "google_drive_ler_arquivo",
+      categoria: "Arquivos e pastas",
+      description:
+        "Lê o CONTEÚDO de um arquivo guardado numa pasta cadastrada — PDF, imagem, áudio ou texto — e devolve o texto extraído, junto do link do arquivo. Use quando precisar do que está escrito dentro do arquivo, não só do nome. Procura pelo começo do nome, como a busca, e recusa se achar mais de um.",
+      inputSchema: z.object({
+        pasta: z.string().min(1).describe("Nome cadastrado da pasta onde o arquivo está."),
+        nome: z.string().min(2).describe("O começo do nome do arquivo."),
+      }),
+      async execute(entrada, ctx) {
+        const { pasta, nome } = entrada as { pasta: string; nome: string };
+        const { cliente, config } = contexto(ctx);
+
+        const { id, nomes } = resolverCadastro(pasta, config, "pastas");
+        if (!id) return naoCadastrado(pasta, "pastas", nomes);
+
+        const q = [
+          `'${literalDaQuery(id)}' in parents`,
+          "trashed = false",
+          `name contains '${literalDaQuery(nome)}'`,
+        ].join(" and ");
+
+        const achados = (await cliente.listarArquivos(q, config.limiteDeLinhas)).files ?? [];
+
+        if (achados.length === 0) {
+          return {
+            lido: false,
+            erro: `Não achei nenhum arquivo começando por "${nome}" na pasta "${pasta}". A busca casa o COMEÇO do nome e não entra em subpastas — tente a primeira palavra, ou liste a pasta para ver o que há nela.`,
+          };
+        }
+
+        // Escolher "o primeiro" seria ler o arquivo errado e gravar os dados
+        // dele como se fossem do certo — sem erro nenhum.
+        if (achados.length > 1) {
+          return {
+            lido: false,
+            erro: `Achei ${achados.length} arquivos começando por "${nome}" nesta pasta. Não vou escolher no escuro: informe um nome mais completo.`,
+            arquivos: achados.map((a) => a.name),
+          };
+        }
+
+        const arquivo = achados[0];
+        const mime = arquivo.mimeType ?? "";
+
+        // ⚠ Documento nativo do Google não tem bytes para baixar: `alt=media`
+        // responde 403 nele. Quem lê Google Docs é a ferramenta de documentos.
+        if (mime.startsWith("application/vnd.google-apps.")) {
+          return {
+            lido: false,
+            erro: `"${arquivo.name}" é ${ROTULO_MIME[mime] ?? "um arquivo do próprio Google"}, e não um arquivo comum. Para ler documento do Google use a ferramenta de ler documento; planilha, a de ler intervalo.`,
+          };
+        }
+
+        // ⚠ O acoplamento com a leitura de mídia é deliberado, e o toggle dela
+        // manda aqui como manda no atendimento: quem desliga "ler documento" em
+        // Integrações espera que NADA leia documento e seja cobrado por isso.
+        // Um caminho novo que fosse direto ao cliente da OpenAI furaria o
+        // toggle sem erro nenhum.
+        const capacidade = await capacidadeDeMidia(ctx.agentId);
+        if (!capacidade.ligada || !capacidade.apiKey) {
+          return {
+            lido: false,
+            erro: `Não dá para ler o conteúdo de arquivos: ${capacidade.motivo ?? "leitura de mídia indisponível"}. Avise que essa configuração está faltando — não é algo que você possa resolver.`,
+          };
+        }
+
+        let bytes: Buffer;
+        let mimeBaixado: string | null;
+        try {
+          const baixado = await cliente.baixarArquivo(
+            arquivo.id!,
+            capacidade.config.tamanhoMaximoMb * 1_048_576,
+          );
+          bytes = baixado.bytes;
+          mimeBaixado = baixado.mimeType;
+        } catch (erro) {
+          if (erro instanceof ArquivoGrandeDemaisError) {
+            return { lido: false, arquivo: arquivo.name, erro: erro.message };
+          }
+          throw erro;
+        }
+
+        const leitura = await lerArquivoEnviado({
+          bytes,
+          nome: arquivo.name ?? nome,
+          mimeType: mimeBaixado ?? mime ?? null,
+          config: capacidade.config,
+          cliente: criarClienteOpenAI(capacidade.config, capacidade.apiKey),
+          agentId: ctx.agentId,
+          // ⚠ A chave é o ID do arquivo: ler o mesmo PDF duas vezes é pagar
+          // duas vezes pela mesma página, e nada garante que o agente leia uma
+          // vez só. Estável porque o id do Drive não muda quando o arquivo é
+          // renomeado ou movido.
+          chaveDoCache: `drive:${arquivo.id}`,
+        });
+
+        return {
+          lido: leitura.texto != null,
+          arquivo: leitura.nome,
+          link: arquivo.webViewLink ?? null,
+          tipo: leitura.kind,
+          texto: leitura.texto,
+          ...(leitura.texto == null ? { erro: leitura.motivo } : {}),
+        };
+      },
+    },
+
+    {
       name: "google_drive_buscar_arquivo",
       categoria: "Arquivos e pastas",
       description:
@@ -1067,26 +1284,68 @@ function formatarArquivo(a: {
  * MESMA conta de deslocamento entre índice do array e número da linha, e é
  * exatamente o tipo de conta que diverge quando é escrita duas vezes.
  */
+/**
+ * As linhas que batem com TODAS as condições.
+ *
+ * ⚠ A chave é uma lista, e não uma coluna só, porque em muita planilha nenhuma
+ * coluna isolada identifica a linha. O caso que obrigou a existir: uma aba de
+ * lançamentos mensais em que a descrição da unidade se repete doze vezes (uma
+ * por mês) e a data se repete em cada unidade — só o PAR identifica. Com uma
+ * coluna só, a ferramenta achava doze linhas e recusava, com razão, gravar
+ * qualquer uma.
+ */
 async function localizar(
   cliente: GoogleClient,
   planilhaId: string,
   aba: string,
-  coluna: string,
-  valor: string,
+  condicoes: { coluna: string; valor: string }[],
+  faixa?: FaixaDeColunas | null,
 ): Promise<
   { cabecalho: string[]; linhas: number[] } | { erro: string; cabecalhoReal?: string[] }
 > {
-  const cabecalho = await lerCabecalho(cliente, planilhaId, aba);
-  const posicoes = posicoesDasColunas(cabecalho, [{ coluna, valor: "" }]);
+  const cabecalho = await lerCabecalho(cliente, planilhaId, aba, faixa);
+  const posicoes = posicoesDasColunas(
+    cabecalho,
+    condicoes.map((c) => ({ coluna: c.coluna, valor: "" })),
+    faixa?.inicio ?? 0,
+  );
 
   if (!posicoes.ok) {
     return {
-      erro: `A coluna "${coluna}" não existe no cabeçalho da aba "${aba}".`,
+      erro:
+        posicoes.motivo === "cabecalhoAmbiguo"
+          ? motivoDoCabecalho(posicoes.motivo, posicoes.problematicas, aba)
+          : `A coluna "${posicoes.problematicas.join('", "')}" não existe no cabeçalho da aba "${aba}".`,
       cabecalhoReal: cabecalho.filter((c) => c.trim()),
     };
   }
 
-  const letra = posicoes.alvos[0].letra;
+  // Interseção: uma linha só entra se bater com todas as condições. Cada
+  // coluna é uma leitura — são duas ou três, e vale a clareza.
+  let linhas: number[] | null = null;
+  for (const [i, alvo] of posicoes.alvos.entries()) {
+    const achadas = await linhasDaColuna(
+      cliente,
+      planilhaId,
+      aba,
+      alvo.letra,
+      condicoes[i].valor,
+    );
+    linhas = linhas === null ? achadas : linhasEmComum(linhas, achadas);
+    // Nenhuma linha sobreviveu: as leituras que faltam não mudariam isso.
+    if (linhas.length === 0) break;
+  }
+
+  return { cabecalho, linhas: linhas ?? [] };
+}
+
+async function linhasDaColuna(
+  cliente: GoogleClient,
+  planilhaId: string,
+  aba: string,
+  letra: string,
+  valor: string,
+): Promise<number[]> {
   // A partir da linha 2: a 1 é o cabeçalho. É esse `2` que vira o número da
   // linha real lá embaixo — ler a coluna inteira e somar 1 daria o vizinho.
   const resposta = await cliente.lerValores(planilhaId, a1(aba, `${letra}2:${letra}`), {
@@ -1099,5 +1358,5 @@ async function localizar(
     c === null || c === undefined ? "" : String(c),
   );
 
-  return { cabecalho, linhas: procurarNaColuna(valores, valor, 2) };
+  return procurarNaColuna(valores, valor, 2);
 }

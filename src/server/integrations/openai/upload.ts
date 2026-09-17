@@ -19,7 +19,7 @@ import {
   transcreverAudio,
   type ResultadoDeLeitura,
 } from "./client";
-import { resumirFalha } from "./analise";
+import { MAX_TENTATIVAS, resumirFalha } from "./analise";
 
 /**
  * Arquivo que veio do NAVEGADOR vira texto — a mesa do agente.
@@ -65,6 +65,16 @@ export type ArquivoEnviado = {
   cliente: OpenAI;
   /** Procedência do registro contábil. */
   agentId?: string | null;
+  /**
+   * Chave de cache, quando o arquivo TEM identidade estável.
+   *
+   * ⚠ A mesa não passa nada aqui, e é de propósito: lá o arquivo vem do
+   * navegador de uma pessoa, e chavear por conteúdo faria o documento de uma
+   * reaparecer para outra — `MediaAnalysis` não tem dono. Um arquivo do Drive é
+   * outra coisa: ele já está num lugar compartilhado, tem id próprio, e ler o
+   * mesmo PDF duas vezes é pagar duas vezes pela mesma página.
+   */
+  chaveDoCache?: string | null;
 };
 
 export type LeituraDeArquivoEnviado = {
@@ -99,6 +109,30 @@ export async function lerArquivoEnviado(
   // `trim` ANTES do fallback: nome só de espaços passava direto e chegava
   // vazio na tela, porque `"   " || "arquivo"` devolve os espaços.
   const nome = entrada.nome?.trim() || "arquivo";
+
+  // Cache só para quem tem identidade estável. Mesma doutrina de
+  // `analisarAnexo`: OK e SKIPPED são definitivos, ERROR volta a ser tentado
+  // até o teto — senão um arquivo corrompido seria pago a cada chamada.
+  if (entrada.chaveDoCache) {
+    const guardado = await db.mediaAnalysis
+      .findUnique({ where: { chave: entrada.chaveDoCache } })
+      .catch(() => null);
+
+    if (
+      guardado &&
+      !(guardado.status === MediaStatus.ERROR && guardado.tentativas < MAX_TENTATIVAS)
+    ) {
+      return {
+        chave: guardado.chave,
+        kind: guardado.kind,
+        status: guardado.status,
+        nome: guardado.nomeArquivo ?? nome,
+        texto: guardado.texto,
+        motivo: guardado.erro,
+        model: guardado.model,
+      };
+    }
+  }
   const extensao = extensaoDe(nome);
   const declarado = (entrada.mimeType ?? "").toLowerCase().trim();
   const tamanhoBytes = entrada.bytes.length;
@@ -191,6 +225,7 @@ export async function lerArquivoEnviado(
         mimeType: arquivo.mimeType,
         tamanhoBytes,
         agentId: entrada.agentId,
+        chaveDoCache: entrada.chaveDoCache,
       });
     }
 
@@ -207,6 +242,7 @@ export async function lerArquivoEnviado(
       mimeType: arquivo.mimeType,
       tamanhoBytes,
       agentId: entrada.agentId,
+      chaveDoCache: entrada.chaveDoCache,
     });
   } catch (erro) {
     const cru = erro instanceof Error ? erro.message : String(erro);
@@ -225,6 +261,7 @@ export async function lerArquivoEnviado(
       mimeType: arquivo.mimeType,
       tamanhoBytes,
       agentId: entrada.agentId,
+      chaveDoCache: entrada.chaveDoCache,
     });
   }
 }
@@ -270,6 +307,7 @@ type Gravacao = {
   mimeType?: string;
   tamanhoBytes?: number;
   agentId?: string | null;
+  chaveDoCache?: string | null;
 };
 
 /**
@@ -293,27 +331,32 @@ async function gravar(
   nome: string,
   dados: Gravacao,
 ): Promise<LeituraDeArquivoEnviado> {
-  const chave = `mesa:${randomUUID()}`;
+  const chave = dados.chaveDoCache || `mesa:${randomUUID()}`;
+  const linha = {
+    kind,
+    status: dados.status,
+    nomeArquivo: nome || null,
+    mimeType: dados.mimeType ?? null,
+    tamanhoBytes: dados.tamanhoBytes ?? null,
+    texto: dados.texto,
+    erro: dados.erro,
+    model: dados.model ?? null,
+    inputTokens: dados.inputTokens ?? 0,
+    outputTokens: dados.outputTokens ?? 0,
+    segundosDeAudio: dados.segundosDeAudio ?? null,
+    duracaoMs: dados.duracaoMs ?? null,
+    agentId: dados.agentId ?? null,
+  };
 
   try {
-    await db.mediaAnalysis.create({
-      data: {
-        chave,
-        kind,
-        status: dados.status,
-        nomeArquivo: nome || null,
-        mimeType: dados.mimeType ?? null,
-        tamanhoBytes: dados.tamanhoBytes ?? null,
-        texto: dados.texto,
-        erro: dados.erro,
-        tentativas: 0,
-        model: dados.model ?? null,
-        inputTokens: dados.inputTokens ?? 0,
-        outputTokens: dados.outputTokens ?? 0,
-        segundosDeAudio: dados.segundosDeAudio ?? null,
-        duracaoMs: dados.duracaoMs ?? null,
-        agentId: dados.agentId ?? null,
-      },
+    // ⚠ `upsert`, e não `create`: com chave estável, a segunda leitura de um
+    // arquivo que falhou cairia em violação de unique e o texto já pago se
+    // perderia. O contador de tentativas é o que faz o teto de `MAX_TENTATIVAS`
+    // valer também por aqui.
+    await db.mediaAnalysis.upsert({
+      where: { chave },
+      create: { chave, tentativas: 0, ...linha },
+      update: { ...linha, tentativas: { increment: 1 } },
     });
   } catch (erro) {
     logger.warn(

@@ -5,12 +5,15 @@ import {
   casarComCabecalho,
   colunaParaLetra,
   cortarCelula,
+  lerFaixaDeColunas,
+  linhasEmComum,
   mesmoValor,
   nomesAmbiguos,
   normalizarLinhas,
   paraRegistros,
   posicoesDasColunas,
   procurarNaColuna,
+  recortarCabecalho,
 } from "./sheets";
 
 /**
@@ -433,5 +436,93 @@ describe("mesmoValor: vazio nunca casa", () => {
     expect(mesmoValor("", "")).toBe(false);
     expect(mesmoValor("", "Ana")).toBe(false);
     expect(mesmoValor("   ", "\t")).toBe(false);
+  });
+});
+
+describe("faixa de colunas: a aba com duas tabelas lado a lado", () => {
+  // O caso que obrigou a existir, medido numa planilha real em 17/09/2026: uma
+  // aba de lançamentos com a tabela de dados em A–J e dois relatórios à
+  // direita, repetindo DATA, CUSTO, CONSUMO e CREDITADO.
+  const CABECALHO_REAL = [
+    "DESCRIÇÃO", "MEDIDOR", "CODIGO DO CLIENTE", "DATA", "USINA", "CUSTO",
+    "CONSUMO", "CREDITADO", "VALOR POR KWA", "OBSERVAÇÃO",
+    "DATA", "CUSTO", "CONSUMO", "CREDITADO", "", "", "DATA", "CUSTO",
+  ];
+
+  it("⚠ sem recorte, o cabeçalho inteiro é ambíguo e nada é gravado", () => {
+    const veredito = casarComCabecalho(CABECALHO_REAL, [
+      { coluna: "CUSTO", valor: "111,27" },
+    ]);
+
+    expect(veredito.ok).toBe(false);
+    expect(veredito).toMatchObject({ motivo: "cabecalhoAmbiguo" });
+  });
+
+  it("com o recorte da tabela, a ambiguidade some", () => {
+    const faixa = lerFaixaDeColunas("A:J")!;
+    const recorte = recortarCabecalho(CABECALHO_REAL, faixa);
+
+    const veredito = casarComCabecalho(recorte, [{ coluna: "CUSTO", valor: "111,27" }]);
+    expect(veredito.ok).toBe(true);
+  });
+
+  it("⚠ o offset é o que impede a gravação de cair na tabela vizinha", () => {
+    const faixa = lerFaixaDeColunas("K:N")!;
+    const recorte = recortarCabecalho(CABECALHO_REAL, faixa);
+
+    const posicoes = posicoesDasColunas(recorte, [{ coluna: "CUSTO", valor: "1" }], faixa.inicio);
+
+    expect(posicoes.ok).toBe(true);
+    // Sem o offset, a posição 1 do recorte viraria "B" — a coluna MEDIDOR da
+    // tabela de dados, e o valor entraria no registro errado.
+    if (posicoes.ok) expect(posicoes.alvos[0].letra).toBe("L");
+  });
+
+  it("lê a faixa em qualquer caixa e além de Z", () => {
+    expect(lerFaixaDeColunas("A:J")).toEqual({ inicio: 0, fim: 9 });
+    expect(lerFaixaDeColunas("a:j")).toEqual({ inicio: 0, fim: 9 });
+    expect(lerFaixaDeColunas(" C:AB ")).toEqual({ inicio: 2, fim: 27 });
+  });
+
+  it("⚠ faixa invertida é recusada, não consertada em silêncio", () => {
+    // "Consertar" J:A para A:J esconderia o engano de quem escreveu — e o
+    // recorte errado não dá erro, dá outra tabela.
+    expect(lerFaixaDeColunas("J:A")).toBeNull();
+  });
+
+  it("recusa o que não é faixa de colunas", () => {
+    expect(lerFaixaDeColunas("A1:J20")).toBeNull();
+    expect(lerFaixaDeColunas("A")).toBeNull();
+    expect(lerFaixaDeColunas("")).toBeNull();
+  });
+
+  it("o recorte completa o rabo vazio que a API não devolve", () => {
+    const recorte = recortarCabecalho(["A", "B"], lerFaixaDeColunas("A:E")!);
+    expect(recorte).toEqual(["A", "B", "", "", ""]);
+  });
+});
+
+describe("chave composta: a linha que bate com todas as condições", () => {
+  it("devolve só as linhas comuns", () => {
+    // O caso real: "Granja minha vida" está nas linhas 2 a 13 (uma por mês) e
+    // "julho 2026" está na 8 de cada unidade. Só a 8 é as duas coisas.
+    const porDescricao = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+    const porData = [8, 20, 32, 44];
+
+    expect(linhasEmComum(porDescricao, porData)).toEqual([8]);
+  });
+
+  it("⚠ nenhuma em comum devolve vazio, e vazio faz a gravação ser recusada", () => {
+    // Não é o mesmo que "achei uma": é o que impede gravar no escuro quando a
+    // combinação pedida não existe na planilha.
+    expect(linhasEmComum([2, 3], [40, 41])).toEqual([]);
+  });
+
+  it("mais de uma em comum continua sendo ambiguidade, e quem chama recusa", () => {
+    expect(linhasEmComum([2, 3, 4], [3, 4, 5])).toEqual([3, 4]);
+  });
+
+  it("preserva a ordem da primeira lista", () => {
+    expect(linhasEmComum([9, 2, 5], [5, 9])).toEqual([9, 5]);
   });
 });

@@ -17,6 +17,8 @@ import { lerConfigOpenAI } from "./config";
 let criadas: Record<string, unknown>[];
 /** Toda tentativa de LER a tabela — que na mesa tem de ser zero. */
 let buscasNoCache: number;
+/** Linhas que o cache já tem, por chave. */
+let noCache: Map<string, Record<string, unknown>>;
 /** Quantas vezes cada endpoint pago foi chamado. */
 let chamadas: { audio: number; imagem: number; documento: number };
 /** Erro que a próxima leitura deve lançar. */
@@ -31,16 +33,15 @@ vi.mock("@/lib/db", () => ({
         criadas.push(data);
         return { id: `linha-${criadas.length}`, ...data };
       },
-      findUnique: async () => {
+      findUnique: async ({ where }: { where: { chave: string } }) => {
         buscasNoCache++;
-        return null;
+        return noCache.get(where.chave) ?? null;
       },
       findFirst: async () => {
         buscasNoCache++;
         return null;
       },
       upsert: async ({ create }: { create: Record<string, unknown> }) => {
-        buscasNoCache++;
         criadas.push(create);
         return create;
       },
@@ -100,6 +101,7 @@ function totalDeChamadas(): number {
 beforeEach(() => {
   criadas = [];
   buscasNoCache = 0;
+  noCache = new Map();
   chamadas = { audio: 0, imagem: 0, documento: 0 };
   erroDaLeitura = null;
   textoLido = "texto extraído do arquivo";
@@ -317,11 +319,70 @@ describe("a mesa não cacheia, e é de propósito", () => {
     expect(primeira.chave).not.toBe(segunda.chave);
   });
 
-  it("nenhuma leitura consulta a tabela antes de ler", async () => {
+  it("nenhuma leitura da mesa consulta a tabela antes de ler", async () => {
     await lerArquivoEnviado(entrada());
     await lerArquivoEnviado(entrada({ nome: "foto.jpg" }));
 
     expect(buscasNoCache).toBe(0);
+  });
+});
+
+describe("com chave estável, cacheia — e é outro caso, não uma exceção", () => {
+  // ⚠ A mesa continua sem cache pelo motivo de sempre: arquivo de navegador não
+  // tem dono na tabela. Um arquivo do DRIVE tem id próprio e já está num lugar
+  // compartilhado, e ler o mesmo PDF duas vezes é pagar duas vezes pela mesma
+  // página. Quem decide é quem chama, passando (ou não) a chave.
+  it("consulta o cache antes de gastar", async () => {
+    await lerArquivoEnviado(entrada({ chaveDoCache: "drive:abc123" }));
+
+    expect(buscasNoCache).toBe(1);
+  });
+
+  it("achando leitura boa, devolve sem chamar o modelo de novo", async () => {
+    noCache.set("drive:abc123", {
+      chave: "drive:abc123",
+      kind: MediaKind.DOCUMENT,
+      status: MediaStatus.OK,
+      nomeArquivo: "conta.pdf",
+      texto: "o que já tinha sido lido",
+      erro: null,
+      tentativas: 0,
+      model: "m-doc",
+    });
+
+    const r = await lerArquivoEnviado(entrada({ chaveDoCache: "drive:abc123" }));
+
+    expect(chamadas.documento).toBe(0);
+    expect(criadas).toHaveLength(0);
+    expect(r.texto).toBe("o que já tinha sido lido");
+  });
+
+  it("⚠ ERROR volta a ser tentado, até o teto — senão um arquivo ruim seria pago para sempre", async () => {
+    noCache.set("drive:ruim", {
+      chave: "drive:ruim",
+      kind: MediaKind.DOCUMENT,
+      status: MediaStatus.ERROR,
+      nomeArquivo: "conta.pdf",
+      texto: null,
+      erro: "deu erro",
+      tentativas: 1,
+      model: null,
+    });
+
+    await lerArquivoEnviado(entrada({ chaveDoCache: "drive:ruim" }));
+    expect(chamadas.documento).toBe(1);
+
+    // No teto, para de tentar e devolve o que está guardado.
+    noCache.set("drive:ruim", { ...noCache.get("drive:ruim")!, tentativas: 3 });
+    await lerArquivoEnviado(entrada({ chaveDoCache: "drive:ruim" }));
+    expect(chamadas.documento).toBe(1);
+  });
+
+  it("grava com a chave recebida, e não com uma nova", async () => {
+    const r = await lerArquivoEnviado(entrada({ chaveDoCache: "drive:abc123" }));
+
+    expect(r.chave).toBe("drive:abc123");
+    expect(criadas[0].chave).toBe("drive:abc123");
   });
 });
 

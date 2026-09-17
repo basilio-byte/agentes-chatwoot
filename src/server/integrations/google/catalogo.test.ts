@@ -124,7 +124,20 @@ describe("catálogo do Google Workspace", () => {
     // e não afirmar registro depois de uma falha ambígua. Cada uma delas troca
     // tokens por um desfecho errado a menos — mas a folga é de ~220, então
     // acrescentar a quarta exige decidir o que sai.
-    expect(total).toBeLessThan(2600);
+    //
+    // 2600 → 2900 em 17/09/2026, e desta vez o que cresceu foi o CATÁLOGO, não
+    // uma descrição: entrou `google_drive_ler_arquivo` (~145), a décima
+    // primeira ferramenta, que é o que permite o agente ler o conteúdo de um
+    // PDF guardado no Drive — antes ele só enxergava nome e link. Entraram
+    // junto a faixa de colunas e a chave composta, que resolvem a aba com duas
+    // tabelas lado a lado e a linha que nenhuma coluna sozinha identifica.
+    //
+    // Parte disso foi paga enxugando redundância nas descrições que já
+    // existiam (a de adicionar linha encolheu ~170 caracteres sem perder
+    // nenhuma instrução), e o "como sair da ambiguidade" ficou na MENSAGEM DE
+    // ERRO em vez da descrição: a descrição é paga em toda mensagem de todo
+    // agente, o erro só é lido por quem esbarrou no problema.
+    expect(total).toBeLessThan(2900);
   });
 
   it("o caminho mínimo do caso de uso existe", () => {

@@ -1485,8 +1485,17 @@ informa uma coluna que não existe no cabeçalho.
 
 #### Atualizar localiza pela chave de negócio, nunca pelo número da linha
 
-`google_sheets_atualizar_linha` recebe `colunaChave` + `valorChave` e acha a linha
-por dentro, recusando com zero ou mais de uma ocorrência.
+`google_sheets_atualizar_linha` recebe `chave` — uma LISTA de `{coluna, valor}` —
+e acha a linha por dentro, recusando com zero ou mais de uma ocorrência.
+
+⚠ **A chave é lista desde 17/09/2026, porque em muita planilha nenhuma coluna
+sozinha identifica a linha.** O caso que obrigou: uma aba de lançamentos mensais
+em que a descrição da unidade se repete doze vezes (uma por mês) e a data se
+repete em cada unidade — medido na planilha real, `DESCRIÇÃO` sozinha achava 12
+linhas e a ferramenta recusava, com razão, gravar qualquer uma. Com o par
+`MEDIDOR + DATA` acha exatamente uma. A interseção é pura e testada
+(`linhasEmComum`); mais de uma sobrevivente continua sendo recusa, e a mensagem
+agora sugere acrescentar outra coluna à chave antes de mandar escalar.
 
 ⚠ **Aceitar o número da linha do modelo seria a pior falha desta integração.** O
 histórico que o modelo recebe é texto puro — nenhuma `ToolCall` anterior chega até
@@ -1497,6 +1506,66 @@ e ninguém sabendo.
 
 E a escrita é **célula a célula** (`values:batchUpdate`), nunca um `values.update`
 da linha inteira — que apagaria todas as colunas não informadas.
+
+#### Uma aba pode ter mais de uma tabela, e aí o cabeçalho mente
+
+`faixaDeColunas` (`"A:J"`) recorta a tabela em que se está trabalhando. Opcional
+nas quatro ferramentas de planilha, e sem nada específico de caso de uso.
+
+- ⚠ **O que ele resolve é a recusa por cabeçalho ambíguo.** Numa aba com a
+  tabela de dados em A–J e relatórios à direita, `DATA`, `CUSTO`, `CONSUMO` e
+  `CREDITADO` aparecem duas e três vezes — e `indexarCabecalho` recusa ler E
+  gravar. A recusa está certa: escolher "o primeiro CUSTO" significa que um dia
+  escolheria o outro, gravando por cima do relatório consolidado sem erro e sem
+  desfazer. Com o recorte, quem chama diz qual tabela é a sua.
+- ⚠ **O offset é o que impede a gravação de cair na tabela vizinha.**
+  `posicoesDasColunas` recebe o índice da primeira coluna da faixa; sem ele, a
+  posição 0 do recorte vira a letra `A` e o valor entra na tabela errada. Tem
+  teste com o cabeçalho real.
+- **Faixa invertida (`"J:A"`) é recusada, não consertada.** "Consertar"
+  esconderia o engano de quem escreveu — e o recorte errado não dá erro, dá
+  outra tabela.
+- **O append também ancora na faixa**, e a conferência do `updatedRange` passou
+  a esperar a primeira coluna da TABELA, não `A`.
+- ⚠ **O "como sair disso" mora na MENSAGEM DE ERRO, não na descrição da tool.**
+  A descrição é paga em toda mensagem de todo agente; o erro só é lido por quem
+  esbarrou no problema. Foi assim que a capacidade coube no orçamento.
+
+#### Ler o conteúdo de um arquivo do Drive
+
+`google_drive_ler_arquivo` baixa o arquivo de uma pasta cadastrada e devolve o
+TEXTO extraído — é o que faltava para um PDF guardado no Drive virar contexto.
+Antes disso o agente só enxergava nome e link.
+
+- **Reusa a leitura de mídia inteira** (`lerArquivoEnviado`, a mesma da mesa):
+  lista fechada de formatos, teto de tamanho, toggles por tipo e vocabulário de
+  recusa em pt-BR. ⚠ **O toggle manda aqui como manda no atendimento** — quem
+  desliga "ler documento" em Integrações espera que NADA leia documento e seja
+  cobrado por isso. O acoplamento entre o módulo Google e o da OpenAI é
+  deliberado, e é o que impede um caminho novo de furar o toggle em silêncio.
+- ⚠ **O cache é chaveado pelo ID DO ARQUIVO** (`drive:<fileId>`), e essa é a
+  diferença para a mesa, que de propósito não cacheia. Lá o arquivo vem do
+  navegador de uma pessoa e chavear por conteúdo faria o documento de uma
+  reaparecer para outra; um arquivo do Drive já está num lugar compartilhado,
+  tem id estável (não muda ao renomear nem ao mover) e ler o mesmo PDF duas
+  vezes é pagar duas vezes pela mesma página. `OK` e `SKIPPED` são definitivos,
+  `ERROR` volta até `MAX_TENTATIVAS` — a mesma doutrina de `analisarAnexo`.
+  A gravação virou `upsert` por causa disso: com chave estável, a segunda
+  leitura de um arquivo que falhou daria violação de unique.
+- **Mais de um arquivo com aquele começo de nome: recusa.** Escolher "o
+  primeiro" seria ler o arquivo errado e gravar os dados dele como se fossem do
+  certo, sem erro nenhum.
+- **Documento nativo do Google é recusado com o caminho certo**: `alt=media`
+  responde 403 neles, e quem lê Docs é `google_docs_ler`.
+- ⚠ **O download fica FORA do `requisitar`**: aquele método existe para JSON —
+  parseia a resposta e repete com backoff —, e repetir um download de megabytes
+  em cima de um `5xx` é caro sem ser mais correto. O teto é conferido duas
+  vezes, no `content-length` e nos bytes recebidos, porque o cabeçalho é
+  opcional e pode mentir.
+- **Não existe o inverso — subir arquivo para o Drive — e não é esquecimento.**
+  Upload é criar arquivo, e a conta de serviço tem quota zero: sem Drive
+  compartilhado, `403 storageQuotaExceeded`. Baixar não cria nada e não toca
+  quota, e é por isso que este caminho funciona até com conta comum.
 
 #### Docs: índice nenhum, e conferir antes de copiar
 
