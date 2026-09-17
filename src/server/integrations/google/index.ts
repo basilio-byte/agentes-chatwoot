@@ -631,12 +631,18 @@ export const googleIntegration: IntegrationDefinition = {
         // mandamos é onde procurar a tabela, não onde escrever.
         const faixa = resposta.updates?.updatedRange ?? null;
 
+        const numericas = casamento.linha.reduce<string[]>((lista, valor, i) => {
+          if (typeof valor === "number" && cabecalho[i]) lista.push(cabecalho[i]);
+          return lista;
+        }, []);
+
         return {
           gravado: true,
           planilha,
           aba,
           linha: faixa,
           colunasGravadas: casamento.gravadas,
+          ...(numericas.length > 0 ? { gravadasComoNumero: numericas } : {}),
           // Última defesa contra o deslocamento: a faixa escrita tem de começar
           // na primeira coluna da tabela. Se a Sheets detectou a tabela a
           // partir de outra coluna, os valores saíram de lugar e o único jeito
@@ -809,7 +815,8 @@ export const googleIntegration: IntegrationDefinition = {
                   // A API é base 0 e `linha` é o número da planilha.
                   linha: linha - 1,
                   coluna: letraParaColuna(alvo.letra),
-                  texto: alvo.valor,
+                  // A célula com link guarda texto — é rótulo ("OK"), não medida.
+                  texto: String(alvo.valor),
                   url:
                     dados.find(
                       (d) => normalizarNome(d.coluna) === normalizarNome(alvo.coluna),
@@ -826,12 +833,20 @@ export const googleIntegration: IntegrationDefinition = {
           }
         }
 
+        // ⚠ Dizer o que virou número não é enfeite: a conversão é uma decisão
+        // NOSSA sobre o dado que o agente mandou, e decisão silenciosa sobre
+        // dado alheio é como se perde um zero à esquerda sem ninguém ver.
+        const comoNumero = posicoes.alvos
+          .filter((a) => typeof a.valor === "number")
+          .map((a) => a.coluna);
+
         return {
           atualizado: true,
           planilha,
           aba,
           linha,
           colunasAtualizadas: posicoes.alvos.map((a) => a.coluna),
+          ...(comoNumero.length > 0 ? { gravadasComoNumero: comoNumero } : {}),
           ...(comLink.length > 0 && semLinkPorFalha.length === 0
             ? { colunasComLink: comLink.map((a) => a.coluna) }
             : {}),

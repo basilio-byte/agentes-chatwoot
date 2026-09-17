@@ -129,10 +129,71 @@ export function urlDeLinkValida(url: string): boolean {
   }
 }
 
+/**
+ * Como o valor deve entrar na célula: número ou texto.
+ *
+ * ⚠ Existe porque toda escrita daqui é `RAW`, e `RAW` guarda o que chega SEM
+ * interpretar: mandar a string "1250" deixa a célula com o texto "1250". Numa
+ * planilha com fórmulas isso é veneno silencioso — `=CUSTO/CONSUMO` devolve
+ * `#VALUE!` e os totais param de fechar, sem erro nenhum e sem ninguém mexer
+ * na fórmula.
+ *
+ * E o inverso é o defeito que o `RAW` existe para evitar: converter tudo faria
+ * o CPF `01234567890` virar 1234567890, perdendo o zero. Por isso a régua é
+ * conservadora e explicada abaixo — e quem precisar de controle usa
+ * `comoTexto`.
+ */
+export type ValorDeCelula = string | number;
+
+/** Acima disto, dígito é identificador (CPF, CNPJ, telefone, medidor), não medida. */
+const DIGITOS_DE_IDENTIFICADOR = 10;
+
+/**
+ * Decide se o texto entra como número, e converte.
+ *
+ * Vira NÚMERO: decimal em português ou inglês ("1.473,50", "1473.50") e
+ * inteiro curto ("1250"). Continua TEXTO: qualquer coisa com zero à esquerda,
+ * inteiro longo, e tudo que não for só dígitos e separadores — o que inclui
+ * fórmula, data escrita e código com letra.
+ */
+export function interpretarValor(bruto: string): ValorDeCelula {
+  const texto = bruto.trim();
+  if (!texto) return bruto;
+
+  // Zero à esquerda é dado, não zero: é o CPF, o CEP e o código da conta.
+  if (/^[+-]?0\d/.test(texto)) return bruto;
+
+  const negativo = texto.startsWith("-");
+  const corpo = texto.replace(/^[+-]/, "");
+
+  // Português: ponto separa milhar, vírgula separa decimal.
+  const emPortugues = /^\d{1,3}(\.\d{3})*(,\d+)?$|^\d+,\d+$/.test(corpo);
+  // Inglês: sem separador de milhar, ponto decimal.
+  const emIngles = /^\d+(\.\d+)?$/.test(corpo);
+  if (!emPortugues && !emIngles) return bruto;
+
+  const normalizado = emPortugues
+    ? corpo.replace(/\./g, "").replace(",", ".")
+    : corpo;
+
+  // ⚠ Inteiro longo é identificador, não medida. O medidor e o código do
+  // cliente desta planilha têm 10 dígitos, e vira-los número os alinharia à
+  // direita e abriria caminho para notação científica no dia em que alguém
+  // colar um número maior.
+  if (!normalizado.includes(".") && normalizado.length >= DIGITOS_DE_IDENTIFICADOR) {
+    return bruto;
+  }
+
+  const numero = Number(normalizado);
+  if (!Number.isFinite(numero)) return bruto;
+
+  return negativo ? -numero : numero;
+}
+
 export type ParDeColuna = { coluna: string; valor: string };
 
 export type ResultadoDoCasamento =
-  | { ok: true; linha: string[]; gravadas: string[] }
+  | { ok: true; linha: ValorDeCelula[]; gravadas: string[] }
   | {
       ok: false;
       motivo:
@@ -246,13 +307,14 @@ export function casarComCabecalho(
     return { ok: false, motivo: "desconhecidas", problematicas: desconhecidas };
   }
 
-  const linha: string[] = new Array(cabecalho.length).fill("");
+  const linha: ValorDeCelula[] = new Array(cabecalho.length).fill("");
   const gravadas: string[] = [];
 
   for (const par of dados) {
     const posicao = posicaoPorNome.get(normalizarNome(par.coluna));
     if (posicao === undefined) continue;
-    linha[posicao] = par.valor;
+    // Mesma conversão do caminho de atualização: número entra como número.
+    linha[posicao] = interpretarValor(par.valor);
     gravadas.push(cabecalho[posicao]);
   }
 
@@ -277,7 +339,7 @@ export function posicoesDasColunas(
    */
   offset = 0,
 ):
-  | { ok: true; alvos: { letra: string; valor: string; coluna: string }[] }
+  | { ok: true; alvos: { letra: string; valor: ValorDeCelula; coluna: string }[] }
   | {
       ok: false;
       motivo: "desconhecidas" | "duplicadas" | "cabecalhoAmbiguo";
@@ -322,7 +384,9 @@ export function posicoesDasColunas(
       const posicao = posicaoPorNome.get(normalizarNome(d.coluna))!;
       return {
         letra: colunaParaLetra(posicao + offset),
-        valor: d.valor,
+        // ⚠ Converte aqui, e não em quem chama: é o único ponto por onde as
+        // duas escritas passam. Com `RAW`, string "1250" fica TEXTO na célula.
+        valor: interpretarValor(d.valor),
         coluna: cabecalho[posicao],
       };
     }),

@@ -5,6 +5,7 @@ import {
   casarComCabecalho,
   colunaParaLetra,
   cortarCelula,
+  interpretarValor,
   lerFaixaDeColunas,
   linhasEmComum,
   mesmoValor,
@@ -547,5 +548,62 @@ describe("link na célula: o que pode virar link", () => {
     expect(urlDeLinkValida("drive.google.com/file")).toBe(false);
     expect(urlDeLinkValida("")).toBe(false);
     expect(urlDeLinkValida("OK")).toBe(false);
+  });
+});
+
+describe("número tem de entrar como número, e identificador como texto", () => {
+  // ⚠ Medido contra a planilha real em 17/09/2026: com RAW, a string "1250"
+  // fica TEXTO na célula. Numa aba com fórmulas isso é veneno silencioso —
+  // =CUSTO/CONSUMO devolve #VALUE! e os totais param de fechar.
+  it("valor em reais, escrito à brasileira, vira número", () => {
+    expect(interpretarValor("1.473,50")).toBe(1473.5);
+    expect(interpretarValor("737,46")).toBe(737.46);
+    expect(interpretarValor("0,25")).toBe(0.25);
+  });
+
+  it("valor com ponto decimal também", () => {
+    expect(interpretarValor("1473.50")).toBe(1473.5);
+    expect(interpretarValor("386.8")).toBe(386.8);
+  });
+
+  it("inteiro curto é medida: consumo em kWh vira número", () => {
+    expect(interpretarValor("1250")).toBe(1250);
+    expect(interpretarValor("100")).toBe(100);
+    expect(interpretarValor("-5")).toBe(-5);
+  });
+
+  it("⚠ zero à esquerda NUNCA vira número: é o CPF e o CEP", () => {
+    expect(interpretarValor("01234567890")).toBe("01234567890");
+    expect(interpretarValor("007")).toBe("007");
+    expect(interpretarValor("59082-015")).toBe("59082-015");
+  });
+
+  it("⚠ inteiro longo é identificador, não medida", () => {
+    // O medidor e o código do cliente desta planilha têm 10 dígitos.
+    expect(interpretarValor("2242711885")).toBe("2242711885");
+    expect(interpretarValor("7028968471")).toBe("7028968471");
+    expect(interpretarValor("08324196000181")).toBe("08324196000181");
+  });
+
+  it("⚠ fórmula continua texto — é a proteção que o RAW dá", () => {
+    expect(interpretarValor("=A3*2")).toBe("=A3*2");
+    expect(interpretarValor("=1+1")).toBe("=1+1");
+    expect(interpretarValor("+A1")).toBe("+A1");
+  });
+
+  it("o que não é número continua como veio", () => {
+    expect(interpretarValor("julho 2026")).toBe("julho 2026");
+    expect(interpretarValor("OK")).toBe("OK");
+    expect(interpretarValor("22/06/2026")).toBe("22/06/2026");
+    expect(interpretarValor("")).toBe("");
+  });
+
+  it("separador de milhar é número mesmo sem decimal", () => {
+    // "1.234.567" é um milhão e pouco, não um código: grupos de três dígitos
+    // depois do primeiro é a escrita brasileira de número grande.
+    expect(interpretarValor("1.234.567")).toBe(1234567);
+    expect(interpretarValor("3.616,88")).toBe(3616.88);
+    // Mas o que começa com zero continua fora, e é o que salva o CNPJ.
+    expect(interpretarValor("08.324.196")).toBe("08.324.196");
   });
 });

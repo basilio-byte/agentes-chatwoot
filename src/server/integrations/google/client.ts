@@ -1,6 +1,6 @@
 import { obterAccessToken } from "./auth";
 import { ESCOPOS, type ChaveDeServico, type GoogleConfig } from "./config";
-import { a1 } from "./sheets";
+import { a1, type ValorDeCelula } from "./sheets";
 
 /**
  * Cliente das três APIs do Google — Sheets, Docs e Drive.
@@ -304,7 +304,7 @@ export class GoogleClient {
   async acrescentarLinha(
     planilhaId: string,
     aba: string,
-    linha: string[],
+    linha: ValorDeCelula[],
     /**
      * Última coluna do cabeçalho, ex.: `"F"`.
      *
@@ -345,7 +345,7 @@ export class GoogleClient {
   /** Escreve célula a célula — nunca a linha inteira, que apagaria o resto. */
   async atualizarCelulas(
     planilhaId: string,
-    dados: { range: string; values: string[][] }[],
+    dados: { range: string; values: ValorDeCelula[][] }[],
   ): Promise<{ totalUpdatedCells?: number }> {
     return this.requisitar(
       "sheets",
