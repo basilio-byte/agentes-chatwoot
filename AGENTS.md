@@ -1549,10 +1549,20 @@ TEXTO de `valor` e fica clicável, apontando para o endereço.
 - ⚠ **`updateCells` endereça a aba pelo `sheetId` numérico**, nunca pelo nome —
   daí `idDaAba`. E o `fields` é `userEnteredValue,textFormatRuns`: sem ele, a
   escrita limparia cor, borda e formato de número da célula.
+- ⚠⚠ **Falhar no link não pode deixar a célula VAZIA — e deixava.** Achado no
+  primeiro lançamento real (17/09/2026): a coluna que leva `url` ficava fora da
+  gravação normal, esperando ser escrita por `gravarCelulaComLink`; quando esse
+  caminho falhava, **nada era gravado**, e o retorno ainda dizia "o valor foi
+  gravado, não tente de novo". O agente obedeceu e relatou sucesso à equipe com
+  a célula em branco. Hoje há fallback: sem o link, ao menos o valor entra; e
+  só quando nem isso dá é que o retorno diz que a célula está VAZIA.
+- ⚠ **A causa raiz era o `fields` de `estruturaDaPlanilha`**, que não pedia
+  `sheetId` — então `idDaAba` devolvia `null` e a gravação com link **nunca
+  podia funcionar**. O teste da gravação passava porque lá o id vinha da
+  resposta do `addSheet`: o caminho que a produção usa não era exercitado por
+  ninguém. Hoje um teste trava o `fields`.
 - ⚠ **As duas gravações não são atômicas**, e por isso o link vem DEPOIS do
-  valor: falhando, o que entrou são os valores comuns, e o retorno nomeia as
-  colunas que ficaram sem link mandando **não tentar de novo** — o valor já
-  está lá.
+  valor.
 - **Só `http` e `https`** (`urlDeLinkValida`). O endereço vem do modelo, que leu
   o retorno de uma ferramenta; um `javascript:` numa planilha que a equipe
   clica é código esperando alguém clicar. A validação acontece ANTES de

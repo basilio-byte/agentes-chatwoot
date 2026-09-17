@@ -840,15 +840,44 @@ export const googleIntegration: IntegrationDefinition = {
         }
 
         // ⚠ As duas gravações não são atômicas, e é por isso que os links vêm
-        // DEPOIS: falhando aqui, o que já entrou são os valores comuns — e o
-        // retorno diz exatamente quais colunas ficaram sem link, em vez de
-        // afirmar que a linha inteira foi atualizada.
+        // DEPOIS: falhando aqui, o que já entrou são os valores comuns.
+        //
+        // ⚠⚠ E falhar aqui NÃO pode deixar a célula vazia. Até 17/09/2026
+        // deixava: a coluna com `url` ficava de fora da gravação normal e só
+        // seria escrita por `gravarCelulaComLink`, então uma falha ali não
+        // gravava nada — e o retorno ainda dizia "o valor foi gravado, não
+        // tente de novo". Aconteceu no primeiro lançamento real: o agente
+        // relatou sucesso, a equipe acreditou, e a célula ficou em branco.
+        // O `fallbackSemLink` é o conserto: sem o link, ao menos o valor entra.
         let semLinkPorFalha: string[] = [];
+        // Só falso quando NEM o link NEM o valor entraram — e aí o retorno tem
+        // de dizer que a coluna ficou vazia, não que está gravada.
+        let valorEntrouSemLink = true;
         if (comLink.length > 0) {
+          const fallbackSemLink = async () => {
+            semLinkPorFalha = comLink.map((a) => a.coluna);
+            try {
+              await cliente.atualizarCelulas(
+                id,
+                comLink.map((alvo) => ({
+                  range: a1(aba, `${alvo.letra}${linha}`),
+                  values: [[alvo.valor]],
+                })),
+              );
+              return true;
+            } catch (erro) {
+              logger.error(
+                { planilha, aba, linha, erro },
+                "nem o link nem o valor entraram nesta coluna",
+              );
+              return false;
+            }
+          };
+
           try {
             const abaId = await idDaAba(cliente, id, aba);
             if (abaId === null) {
-              semLinkPorFalha = comLink.map((a) => a.coluna);
+              valorEntrouSemLink = await fallbackSemLink();
             } else {
               await cliente.gravarCelulaComLink(
                 id,
@@ -867,11 +896,8 @@ export const googleIntegration: IntegrationDefinition = {
               );
             }
           } catch (erro) {
-            logger.warn(
-              { planilha, aba, linha, erro },
-              "os valores entraram, mas o link não",
-            );
-            semLinkPorFalha = comLink.map((a) => a.coluna);
+            logger.warn({ planilha, aba, linha, erro }, "o link não entrou");
+            valorEntrouSemLink = await fallbackSemLink();
           }
         }
 
@@ -894,9 +920,13 @@ export const googleIntegration: IntegrationDefinition = {
             : {}),
           ...(semLinkPorFalha.length > 0
             ? {
-                avisoImportante: `O valor foi gravado, mas NÃO consegui deixar clicável: ${semLinkPorFalha.join(
-                  ", ",
-                )}. Avise que o link precisa ser posto à mão nessa(s) célula(s) — não tente de novo, o valor já está lá.`,
+                avisoImportante: valorEntrouSemLink
+                  ? `O valor entrou, mas NÃO consegui deixar clicável: ${semLinkPorFalha.join(
+                      ", ",
+                    )}. Avise que o link precisa ser posto à mão nessa(s) célula(s) — não tente de novo, o valor já está lá.`
+                  : `NADA foi gravado nesta(s) coluna(s): ${semLinkPorFalha.join(
+                      ", ",
+                    )} — nem o valor, nem o link. A célula está VAZIA. Avise que essa coluna precisa ser preenchida à mão.`,
               }
             : {}),
         };

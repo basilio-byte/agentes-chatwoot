@@ -254,8 +254,13 @@ export class GoogleClient {
       // planilha grande — para exibir três nomes de aba.
       query: {
         includeGridData: "false",
+        // ⚠ `sheetId` é obrigatório aqui desde 17/09/2026: `updateCells`
+        // endereça a aba por ele, nunca pelo nome, e sem o campo no `fields` a
+        // resposta vem sem ele — `idDaAba` devolvia null SEMPRE, e a gravação
+        // com link nunca acontecia. O caminho passou no teste porque lá o id
+        // vinha da resposta do `addSheet`, não daqui.
         fields:
-          "properties.title,sheets.properties(title,gridProperties(rowCount,columnCount))",
+          "properties.title,sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))",
       },
       idempotente: true,
     });

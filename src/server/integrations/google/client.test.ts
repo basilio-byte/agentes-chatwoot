@@ -479,3 +479,22 @@ describe("mover arquivo entre pastas", () => {
     expect(chamadas.length).toBeGreaterThan(1);
   });
 });
+
+describe("a estrutura da planilha traz o sheetId", () => {
+  /**
+   * ⚠ Defeito real, achado no primeiro lançamento de verdade (17/09/2026): o
+   * `fields` não pedia `sheetId`, então ele vinha vazio, `idDaAba` devolvia
+   * null e a gravação com link NUNCA acontecia. O teste da gravação passava
+   * porque lá o id vinha da resposta de criar a aba — o caminho que produção
+   * usa não era exercitado por ninguém.
+   */
+  it("pede sheetId no fields — é por ele que updateCells endereça a aba", async () => {
+    await cliente().estruturaDaPlanilha("planilha1");
+    expect(query().get("fields")).toContain("sheetId");
+  });
+
+  it("e continua sem a grade, que pesaria megabytes", async () => {
+    await cliente().estruturaDaPlanilha("planilha1");
+    expect(query().get("includeGridData")).toBe("false");
+  });
+});
