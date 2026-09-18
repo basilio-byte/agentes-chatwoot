@@ -261,9 +261,44 @@ describe("contarPrazosPerdidos — os desfechos e o resto", () => {
     expect(pessoas[0].ultimaPerda?.quando).toEqual(new Date("2026-09-14T10:00:00Z"));
   });
 
+  it("lista toda perda, não só a última, com o nome da mesma linha da tabela", () => {
+    const { perdas } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1, finalizadoEm: new Date("2026-09-10T10:00:00Z") }),
+      // Sem nome nesta linha: tem de sair com o nome que a pessoa tem na tabela.
+      linha({
+        chatwootConversationId: 2,
+        donoNome: null,
+        agentId: "agente-salas",
+        finalizadoEm: new Date("2026-09-15T10:00:00Z"),
+        acao: { tipo: "voltar_para_o_agente" },
+      }),
+      linha({
+        chatwootConversationId: 3,
+        donoId: 9,
+        donoNome: "Atendente Três",
+        finalizadoEm: new Date("2026-09-12T10:00:00Z"),
+      }),
+      // Não é perda: não entra na lista.
+      respondeu({ chatwootConversationId: 4, finalizadoEm: new Date("2026-09-16T10:00:00Z") }),
+      linha({
+        chatwootConversationId: 5,
+        status: PrazoStatus.FALHOU,
+        resultado: "Chatwoot fora do ar",
+      }),
+    ]);
+
+    // Mais recente primeiro, e de qualquer pessoa.
+    expect(perdas.map((p) => [p.conversa, p.quem, p.agentId, p.acao, p.destino])).toEqual([
+      [2, "Atendente Um", "agente-salas", "devolvida", null],
+      [3, "Atendente Três", "agente-vendas", "reatribuida", "Atendente Dois"],
+      [1, "Atendente Um", "agente-vendas", "reatribuida", "Atendente Dois"],
+    ]);
+  });
+
   it("lista vazia não quebra", () => {
     const vazio = contarPrazosPerdidos([]);
     expect(vazio.pessoas).toEqual([]);
+    expect(vazio.perdas).toEqual([]);
     expect(vazio.totais.recebeu).toBe(0);
     expect(vazio.totais.taxa).toBeNull();
     expect(vazio.conversas).toEqual({ afetadas: 0, maisDeUmaVez: 0 });

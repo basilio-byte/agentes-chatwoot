@@ -115,6 +115,19 @@ export type ContagemDePessoa = Placar & {
 
 export type ContagemDeAgente = Placar & { agentId: string };
 
+/**
+ * Um prazo que a pessoa deixou vencer, com a conversa para abrir.
+ *
+ * A tabela por pessoa só aponta a ÚLTIMA perda; as outras ficavam contadas e
+ * sem caminho até a conversa — e conferir a conversa é o que se faz antes de
+ * cobrar alguém pelo número.
+ */
+export type Perda = Ocorrencia & {
+  /** O mesmo nome da linha da pessoa na tabela, para as duas baterem. */
+  quem: string;
+  agentId: string;
+};
+
 export type ForaDaConta = {
   conversa: number;
   quando: Date;
@@ -132,6 +145,8 @@ export type Contagem = {
   destinos: { nome: string; vezes: number }[];
   devolvidasAoAgente: number;
   conversas: { afetadas: number; maisDeUmaVez: number };
+  /** Todas as perdas do período, da mais recente para a mais antiga. */
+  perdas: Perda[];
   foraDaConta: ForaDaConta[];
 };
 
@@ -239,6 +254,7 @@ export function contarPrazosPerdidos(linhas: LinhaDePrazo[]): Contagem {
   const destinos = new Map<string, number>();
   const perdasPorConversa = new Map<number, number>();
   const totais = placarVazio();
+  const perdas: Perda[] = [];
   const foraDaConta: ForaDaConta[] = [];
   let devolvidasAoAgente = 0;
 
@@ -307,14 +323,15 @@ export function contarPrazosPerdidos(linhas: LinhaDePrazo[]): Contagem {
       (perdasPorConversa.get(linha.chatwootConversationId) ?? 0) + 1,
     );
 
-    const quando = instante(linha);
-    if (!pessoa.ultimaPerda || quando > pessoa.ultimaPerda.quando) {
-      pessoa.ultimaPerda = {
-        conversa: linha.chatwootConversationId,
-        quando,
-        acao,
-        destino,
-      };
+    const ocorrencia: Ocorrencia = {
+      conversa: linha.chatwootConversationId,
+      quando: instante(linha),
+      acao,
+      destino,
+    };
+    perdas.push({ ...ocorrencia, quem: nome, agentId: linha.agentId });
+    if (!pessoa.ultimaPerda || ocorrencia.quando > pessoa.ultimaPerda.quando) {
+      pessoa.ultimaPerda = ocorrencia;
     }
   }
 
@@ -331,6 +348,7 @@ export function contarPrazosPerdidos(linhas: LinhaDePrazo[]): Contagem {
       a.nome.localeCompare(b.nome, "pt-BR"),
   );
 
+  perdas.sort((a, b) => b.quando.getTime() - a.quando.getTime());
   foraDaConta.sort((a, b) => b.quando.getTime() - a.quando.getTime());
 
   return {
@@ -345,6 +363,7 @@ export function contarPrazosPerdidos(linhas: LinhaDePrazo[]): Contagem {
       afetadas: perdasPorConversa.size,
       maisDeUmaVez: [...perdasPorConversa.values()].filter((n) => n > 1).length,
     },
+    perdas,
     foraDaConta,
   };
 }

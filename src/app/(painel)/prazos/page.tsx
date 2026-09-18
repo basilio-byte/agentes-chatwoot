@@ -1,6 +1,12 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Bot, CalendarRange, Timer, UserCheck } from "lucide-react";
+import {
+  Bot,
+  CalendarRange,
+  ExternalLink,
+  MessagesSquare,
+  Timer,
+  UserCheck,
+} from "lucide-react";
 import { db } from "@/lib/db";
 import { exigirSessao } from "@/server/auth-guard";
 import { alcancaPapel } from "@/lib/papeis";
@@ -48,6 +54,9 @@ const TETO_DE_LINHAS = 5000;
 
 /** Quantas linhas do bloco "fora da conta" cabem sem virar despejo. */
 const FORA_DA_CONTA_NA_TELA = 50;
+
+/** O mesmo teto para a lista de perdas; o filtro de período alcança o resto. */
+const PERDAS_NA_TELA = 50;
 
 type Busca = { periodo?: string; de?: string; ate?: string };
 
@@ -144,6 +153,25 @@ export default async function PrazosPage({
       ? `${config.data.baseUrl}/app/accounts/${config.data.accountId}/conversations/${id}`
       : null;
 
+  /** A conversa, clicável quando o Chatwoot está configurado. Uma forma só na tela inteira. */
+  const conversaNoChatwoot = (id: number) => {
+    const url = linkChatwoot(id);
+    return url ? (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        title="Abrir no Chatwoot"
+        className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+      >
+        conversa {id}
+        <ExternalLink size={11} aria-hidden />
+      </a>
+    ) : (
+      <Meta>conversa {id}</Meta>
+    );
+  };
+
   const nomeDoAgente = new Map(agentes.map((a) => [a.id, a.name]));
 
   const cabecalho = (
@@ -194,7 +222,8 @@ export default async function PrazosPage({
   }
 
   const contagem = contarPrazosPerdidos(linhas as LinhaDePrazo[]);
-  const { pessoas, totais, porAgente, destinos, conversas, foraDaConta } = contagem;
+  const { pessoas, totais, porAgente, destinos, conversas, perdas, foraDaConta } =
+    contagem;
 
   /** O detalhe que explica de onde saiu o "recebeu" daquela linha. */
   const detalheDoPlacar = (p: Placar) =>
@@ -297,9 +326,6 @@ export default async function PrazosPage({
             }
           >
             {pessoas.map((pessoa) => {
-              const url = pessoa.ultimaPerda
-                ? linkChatwoot(pessoa.ultimaPerda.conversa)
-                : null;
               const comoPerdeu = [
                 pessoa.reatribuidas
                   ? `${pessoa.reatribuidas} ${ROTULO_DA_ACAO.reatribuida}`
@@ -336,19 +362,7 @@ export default async function PrazosPage({
                     {pessoa.ultimaPerda ? (
                       <span className="flex flex-wrap items-center gap-1.5">
                         <Meta>{formatarData(pessoa.ultimaPerda.quando)}</Meta>
-                        {url ? (
-                          <Link
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            prefetch={false}
-                            className="text-xs text-accent hover:underline"
-                          >
-                            conversa {pessoa.ultimaPerda.conversa}
-                          </Link>
-                        ) : (
-                          <Meta>conversa {pessoa.ultimaPerda.conversa}</Meta>
-                        )}
+                        {conversaNoChatwoot(pessoa.ultimaPerda.conversa)}
                         {pessoa.ultimaPerda.destino ? (
                           <Badge>para {pessoa.ultimaPerda.destino}</Badge>
                         ) : pessoa.ultimaPerda.acao === "devolvida" ? (
@@ -464,6 +478,68 @@ export default async function PrazosPage({
               )}
             </Card>
           </div>
+
+          {/* A tabela por pessoa aponta só a ÚLTIMA perda. Aqui estão todas,
+              cada uma com o caminho até a conversa: é lá que se confere o que
+              aconteceu antes de cobrar alguém pelo número. */}
+          {perdas.length > 0 ? (
+            <Card className="space-y-3 p-4">
+              <TituloDeBloco
+                icone={<MessagesSquare size={15} aria-hidden />}
+                descricao="Cada prazo que alguém deixou vencer, do mais recente para o mais antigo. O link abre a conversa no Chatwoot."
+              >
+                Conversas que perderam prazo ({formatarNumero(perdas.length)})
+              </TituloDeBloco>
+
+              <Tabela
+                cabecalho={
+                  <>
+                    <th scope="col">Quando</th>
+                    <th scope="col">Conversa</th>
+                    <th scope="col">Estava com</th>
+                    <th scope="col">Agente</th>
+                    <th scope="col">O que houve</th>
+                  </>
+                }
+              >
+                {perdas.slice(0, PERDAS_NA_TELA).map((perda, i) => (
+                  <tr key={`${perda.conversa}-${perda.quando.getTime()}-${i}`}>
+                    <td className="whitespace-nowrap">
+                      <Meta>{formatarData(perda.quando)}</Meta>
+                    </td>
+                    <td className="whitespace-nowrap">
+                      {conversaNoChatwoot(perda.conversa)}
+                    </td>
+                    <td className="text-xs">{perda.quem}</td>
+                    <td className="text-xs">
+                      {nomeDoAgente.get(perda.agentId) ?? (
+                        <Meta>agente removido</Meta>
+                      )}
+                    </td>
+                    <td>
+                      {perda.destino ? (
+                        <Badge>para {perda.destino}</Badge>
+                      ) : perda.acao === "devolvida" ? (
+                        <Badge>para o agente</Badge>
+                      ) : perda.acao ? (
+                        <Badge>{ROTULO_DA_ACAO[perda.acao]}</Badge>
+                      ) : (
+                        <Meta>—</Meta>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </Tabela>
+
+              {perdas.length > PERDAS_NA_TELA ? (
+                <Meta className="block">
+                  Mostrando as {PERDAS_NA_TELA} mais recentes de{" "}
+                  {formatarNumero(perdas.length)}. Para chegar às mais antigas,
+                  escolha um período menor.
+                </Meta>
+              ) : null}
+            </Card>
+          ) : null}
         </>
       )}
 
@@ -490,36 +566,21 @@ export default async function PrazosPage({
               </>
             }
           >
-            {foraDaConta.slice(0, FORA_DA_CONTA_NA_TELA).map((fora, i) => {
-              const url = linkChatwoot(fora.conversa);
-              return (
-                <tr key={`${fora.conversa}-${fora.quando.getTime()}-${i}`}>
-                  <td className="whitespace-nowrap">
-                    <Meta>{formatarData(fora.quando)}</Meta>
-                  </td>
-                  <td className="whitespace-nowrap">
-                    {url ? (
-                      <Link
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        prefetch={false}
-                        className="text-xs text-accent hover:underline"
-                      >
-                        conversa {fora.conversa}
-                      </Link>
-                    ) : (
-                      <Meta>conversa {fora.conversa}</Meta>
-                    )}
-                  </td>
-                  <td className="text-xs">{fora.quem ?? <Meta>—</Meta>}</td>
-                  <td>
-                    <Badge>{fora.status.toLowerCase()}</Badge>
-                  </td>
-                  <td className="text-xs text-muted">{fora.motivo ?? "—"}</td>
-                </tr>
-              );
-            })}
+            {foraDaConta.slice(0, FORA_DA_CONTA_NA_TELA).map((fora, i) => (
+              <tr key={`${fora.conversa}-${fora.quando.getTime()}-${i}`}>
+                <td className="whitespace-nowrap">
+                  <Meta>{formatarData(fora.quando)}</Meta>
+                </td>
+                <td className="whitespace-nowrap">
+                  {conversaNoChatwoot(fora.conversa)}
+                </td>
+                <td className="text-xs">{fora.quem ?? <Meta>—</Meta>}</td>
+                <td>
+                  <Badge>{fora.status.toLowerCase()}</Badge>
+                </td>
+                <td className="text-xs text-muted">{fora.motivo ?? "—"}</td>
+              </tr>
+            ))}
           </Tabela>
 
           {foraDaConta.length > FORA_DA_CONTA_NA_TELA ? (

@@ -2099,6 +2099,12 @@ em relação às que foram atendidas"*.
   conversa, quem estava com ela e o motivo registrado. Sem ele a taxa seria
   meia-verdade: quem lê precisa ver o tamanho do que ficou de fora antes de
   cobrar alguém pelo resto.
+- **Toda perda tem caminho até a conversa** (pedido do usuário, 18/09/2026). A
+  tabela por pessoa aponta só a ÚLTIMA; o bloco "Conversas que perderam prazo"
+  lista todas, com o link do Chatwoot, porque é na conversa que se confere o
+  que aconteceu antes de cobrar alguém pelo número. Teto de 50 na tela, como o
+  "Fora da conta"; o resto se alcança pelo filtro de período. `quem` sai com o
+  MESMO nome da linha da pessoa, inclusive quando `donoNome` veio nulo.
 - ⚠ **A mesma pessoa não pode virar duas linhas.** `donoNome` fica nulo quando
   quem atendia não estava na lista lida naquele instante; a contagem casa pelo
   `donoId` e busca o nome em qualquer outra linha da mesma pessoa.
