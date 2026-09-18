@@ -24,11 +24,20 @@ export function SaldoDaConta({
   gastoDiarioUsd,
   diasDaMedia,
   falhas,
+  limiteUsd = SALDO_MINIMO_USD,
+  alertaLigado = false,
 }: {
   leitura: LeituraDeSaldo;
   gastoDiarioUsd: number;
   diasDaMedia: number;
   falhas: { quantidade: number; ultima: Date | null };
+  /**
+   * O limite do alerta por WhatsApp. A cor do número e o aviso da tela seguem
+   * o MESMO limite: a tela dizer "baixo" num valor em que ninguém foi avisado,
+   * ou o contrário, seriam duas réguas para a mesma pergunta.
+   */
+  limiteUsd?: number;
+  alertaLigado?: boolean;
 }) {
   return (
     <Card className="space-y-3">
@@ -43,7 +52,16 @@ export function SaldoDaConta({
         leitura={leitura}
         gastoDiarioUsd={gastoDiarioUsd}
         diasDaMedia={diasDaMedia}
+        limiteUsd={limiteUsd}
       />
+
+      {/* Para a equipe inteira: SE alguém é avisado, nunca QUEM — os telefones
+          só aparecem no bloco do alerta, que é de Administrador. */}
+      <p className="text-xs text-muted">
+        {alertaLigado
+          ? `Alerta por WhatsApp ligado: avisa quando o saldo fica abaixo de ${formatarUsd(limiteUsd)}.`
+          : "Alerta por WhatsApp desligado: ninguém é avisado quando o saldo cai."}
+      </p>
 
       {falhas.quantidade > 0 ? (
         <Aviso tone="danger">
@@ -69,10 +87,12 @@ function Leitura({
   leitura,
   gastoDiarioUsd,
   diasDaMedia,
+  limiteUsd,
 }: {
   leitura: LeituraDeSaldo;
   gastoDiarioUsd: number;
   diasDaMedia: number;
+  limiteUsd: number;
 }) {
   if (leitura.estado === "sem_chave") {
     return (
@@ -102,7 +122,7 @@ function Leitura({
     );
   }
 
-  const situacao = classificarSaldo(leitura.saldoUsd);
+  const situacao = classificarSaldo(leitura.saldoUsd, limiteUsd);
   const dias = diasDeSaldo(leitura.saldoUsd, gastoDiarioUsd);
 
   return (
@@ -149,7 +169,7 @@ function Leitura({
           ) : (
             <>
               <strong>
-                Saldo abaixo de {formatarUsd(SALDO_MINIMO_USD)}.
+                Saldo abaixo de {formatarUsd(limiteUsd)}.
               </strong>{" "}
               Quando acabar, toda conversa fica sem resposta — o cliente recebe
               um aviso de instabilidade e a conversa espera uma pessoa.

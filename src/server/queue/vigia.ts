@@ -6,6 +6,7 @@ import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
 import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
 import { executarPrazosVencidos } from "@/server/prazos/executar";
 import { executarPesquisasVencidas } from "@/server/nps/executar";
+import { conferirSaldoEAvisar } from "@/server/alerta-de-saldo/alerta";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -19,8 +20,9 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  *
  * Roda de minuto em minuto no worker e entrega a uma pessoa toda conversa em
  * que o cliente esperou além do tempo configurado. No mesmo relógio, executa os
- * prazos que os agentes registraram (`prazos/executar.ts`) e as etapas vencidas
- * da pesquisa de satisfação (`nps/executar.ts`).
+ * prazos que os agentes registraram (`prazos/executar.ts`), as etapas vencidas
+ * da pesquisa de satisfação (`nps/executar.ts`) e confere o saldo da OpenRouter
+ * para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -177,6 +179,14 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.vistas > 0) logger.info(rodada, "pesquisas de satisfação conferidas");
     } catch (erro) {
       logger.error({ erro }, "pesquisas de satisfação falharam");
+    }
+
+    // Por último: é a única tarefa que fala com a OpenRouter e pode demorar, e
+    // ela mesma segura o ritmo (confere a cada 10 min, não a cada minuto).
+    try {
+      await conferirSaldoEAvisar();
+    } catch (erro) {
+      logger.error({ erro }, "alerta de saldo falhou");
     }
   };
 

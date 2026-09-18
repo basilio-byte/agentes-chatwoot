@@ -1046,6 +1046,65 @@ model PesquisaNps {
   @@index([telefone, enviadaEm])
 }
 
+enum TipoDeAvisoDeSaldo {
+  /// Saldo abaixo do limite configurado.
+  BAIXO
+  /// Saldo zerado (ou negativo): os agentes já não respondem.
+  ZERADO
+  /// Mandado pelo botão da tela, para provar que a mensagem chega.
+  TESTE
+}
+
+/// Alerta de saldo da OpenRouter por WhatsApp (18/09/2026). Linha ÚNICA
+/// (`id = "unico"`), configurada em /consumo.
+///
+/// Tabela própria, e não uma linha de `Integration` como o NPS: não é
+/// integração, não tem tool nem liga por agente, e como provider apareceria nas
+/// listas de Integrações e do MCP. Configuração e estado moram juntos, em
+/// colunas separadas: quem salva o formulário não toca no estado, e o vigia não
+/// toca na configuração.
+model AlertaDeSaldo {
+  id            String   @id @default("unico")
+  ligado        Boolean  @default(false)
+  limiteUsd     Float    @default(20)
+  /// Caixa do Chatwoot por onde o alerta sai. A 31 é API não oficial (WAHA):
+  /// sem janela de 24 h, dá para iniciar conversa a qualquer momento.
+  caixaId       Int      @default(31)
+  /// `[{ nome, telefone }]`, telefone em E.164. Só Administrador vê.
+  destinatarios Json     @default("[]")
+
+  /// Início do episódio: desde quando o saldo está abaixo do limite. Nulo
+  /// quando está acima — voltar acima é o que zera o episódio.
+  abaixoDesde DateTime?
+  /// Último aviso do episódio: é por ele que o próximo espera 24 h.
+  avisadoEm   DateTime?
+  avisadoTipo TipoDeAvisoDeSaldo?
+  conferidoEm DateTime?
+  /// Por que a última conferência não chegou ao fim. Nulo quando chegou.
+  ultimaFalha String?  @db.Text
+
+  atualizadoPorId String?
+  updatedAt       DateTime @updatedAt
+}
+
+/// Um envio do alerta: o rastro que a tela mostra. Sem telefone — o que foi
+/// para quem sai pelo nome.
+model AvisoDeSaldo {
+  id        String             @id @default(cuid())
+  tipo      TipoDeAvisoDeSaldo
+  saldoUsd  Float?
+  limiteUsd Float
+  /// `[{ nome, ok, detalhe, conversaId }]`, na ordem dos destinatários.
+  entregas  Json
+  entregues Int
+  falhas    Int
+  /// Quem apertou o botão de teste. Nulo nos avisos do relógio.
+  autorId   String?
+  criadoEm  DateTime           @default(now())
+
+  @@index([criadoEm])
+}
+
 model AuditLog {
   id     String  @id @default(cuid())
   userId String?

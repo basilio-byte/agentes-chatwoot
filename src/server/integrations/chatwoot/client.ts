@@ -398,6 +398,121 @@ export class ChatwootClient {
     };
   }
 
+  /*
+   * Iniciar conversa: achar ou criar o contato, pô-lo na caixa e abrir a
+   * conversa. Nasceu com o alerta de saldo (18/09/2026), que fala com gente da
+   * equipe por uma caixa sem robô — por isso tudo aqui usa o token de usuário.
+   * Formatos de leitura conferidos no Chatwoot 4.16.2 de produção.
+   */
+
+  /**
+   * Contatos cujo nome, e-mail, telefone ou identificador contém `termo`.
+   *
+   * O Chatwoot casa TRECHO, sem normalizar nada: quem busca por telefone passa
+   * os últimos dígitos e confere o número de cada um que voltou.
+   */
+  async buscarContatos(termo: string) {
+    const consulta = new URLSearchParams({ q: termo, include_contact_inboxes: "true" });
+    const resposta = await this.requisitar<{
+      payload?: Array<{
+        id: number;
+        name?: string | null;
+        phone_number?: string | null;
+        identifier?: string | null;
+        contact_inboxes?: Array<{
+          source_id?: string | null;
+          inbox?: { id?: number | null } | null;
+        }> | null;
+      }> | null;
+    }>(`/contacts/search?${consulta.toString()}`, {}, true);
+
+    return (resposta.payload ?? []).map((bruto) => ({
+      id: bruto.id,
+      nome: bruto.name ?? null,
+      telefone: bruto.phone_number ?? null,
+      identificador: bruto.identifier ?? null,
+      caixas: (bruto.contact_inboxes ?? [])
+        .filter((ci) => ci.inbox?.id != null && ci.source_id)
+        .map((ci) => ({ caixaId: ci.inbox!.id!, sourceId: ci.source_id! })),
+    }));
+  }
+
+  /**
+   * Cria o contato já dentro da caixa. Devolve o `source_id` que o Chatwoot
+   * gerou para ele ali — é o que abrir conversa exige.
+   *
+   * ⚠ O telefone tem de estar em E.164 (`+5584…`), e é único na conta: um
+   * contato com o mesmo número dá 422. Quem chama busca antes.
+   */
+  async criarContato(dados: { nome: string; telefone: string; caixaId: number }) {
+    const bruto = await this.requisitar<{
+      payload?: {
+        contact?: { id?: number } | null;
+        contact_inbox?: { source_id?: string | null } | null;
+      } | null;
+      id?: number;
+    }>("/contacts", {
+      method: "POST",
+      body: JSON.stringify({
+        name: dados.nome,
+        phone_number: dados.telefone,
+        inbox_id: dados.caixaId,
+      }),
+    });
+
+    const id = bruto.payload?.contact?.id ?? bruto.id;
+    if (id == null) throw new Error("o Chatwoot criou o contato mas não devolveu o id");
+    return { id, sourceId: bruto.payload?.contact_inbox?.source_id ?? null };
+  }
+
+  /** Põe um contato que já existe numa caixa. Devolve o `source_id` dele ali. */
+  async vincularContatoACaixa(contactId: number, caixaId: number) {
+    const bruto = await this.requisitar<{
+      source_id?: string | null;
+      payload?: { source_id?: string | null } | null;
+    }>(`/contacts/${contactId}/contact_inboxes`, {
+      method: "POST",
+      body: JSON.stringify({ inbox_id: caixaId }),
+    });
+
+    const sourceId = bruto.source_id ?? bruto.payload?.source_id;
+    if (!sourceId) throw new Error("o Chatwoot pôs o contato na caixa mas não devolveu o source_id");
+    return sourceId;
+  }
+
+  /** Conversas de um contato, de todas as caixas. */
+  async conversasDoContato(contactId: number) {
+    const resposta = await this.requisitar<{
+      payload?: Array<{ id: number; inbox_id?: number | null; status?: string | null }> | null;
+    }>(`/contacts/${contactId}/conversations`, {}, true);
+
+    return (resposta.payload ?? []).map((c) => ({
+      id: c.id,
+      caixaId: c.inbox_id ?? null,
+      status: c.status ?? null,
+    }));
+  }
+
+  /** Abre uma conversa nova, já `open`, para o contato naquela caixa. */
+  async criarConversa(dados: { sourceId: string; caixaId: number; contatoId: number }) {
+    const bruto = await this.requisitar<{ id?: number; payload?: { id?: number } | null }>(
+      "/conversations",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          source_id: dados.sourceId,
+          inbox_id: dados.caixaId,
+          contact_id: dados.contatoId,
+          status: "open",
+        }),
+      },
+    );
+
+    const id = bruto.id ?? bruto.payload?.id;
+    if (id == null) throw new Error("o Chatwoot abriu a conversa mas não devolveu o id");
+    return id;
+  }
+
   /**
    * Grava atributos personalizados no contato, **preservando os existentes**.
    *

@@ -49,6 +49,8 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Testar no playground — cada teste gasta crédito da OpenRouter",
       "Ver credenciais ou mexer em contas",
       "Ver a contagem de prazos perdidos por pessoa",
+      // Vê, no cartão do saldo, SE o alerta está ligado — nunca os telefones.
+      "Ver ou mudar quem recebe o alerta de saldo por WhatsApp",
     ],
   },
 
@@ -61,6 +63,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Configurar integrações, testar conexão e escolher as tools de cada agente",
       "Configurar e ligar a leitura de mídia (áudio, imagem, documento)",
       "Ligar e desligar o gatilho HTTP de um agente",
+      "Configurar o alerta de saldo por WhatsApp — limite e telefones — e mandar a mensagem de teste",
       "Testar no playground",
       "Operar os agentes por um assistente de I.A. (MCP), com os limites deste papel",
     ],

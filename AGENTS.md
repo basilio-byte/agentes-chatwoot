@@ -68,13 +68,14 @@ modelos `anthropic/*` como padrão.
 
 Substitui o fluxo "Notificar Saldo Openrouter" do n8n, que lia `/credits` de
 hora em hora e **nunca avisou ninguém** — o nó de decisão não tinha saída
-ligada. Aqui não há relógio nem canal de saída: o número aparece em `/consumo`,
-e quem abre a tela do dinheiro é quem repõe o dinheiro.
+ligada. O número aparece em `/consumo`, e desde 18/09/2026 também sai por
+WhatsApp quando cai abaixo do limite — ver "Alerta de saldo por WhatsApp",
+logo abaixo.
 
 - **Só em `/consumo`** (decisão do usuário em 16/09/2026): o painel é
-  compartilhado com a equipe e o saldo não precisa ficar visível em toda tela. O
-  preço, aceito, é que ninguém é avisado sem abrir a tela — se isso doer, o
-  caminho é um webhook de saída configurável, não uma faixa no topo do painel.
+  compartilhado com a equipe e o saldo não precisa ficar visível em toda tela.
+  Nada de faixa no topo do painel: quem precisa ser avisado sem abrir a tela é
+  avisado pelo alerta.
 - **Fica ACIMA da barra de filtros.** A barra recorta tudo que está abaixo dela,
   e o saldo é o estado da conta agora, não uma apuração do período. Embaixo, a
   tela estaria prometendo que o número responde ao filtro.
@@ -98,6 +99,70 @@ e quem abre a tela do dinheiro é quem repõe o dinheiro.
   civis: dividir por sete só é honesto com sete dias inteiros, e hoje está
   sempre pela metade — o dia corrente puxaria a média para baixo justamente
   quando ela serve para avisar. Sem gasto medido, a tela não promete nada.
+
+#### Alerta de saldo por WhatsApp
+
+Pedido do usuário em 18/09/2026: saldo abaixo de US$ 20 manda mensagem para três
+pessoas pelo número da caixa 31 ("Seahub_Alternativa"). Configurado em
+`/consumo`, logo abaixo do saldo. Módulos em `src/server/alerta-de-saldo/`, com as
+regras puras e testadas em `regras.ts` e a escolha da conversa em `conversa.ts`.
+
+- **Por que a caixa 31.** É `Channel::Api` ligada à WAHA (API não oficial), sem
+  robô nosso: não tem a janela de 24 h do WhatsApp oficial, então dá para iniciar
+  conversa a qualquer hora. Medido antes de construir: das 100 conversas mais
+  recentes dela, 74 começaram por mensagem de saída escrita no Chatwoot, e em 12
+  de contatos que só tinham telefone a pessoa respondeu na mesma conversa — o
+  caminho Chatwoot → WAHA → WhatsApp já era o uso diário da equipe.
+- **Sai pelo Chatwoot, não pela WAHA direto.** Usa o token de usuário que já está
+  em Integrações → Chatwoot (`clienteComTokenDeUsuario`), sem credencial nova, e
+  o alerta fica visível na caixa, com a resposta de quem recebeu. ⚠ É a exceção
+  consciente ao "cliente de leitura não escreve": numa caixa sem robô não há
+  outro token que escreva, e ligar o nosso robô nela faria os agentes
+  responderem a tudo que chega ali. A mensagem aparece em nome da pessoa dona do
+  token. ⚠ A chave da WAHA escrita no fluxo antigo do n8n **não** é usada.
+- ⚠ **Iniciar conversa é capacidade nova do cliente do Chatwoot**:
+  `buscarContatos`, `criarContato`, `vincularContatoACaixa`, `conversasDoContato`
+  e `criarConversa`. Formatos de leitura conferidos no 4.16.2 de produção, e o
+  caminho inteiro provado em 18/09/2026 com UM envio real ao número do usuário
+  (contato existente, conversa nova na caixa 31, mensagem recebida no
+  WhatsApp). ⚠ `criarContato` e `vincularContatoACaixa` só rodaram contra o
+  servidor de teste: a primeira pessoa nova cadastrada é quem prova. A
+  busca casa TRECHO: `escolherContato` confere o número de cada resultado (com e
+  sem o nono dígito, e pelo identificador `…@s.whatsapp.net` que a WAHA grava),
+  senão o alerta podia ir para outra pessoa. Contato existente é reaproveitado —
+  o telefone é único na conta, e criar outro daria 422 —, e conversa aberta na
+  caixa também. Conversa resolvida não é reaberta: abre outra.
+- **Quando avisa** (decisões do usuário no mesmo dia): a QUALQUER hora; ao cair
+  abaixo do limite, e de novo a cada 24 h enquanto continuar abaixo; e na hora,
+  fora do intervalo, se ZERAR — é quando os agentes param. Recarregar acima do
+  limite encerra o episódio (`abaixoDesde` nulo), e a próxima queda avisa na hora.
+- ⚠ **Leitura que falha nunca vira aviso**, a mesma doutrina da tela. Fica
+  escrita no bloco como "a última conferência não chegou ao fim".
+- **O vigia confere a cada 10 min** (`CONFERIR_A_CADA_MS`), não a cada minuto:
+  com o cache de 5 min da leitura, o saldo que acaba vira aviso em ~15 min. A
+  tarefa é a última do vigia, num `try` próprio.
+- ⚠ **Reserva antes de mandar.** `avisadoEm` é gravado com `updateMany` condicionado
+  ao valor lido; duas conferências simultâneas não mandam dois avisos. Se NENHUMA
+  mensagem sair, a reserva é desfeita e a conferência seguinte tenta de novo — um
+  aviso que falhou não pode contar como dado. Se parte sair, conta, e a falha fica
+  escrita.
+- ⚠ **"Entregue" quer dizer que o Chatwoot aceitou**, não que chegou no WhatsApp:
+  quem leva até lá é a WAHA, pelo webhook da caixa, fora da nossa vista. Por isso
+  existe o botão **"Enviar teste"**, que manda aos números SALVOS: é ele que prova
+  o caminho inteiro, inclusive se o número foi digitado com ou sem o nono dígito
+  do jeito que o WhatsApp da pessoa conhece. O sistema não acrescenta o nono
+  dígito por conta própria. Um teste por minuto, no máximo.
+- **Só Administrador para cima vê e edita os telefones** (decisão do usuário). A
+  tela de Consumo é aberta à equipe inteira; quem só lê vê no cartão do saldo SE
+  o alerta está ligado, nunca QUEM recebe. A auditoria grava os nomes, sem
+  telefone, e `papeis.ts` diz isso.
+- **O cartão do saldo usa o limite do alerta** para a cor e o aviso: a tela dizer
+  "baixo" num valor em que ninguém foi avisado seriam duas réguas.
+- **Tabela própria** (`AlertaDeSaldo`, linha única, e `AvisoDeSaldo`, um por
+  envio), e não uma linha de `Integration` como o NPS: não é integração, e como
+  provider apareceria nas listas de Integrações e do MCP. Configuração e estado
+  moram na mesma linha, em colunas separadas: o formulário não toca no estado e o
+  vigia não toca na configuração.
 
 #### O 402 é configuração, não instabilidade
 

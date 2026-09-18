@@ -206,6 +206,20 @@ export async function clienteDeLeitura(): Promise<{
 }
 
 /**
+ * Cliente que ESCREVE com o token de usuário: para falar com a própria equipe
+ * por uma caixa sem robô — hoje, só o alerta de saldo (18/09/2026).
+ *
+ * É a exceção consciente ao que `clienteDeLeitura` promete. Numa caixa sem
+ * Agent Bot não há outro token que escreva, e ligar o nosso robô nela faria os
+ * agentes responderem a tudo que chega ali. O preço, aceito: a mensagem aparece
+ * no Chatwoot em nome da pessoa dona do token de leitura configurado em
+ * Integrações → Chatwoot. Para cliente, continua valendo o token do robô.
+ */
+export async function clienteComTokenDeUsuario() {
+  return (await clienteDeLeitura())?.cliente ?? null;
+}
+
+/**
  * Cliente pronto para o agente: junta a config global com o token do bot dele.
  * `null` quando falta qualquer uma das duas pontas.
  */

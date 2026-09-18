@@ -7,11 +7,12 @@ import { baseUrl } from "@/server/agents/openrouter";
  *
  * Substitui o fluxo "Notificar Saldo Openrouter" do n8n, que lia o mesmo
  * endereço de hora em hora e **nunca avisou ninguém**: o nó de decisão não
- * tinha saída ligada. Aqui não há relógio nem canal de saída — o número aparece
- * na tela de Consumo, que é onde se olha quanto se gastou e é a única tela em
- * que o saldo faz sentido (decisão do usuário em 16/09/2026: o painel é
- * compartilhado com a equipe e o saldo não precisa ficar visível em todas as
- * telas).
+ * tinha saída ligada. O número aparece na tela de Consumo, que é onde se olha
+ * quanto se gastou e é a única tela em que o saldo faz sentido (decisão do
+ * usuário em 16/09/2026: o painel é compartilhado com a equipe e o saldo não
+ * precisa ficar visível em todas as telas). Desde 18/09/2026 há também o
+ * alerta por WhatsApp (`alerta-de-saldo/`), que lê o saldo por esta mesma
+ * função, com o mesmo cache.
  *
  * ⚠ **Falha de leitura nunca vira "saldo zero".** Mesma doutrina da consulta de
  * CNPJ e das escritas do Conexa: um timeout nosso não é um fato sobre a conta

@@ -38,6 +38,10 @@ import { diaEmSaoPaulo } from "@/lib/tempo";
 import { Filtros, type Campo } from "@/components/filtros";
 import { GraficoDiario } from "@/components/consumo/grafico-diario";
 import { SaldoDaConta } from "@/components/consumo/saldo";
+import { BlocoDoAlerta } from "@/components/consumo/bloco-do-alerta";
+import { lerAlerta, ultimosAvisos } from "@/server/alerta-de-saldo/alerta";
+import { alcancaPapel } from "@/lib/papeis";
+import { UserRole } from "@/generated/prisma/enums";
 import {
   Aviso,
   Barra,
@@ -79,7 +83,11 @@ export default async function ConsumoPage({
   searchParams: Promise<Busca>;
 }) {
   const busca = await searchParams;
-  await exigirSessao();
+  const sessao = await exigirSessao();
+  // Os telefones do alerta são de pessoas, e esta tela é aberta à equipe
+  // inteira: o bloco do alerta é de Administrador para cima (decisão do
+  // usuário, 18/09/2026). Quem só lê vê, no cartão do saldo, SE há alerta.
+  const mostraOAlerta = alcancaPapel(sessao.user.role, UserRole.ADMIN);
 
   const periodo = normalizarPeriodo(busca.periodo);
   const intervalo = intervaloDoPeriodo(periodo, {
@@ -104,6 +112,11 @@ export default async function ConsumoPage({
       gastoMedioPorDia(),
       falhasSemCredito(),
     ]);
+
+  const [alerta, avisos] = await Promise.all([
+    lerAlerta(),
+    mostraOAlerta ? ultimosAvisos() : Promise.resolve([]),
+  ]);
 
   const campos: Campo[] = [
     {
@@ -197,13 +210,20 @@ export default async function ConsumoPage({
     />
   );
 
+  // O alerta mora logo abaixo do saldo e acima dos filtros, pelo mesmo motivo
+  // do saldo: não é recortado pelo período.
   const saldo = (
-    <SaldoDaConta
-      leitura={leitura}
-      gastoDiarioUsd={gastoDiario}
-      diasDaMedia={DIAS_DA_MEDIA}
-      falhas={falhas}
-    />
+    <>
+      <SaldoDaConta
+        leitura={leitura}
+        gastoDiarioUsd={gastoDiario}
+        diasDaMedia={DIAS_DA_MEDIA}
+        falhas={falhas}
+        limiteUsd={alerta.limiteUsd}
+        alertaLigado={alerta.ligado}
+      />
+      {mostraOAlerta ? <BlocoDoAlerta alerta={alerta} avisos={avisos} /> : null}
+    </>
   );
 
   if (resultado.excedeu) {
