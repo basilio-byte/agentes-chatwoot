@@ -295,6 +295,42 @@ describe("contarPrazosPerdidos — os desfechos e o resto", () => {
     ]);
   });
 
+  it("cada pessoa carrega só as próprias perdas, da mais recente para a mais antiga", () => {
+    const { pessoas } = contarPrazosPerdidos([
+      linha({ chatwootConversationId: 1, finalizadoEm: new Date("2026-09-10T10:00:00Z") }),
+      linha({
+        chatwootConversationId: 2,
+        finalizadoEm: new Date("2026-09-15T10:00:00Z"),
+        acao: { tipo: "voltar_para_o_agente" },
+      }),
+      linha({
+        chatwootConversationId: 3,
+        donoId: 9,
+        donoNome: "Atendente Três",
+        finalizadoEm: new Date("2026-09-12T10:00:00Z"),
+      }),
+      // Respondida é da pessoa, mas não é perda.
+      respondeu({ chatwootConversationId: 4, finalizadoEm: new Date("2026-09-16T10:00:00Z") }),
+    ]);
+
+    const perdasDe = (nome: string) =>
+      pessoas.find((p) => p.nome === nome)?.perdas.map((p) => [p.conversa, p.acao]);
+
+    expect(perdasDe("Atendente Um")).toEqual([
+      [2, "devolvida"],
+      [1, "reatribuida"],
+    ]);
+    expect(perdasDe("Atendente Três")).toEqual([[3, "reatribuida"]]);
+    // A última perda da tabela é a primeira da lista, sempre.
+    expect(pessoas.find((p) => p.nome === "Atendente Um")?.ultimaPerda?.conversa).toBe(2);
+  });
+
+  it("quem só respondeu tem lista de perdas vazia", () => {
+    const { pessoas } = contarPrazosPerdidos([respondeu()]);
+    expect(pessoas[0].perdas).toEqual([]);
+    expect(pessoas[0].ultimaPerda).toBeNull();
+  });
+
   it("lista vazia não quebra", () => {
     const vazio = contarPrazosPerdidos([]);
     expect(vazio.pessoas).toEqual([]);

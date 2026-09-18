@@ -22,6 +22,7 @@ import {
   contarPrazosPerdidos,
   ROTULO_DA_ACAO,
   type LinhaDePrazo,
+  type Perda,
   type Placar,
 } from "@/server/prazos/contagem";
 // O recorte de período é o MESMO de /consumo, e de propósito: dois cálculos de
@@ -33,6 +34,7 @@ import {
   ROTULO_DO_PERIODO,
 } from "@/server/consumo/periodo";
 import { Filtros, type Campo } from "@/components/filtros";
+import { Recolhivel } from "@/components/recolhivel";
 import {
   Aviso,
   Badge,
@@ -55,8 +57,12 @@ const TETO_DE_LINHAS = 5000;
 /** Quantas linhas do bloco "fora da conta" cabem sem virar despejo. */
 const FORA_DA_CONTA_NA_TELA = 50;
 
-/** O mesmo teto para a lista de perdas; o filtro de período alcança o resto. */
-const PERDAS_NA_TELA = 50;
+/**
+ * Quantas conversas cada lista mostra: as perdas de cada pessoa e as que
+ * voltaram para o agente (pedido do usuário, 18/09/2026). O filtro de período
+ * alcança o resto.
+ */
+const ULTIMAS_POR_LISTA = 10;
 
 type Busca = { periodo?: string; de?: string; ate?: string };
 
@@ -224,6 +230,24 @@ export default async function PrazosPage({
   const contagem = contarPrazosPerdidos(linhas as LinhaDePrazo[]);
   const { pessoas, totais, porAgente, destinos, conversas, perdas, foraDaConta } =
     contagem;
+
+  /** Na ordem da tabela: quem mais perdeu primeiro. */
+  const quemPerdeu = pessoas.filter((p) => p.perdas.length > 0);
+  const voltasAoAgente = perdas.filter((p) => p.acao === "devolvida");
+
+  const agenteDa = (perda: Perda) =>
+    nomeDoAgente.get(perda.agentId) ?? <Meta>agente removido</Meta>;
+
+  const oQueHouve = (perda: Perda) =>
+    perda.destino ? (
+      <Badge>para {perda.destino}</Badge>
+    ) : perda.acao === "devolvida" ? (
+      <Badge>para o agente</Badge>
+    ) : perda.acao ? (
+      <Badge>{ROTULO_DA_ACAO[perda.acao]}</Badge>
+    ) : (
+      <Meta>—</Meta>
+    );
 
   /** O detalhe que explica de onde saiu o "recebeu" daquela linha. */
   const detalheDoPlacar = (p: Placar) =>
@@ -479,16 +503,84 @@ export default async function PrazosPage({
             </Card>
           </div>
 
-          {/* A tabela por pessoa aponta só a ÚLTIMA perda. Aqui estão todas,
-              cada uma com o caminho até a conversa: é lá que se confere o que
-              aconteceu antes de cobrar alguém pelo número. */}
-          {perdas.length > 0 ? (
-            <Card className="space-y-3 p-4">
+          {/* A tabela por pessoa aponta só a ÚLTIMA perda. Aqui estão as
+              últimas de cada uma, com o caminho até a conversa: é lá que se
+              confere o que aconteceu antes de cobrar alguém pelo número. Uma
+              linha por pessoa, que abre — dez linhas de cada, abertas, seriam
+              uma parede. */}
+          {quemPerdeu.length > 0 ? (
+            <section className="space-y-3">
               <TituloDeBloco
                 icone={<MessagesSquare size={15} aria-hidden />}
-                descricao="Cada prazo que alguém deixou vencer, do mais recente para o mais antigo. O link abre a conversa no Chatwoot."
+                descricao={`As ${ULTIMAS_POR_LISTA} mais recentes de cada pessoa. Abra a linha para ver as conversas; o link abre no Chatwoot.`}
               >
-                Conversas que perderam prazo ({formatarNumero(perdas.length)})
+                Últimas perdas de cada pessoa
+              </TituloDeBloco>
+
+              <div className="space-y-2">
+                {quemPerdeu.map((pessoa) => (
+                  <Recolhivel
+                    key={pessoa.chave}
+                    titulo={pessoa.nome}
+                    estado={
+                      <Badge tone="accent">
+                        {formatarNumero(pessoa.perdeu)}{" "}
+                        {pessoa.perdeu === 1 ? "perda" : "perdas"}
+                      </Badge>
+                    }
+                    resumo={
+                      pessoa.ultimaPerda
+                        ? `última em ${formatarData(pessoa.ultimaPerda.quando)}`
+                        : null
+                    }
+                  >
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th scope="col">Quando</th>
+                          <th scope="col">Conversa</th>
+                          <th scope="col">Agente</th>
+                          <th scope="col">O que houve</th>
+                        </>
+                      }
+                    >
+                      {pessoa.perdas.slice(0, ULTIMAS_POR_LISTA).map((perda, i) => (
+                        <tr key={`${perda.conversa}-${perda.quando.getTime()}-${i}`}>
+                          <td className="whitespace-nowrap">
+                            <Meta>{formatarData(perda.quando)}</Meta>
+                          </td>
+                          <td className="whitespace-nowrap">
+                            {conversaNoChatwoot(perda.conversa)}
+                          </td>
+                          <td className="text-xs">{agenteDa(perda)}</td>
+                          <td>{oQueHouve(perda)}</td>
+                        </tr>
+                      ))}
+                    </Tabela>
+
+                    {pessoa.perdas.length > ULTIMAS_POR_LISTA ? (
+                      <Meta className="block">
+                        Mostrando as {ULTIMAS_POR_LISTA} mais recentes de{" "}
+                        {formatarNumero(pessoa.perdas.length)}. Para chegar às
+                        mais antigas, escolha um período menor.
+                      </Meta>
+                    ) : null}
+                  </Recolhivel>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {/* Nessas, ninguém respondeu a tempo e o agente de I.A. retomou o
+              atendimento sozinho. É onde o robô vendeu ou deixou de vender no
+              lugar de alguém — vale abrir e conferir. */}
+          {voltasAoAgente.length > 0 ? (
+            <Card className="space-y-3 p-4">
+              <TituloDeBloco
+                icone={<Bot size={15} aria-hidden />}
+                descricao={`As ${ULTIMAS_POR_LISTA} mais recentes em que ninguém respondeu a tempo e a conversa voltou para o agente de I.A., que seguiu o atendimento sozinho.`}
+              >
+                Voltaram para o agente ({formatarNumero(voltasAoAgente.length)})
               </TituloDeBloco>
 
               <Tabela
@@ -497,12 +589,11 @@ export default async function PrazosPage({
                     <th scope="col">Quando</th>
                     <th scope="col">Conversa</th>
                     <th scope="col">Estava com</th>
-                    <th scope="col">Agente</th>
-                    <th scope="col">O que houve</th>
+                    <th scope="col">Agente que retomou</th>
                   </>
                 }
               >
-                {perdas.slice(0, PERDAS_NA_TELA).map((perda, i) => (
+                {voltasAoAgente.slice(0, ULTIMAS_POR_LISTA).map((perda, i) => (
                   <tr key={`${perda.conversa}-${perda.quando.getTime()}-${i}`}>
                     <td className="whitespace-nowrap">
                       <Meta>{formatarData(perda.quando)}</Meta>
@@ -511,31 +602,15 @@ export default async function PrazosPage({
                       {conversaNoChatwoot(perda.conversa)}
                     </td>
                     <td className="text-xs">{perda.quem}</td>
-                    <td className="text-xs">
-                      {nomeDoAgente.get(perda.agentId) ?? (
-                        <Meta>agente removido</Meta>
-                      )}
-                    </td>
-                    <td>
-                      {perda.destino ? (
-                        <Badge>para {perda.destino}</Badge>
-                      ) : perda.acao === "devolvida" ? (
-                        <Badge>para o agente</Badge>
-                      ) : perda.acao ? (
-                        <Badge>{ROTULO_DA_ACAO[perda.acao]}</Badge>
-                      ) : (
-                        <Meta>—</Meta>
-                      )}
-                    </td>
+                    <td className="text-xs">{agenteDa(perda)}</td>
                   </tr>
                 ))}
               </Tabela>
 
-              {perdas.length > PERDAS_NA_TELA ? (
+              {voltasAoAgente.length > ULTIMAS_POR_LISTA ? (
                 <Meta className="block">
-                  Mostrando as {PERDAS_NA_TELA} mais recentes de{" "}
-                  {formatarNumero(perdas.length)}. Para chegar às mais antigas,
-                  escolha um período menor.
+                  Mostrando as {ULTIMAS_POR_LISTA} mais recentes de{" "}
+                  {formatarNumero(voltasAoAgente.length)}.
                 </Meta>
               ) : null}
             </Card>

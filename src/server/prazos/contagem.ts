@@ -111,6 +111,8 @@ export type ContagemDePessoa = Placar & {
   reatribuidas: number;
   devolvidas: number;
   ultimaPerda: Ocorrencia | null;
+  /** As perdas desta pessoa, da mais recente para a mais antiga. */
+  perdas: Perda[];
 };
 
 export type ContagemDeAgente = Placar & { agentId: string };
@@ -284,6 +286,7 @@ export function contarPrazosPerdidos(linhas: LinhaDePrazo[]): Contagem {
         reatribuidas: 0,
         devolvidas: 0,
         ultimaPerda: null,
+        perdas: [],
       } satisfies ContagemDePessoa);
     porPessoa.set(chave, pessoa);
 
@@ -323,19 +326,26 @@ export function contarPrazosPerdidos(linhas: LinhaDePrazo[]): Contagem {
       (perdasPorConversa.get(linha.chatwootConversationId) ?? 0) + 1,
     );
 
-    const ocorrencia: Ocorrencia = {
+    const perda: Perda = {
       conversa: linha.chatwootConversationId,
       quando: instante(linha),
       acao,
       destino,
+      quem: nome,
+      agentId: linha.agentId,
     };
-    perdas.push({ ...ocorrencia, quem: nome, agentId: linha.agentId });
-    if (!pessoa.ultimaPerda || ocorrencia.quando > pessoa.ultimaPerda.quando) {
-      pessoa.ultimaPerda = ocorrencia;
-    }
+    perdas.push(perda);
+    pessoa.perdas.push(perda);
   }
 
-  for (const pessoa of porPessoa.values()) fecharTaxa(pessoa);
+  const maisRecentePrimeiro = (a: { quando: Date }, b: { quando: Date }) =>
+    b.quando.getTime() - a.quando.getTime();
+
+  for (const pessoa of porPessoa.values()) {
+    fecharTaxa(pessoa);
+    pessoa.perdas.sort(maisRecentePrimeiro);
+    pessoa.ultimaPerda = pessoa.perdas[0] ?? null;
+  }
   for (const agente of porAgente.values()) fecharTaxa(agente);
   fecharTaxa(totais);
 
@@ -348,8 +358,8 @@ export function contarPrazosPerdidos(linhas: LinhaDePrazo[]): Contagem {
       a.nome.localeCompare(b.nome, "pt-BR"),
   );
 
-  perdas.sort((a, b) => b.quando.getTime() - a.quando.getTime());
-  foraDaConta.sort((a, b) => b.quando.getTime() - a.quando.getTime());
+  perdas.sort(maisRecentePrimeiro);
+  foraDaConta.sort(maisRecentePrimeiro);
 
   return {
     pessoas,
