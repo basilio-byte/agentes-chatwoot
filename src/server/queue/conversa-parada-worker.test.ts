@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Job } from "bullmq";
 import type { EntradaExecucao } from "@/server/agents/runner";
 import { ExecucaoInterrompida } from "@/server/agents/cancelamento";
@@ -20,7 +20,14 @@ type Msg = {
   sender?: { type?: string; name?: string } | null;
 };
 
-/** 17/09/2026 10:00 em São Paulo, em segundos. */
+/**
+ * 17/09/2026 10:00 em São Paulo, em segundos.
+ *
+ * ⚠ O relógio do sistema é travado aqui em todo teste (`beforeEach`). O worker
+ * lê `Date.now()` para medir há quanto tempo a conversa está parada, e com o
+ * relógio real as datas deste arquivo envelhecem: em 18/09/2026 a conversa
+ * "de 2 h atrás" passou de 24 h e o teste da paginação quebrou sozinho.
+ */
 const AGORA = 1_789_650_000;
 const HORA = 3600;
 
@@ -158,7 +165,12 @@ const job = () =>
     },
   }) as Job<JobConversaParada>;
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  vi.setSystemTime(AGORA * 1000);
   gatilho = {
     id: "gatilho-1",
     agentId: "assistente-vendedor",
