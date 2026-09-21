@@ -299,8 +299,10 @@ export class ChatwootClient {
         /** `User` ou `AgentBot` — a mesma distinção de `obterConversa`. */
         assigneeTipo: bruta.meta?.assignee_type ?? null,
         assigneeNome: bruta.meta?.assignee?.name?.trim() || null,
+        contatoId: bruta.meta?.sender?.id ?? null,
         contatoNome: bruta.meta?.sender?.name?.trim() || null,
         telefone: bruta.meta?.sender?.phone_number?.trim() || null,
+        etiquetas: bruta.labels ?? [],
         /**
          * A última mensagem que não é atividade do sistema.
          *
@@ -483,13 +485,21 @@ export class ChatwootClient {
   /** Conversas de um contato, de todas as caixas. */
   async conversasDoContato(contactId: number) {
     const resposta = await this.requisitar<{
-      payload?: Array<{ id: number; inbox_id?: number | null; status?: string | null }> | null;
+      payload?: Array<{
+        id: number;
+        inbox_id?: number | null;
+        status?: string | null;
+        last_activity_at?: number | null;
+        timestamp?: number | null;
+      }> | null;
     }>(`/contacts/${contactId}/conversations`, {}, true);
 
     return (resposta.payload ?? []).map((c) => ({
       id: c.id,
       caixaId: c.inbox_id ?? null,
       status: c.status ?? null,
+      /** Segundos. Qualquer mensagem conta, inclusive nota e atividade. */
+      ultimaAtividadeEm: c.last_activity_at ?? c.timestamp ?? null,
     }));
   }
 
@@ -664,10 +674,11 @@ type ConversaListada = {
   id: number;
   inbox_id?: number | null;
   status?: string | null;
+  labels?: string[] | null;
   meta?: {
     assignee?: { id?: number; name?: string | null } | null;
     assignee_type?: string | null;
-    sender?: { name?: string | null; phone_number?: string | null } | null;
+    sender?: { id?: number | null; name?: string | null; phone_number?: string | null } | null;
   } | null;
   last_non_activity_message?: {
     id: number;

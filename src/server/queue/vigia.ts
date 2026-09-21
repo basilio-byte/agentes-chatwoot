@@ -8,6 +8,7 @@ import { executarPrazosVencidos } from "@/server/prazos/executar";
 import { executarPesquisasVencidas } from "@/server/nps/executar";
 import { conferirSaldoEAvisar } from "@/server/alerta-de-saldo/alerta";
 import { encerrarOrfas } from "@/server/execucoes/orfas";
+import { conferirJanelas } from "@/server/janela/conferir";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -23,8 +24,9 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  * que o cliente esperou além do tempo configurado. No mesmo relógio, executa os
  * prazos que os agentes registraram (`prazos/executar.ts`), as etapas vencidas
  * da pesquisa de satisfação (`nps/executar.ts`), encerra as execuções que um
- * reinício deixou marcadas como rodando (`execucoes/orfas.ts`) e confere o saldo
- * da OpenRouter para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`).
+ * reinício deixou marcadas como rodando (`execucoes/orfas.ts`), confere o saldo
+ * da OpenRouter para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`) e a
+ * janela de 24 h do WhatsApp (`janela/conferir.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -198,6 +200,17 @@ export function iniciarVigia(): NodeJS.Timeout {
       await conferirSaldoEAvisar();
     } catch (erro) {
       logger.error({ erro }, "alerta de saldo falhou");
+    }
+
+    // Depois de tudo: é a que mais lê o Chatwoot, e segura o próprio ritmo
+    // (confere a cada 5 min, e não se sobrepõe a si mesma).
+    try {
+      const rodada = await conferirJanelas();
+      if (rodada.avisadas || rodada.fechadas || rodada.falhas) {
+        logger.info(rodada, "janela do WhatsApp conferida");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "conferência da janela do WhatsApp falhou");
     }
   };
 

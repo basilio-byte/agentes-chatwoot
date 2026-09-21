@@ -28,10 +28,19 @@ import { GoogleConfigForm } from "@/components/google-config";
 import { NpsConfigForm } from "@/components/nps-config";
 import { lerConfigNps } from "@/server/nps/config";
 import { SITUACAO_DA_PESQUISA } from "@/server/nps/rotulos";
+import { JanelaConfigForm } from "@/components/janela-config";
+import { lerConfigJanela } from "@/server/janela/config";
+import { PROVIDER_DA_JANELA } from "@/server/janela/conferir";
+import {
+  ETIQUETA_ABERTA,
+  ETIQUETA_FECHADA,
+  textoDaNota,
+} from "@/server/janela/regras";
 import {
   Building2,
   Ear,
   FileSignature,
+  Hourglass,
   IdCard,
   ListChecks,
   MessagesSquare,
@@ -117,6 +126,21 @@ export default async function IntegracoesPage({
       marcadaEm: true,
       resultado: true,
     },
+  });
+  const janela = registros.find((i) => i.provider === IntegrationProvider.JANELA);
+  const configJanela = lerConfigJanela(janela?.config);
+  // A prévia usa uma janela de verdade — a que fecharia daqui a
+  // `minutosDeAviso` —, para a hora sair no fuso e no formato que a equipe lê.
+  const previaDaNota = textoDaNota(
+    Math.floor(Date.now() / 1000) + configJanela.minutosDeAviso * 60,
+    configJanela.instrucao,
+  );
+  // "reservado" é a nota a caminho (ou que falhou e será desfeita): não é rastro.
+  const acoesDaJanela = await db.webhookEvent.findMany({
+    where: { provider: PROVIDER_DA_JANELA, resultado: { not: "reservado" } },
+    orderBy: { createdAt: "desc" },
+    take: 15,
+    select: { id: true, resultado: true, detalhe: true, createdAt: true, payload: true },
   });
   const linkDaConversa = (id: number) =>
     configChatwoot.success
@@ -651,6 +675,141 @@ export default async function IntegracoesPage({
                             </td>
                             <td className="min-w-64 text-xs leading-relaxed text-muted">
                               {p.resultado ?? "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            id: "janela",
+            rotulo: "Janela",
+            icone: <Hourglass size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Janela de 24 h do WhatsApp</h2>
+                    {janela?.enabled ? (
+                      <Badge tone="success">ligada</Badge>
+                    ) : (
+                      <Badge>desligada</Badge>
+                    )}
+                    {janela?.enabled && janela.status === IntegrationStatus.ERROR ? (
+                      <Badge tone="danger">última conferência falhou</Badge>
+                    ) : null}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    No WhatsApp oficial, a mensagem escrita só chega ao cliente
+                    até 24 h depois da última mensagem <strong>dele</strong>. O
+                    Chatwoot não sabe disso nesta caixa, e quem avisa a equipe
+                    são as etiquetas. <strong>Sem modelo</strong>: a cada 5
+                    minutos o sistema confere as conversas abertas e pendentes.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-muted">
+                    <li>
+                      <strong>{configJanela.minutosDeAviso} min antes de fechar</strong>,
+                      deixa uma nota interna para quem atende, uma vez por
+                      janela. A nota sai pelo robô da caixa.
+                    </li>
+                    <li>
+                      <strong>Quando fecha</strong>, troca{" "}
+                      <code>{ETIQUETA_ABERTA}</code> por{" "}
+                      <code>{ETIQUETA_FECHADA}</code> e mantém as outras
+                      etiquetas.
+                    </li>
+                    <li>
+                      A etiqueta de aberta continua sendo posta pela automação
+                      do próprio Chatwoot, a cada mensagem do cliente.
+                    </li>
+                  </ul>
+
+                  <Aviso tone="warning">
+                    Enquanto o fluxo “Follow - UPs Janela de Conversas” estiver
+                    publicado no n8n, a conversa que ele pegar ganha as duas
+                    notas. Ele também manda o e-mail de “1 mês grátis de Seabox”
+                    e o follow-up das 8h ao cliente: desligar o fluxo desliga
+                    essas duas coisas, que este sistema não faz.
+                  </Aviso>
+
+                  <div className="space-y-1.5">
+                    <p className="text-[13px] font-medium">Como a nota sai</p>
+                    <p className="rounded-lg border border-line bg-surface-2 p-3 text-sm whitespace-pre-line">
+                      {previaDaNota}
+                    </p>
+                  </div>
+
+                  <JanelaConfigForm
+                    habilitada={janela?.enabled ?? false}
+                    caixas={configJanela.caixas.join(", ")}
+                    minutosDeAviso={String(configJanela.minutosDeAviso)}
+                    instrucao={configJanela.instrucao}
+                    somenteLeitura={!editavel}
+                  />
+
+                  {janela?.lastCheckedAt ? (
+                    <p className="text-xs text-muted">
+                      Última conferência: {formatarData(janela.lastCheckedAt)}
+                      {janela.status === IntegrationStatus.ERROR && janela.lastError
+                        ? ` — falhou: ${janela.lastError}`
+                        : ""}
+                    </p>
+                  ) : null}
+                </Card>
+
+                <Card className="space-y-3">
+                  <h2 className="text-sm font-semibold">Últimas ações</h2>
+                  {acoesDaJanela.length === 0 ? (
+                    <p className="text-sm text-muted">Nenhuma ainda.</p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>Conversa</th>
+                          <th>O que fez</th>
+                          <th>Quando</th>
+                        </>
+                      }
+                    >
+                      {acoesDaJanela.map((a) => {
+                        const conversa = Number(
+                          (a.payload as { conversationId?: unknown } | null)?.conversationId,
+                        );
+                        const link = Number.isInteger(conversa) ? linkDaConversa(conversa) : null;
+                        return (
+                          <tr key={a.id}>
+                            <td className="whitespace-nowrap">
+                              {link ? (
+                                <a
+                                  href={link}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-accent hover:underline"
+                                >
+                                  #{conversa}
+                                </a>
+                              ) : Number.isInteger(conversa) ? (
+                                `#${conversa}`
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td>
+                              <Badge tone={a.resultado === "nota deixada" ? "accent" : "neutral"}>
+                                {a.resultado ?? "—"}
+                              </Badge>
+                              {a.detalhe ? (
+                                <span className="ml-2 text-xs text-muted">{a.detalhe}</span>
+                              ) : null}
+                            </td>
+                            <td className="whitespace-nowrap text-muted">
+                              {formatarData(a.createdAt)}
                             </td>
                           </tr>
                         );

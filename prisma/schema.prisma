@@ -491,6 +491,11 @@ enum IntegrationProvider {
   /// CRM e a conversa é resolvida. FORA do registry de propósito: não tem tool
   /// nem liga por agente. A linha guarda só o liga/desliga e a configuração.
   NPS
+  /// Janela de 24 h do WhatsApp oficial: o vigia deixa uma nota para quem
+  /// atende antes de a janela fechar e troca a etiqueta de aberta por fechada
+  /// quando ela vence. Função do sistema, sem modelo, FORA do registry como o
+  /// NPS. `lastCheckedAt`/`status`/`lastError` guardam a última conferência.
+  JANELA
 }
 
 enum IntegrationStatus {

@@ -33,7 +33,7 @@ const cliente: ClienteDeAviso = {
   },
   async conversasDoContato(contatoId) {
     chamadas.push(`conversas ${contatoId}`);
-    return conversas[contatoId] ?? [];
+    return (conversas[contatoId] ?? []).map((c) => ({ ...c, ultimaAtividadeEm: null }));
   },
   async criarConversa(dados) {
     chamadas.push(`criarConversa ${dados.contatoId} ${dados.sourceId}`);

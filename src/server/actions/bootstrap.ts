@@ -30,6 +30,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.GOOGLE]: "Google Workspace",
   [IntegrationProvider.PRAZOS]: "Prazos da conversa",
   [IntegrationProvider.NPS]: "Pesquisa de satisfação (NPS)",
+  [IntegrationProvider.JANELA]: "Janela de 24 h do WhatsApp",
 };
 
 /**

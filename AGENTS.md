@@ -1314,6 +1314,69 @@ fixas e gravar um número — e levou 59 s e quatro idas ao modelo para gravar u
 - **A tela lista as últimas 15 pesquisas** com situação, nota e o rastro do que
   foi feito (`resultado`), sem telefone nem nome.
 
+### Janela de 24 h do WhatsApp: a etiqueta de fechada é do sistema
+
+Integração `JANELA`, na aba Janela de Integrações, fora do registry como o NPS:
+sem ferramenta, sem modelo, sem liga por agente. Pedido do usuário em 21/09/2026.
+Regras puras e testadas em `janela/regras.ts`; a rodada em `janela/conferir.ts`,
+no relógio do vigia, a cada 5 min.
+
+No WhatsApp oficial a mensagem livre só chega até 24 h depois da última mensagem
+DO CLIENTE, e na caixa 29 (`Channel::Api`, NotificaMe) o Chatwoot não sabe disso.
+Quem avisa a equipe são duas etiquetas: `meta_janela_aberta`, posta pela
+automação 31 do próprio Chatwoot a cada mensagem do cliente (continua lá), e
+`meta_janela_fechada`, posta aqui. `minutosDeAviso` antes de fechar (60 por
+padrão) sai uma nota interna para quem atende; ao fechar, a etiqueta é trocada.
+
+- **Substitui o ramo "janela fechada" do fluxo "Follow - UPs Janela de Conversas"
+  do n8n.** Desde a edição de 28/08/2026 o nó "Delete row(s)1" (condição
+  `isNotEmpty` sem coluna) apagava a tabela INTEIRA ao fim de cada rodada, e o
+  fluxo passou a fechar UMA conversa por dia, sempre de manhã. Em 21/09 eram 92
+  das 120 conversas abertas da caixa 29 marcadas como abertas com a janela
+  vencida. O fluxo também manda um e-mail de "1 mês grátis de Seabox" e um
+  follow-up das 8h ao cliente, e **nada disso foi portado**: desligar o fluxo
+  desliga os dois.
+- **Só a caixa 29 por padrão.** A 31 e a 34 são WAHA (sem janela nenhuma) e a 30 é
+  `Channel::Instagram`, em que o Chatwoot controla o prazo. A automação 31 marca
+  TODAS como abertas; marcar a 31 ou a 34 como fechadas mandaria a equipe ligar
+  para quem pode receber mensagem. Conversa de outra caixa é descartada mesmo
+  que a listagem a devolva.
+- ⚠ **A janela é do NÚMERO, não da conversa.** Antes de escrever, as outras
+  conversas do mesmo contato na mesma caixa são olhadas: a equipe abre conversa
+  nova com quem escreveu ontem na anterior. O n8n guardava pelo telefone pelo
+  mesmo motivo.
+- **Fechada sem mensagem do cliente só quando é CERTO**: a leitura chegou ao
+  começo da conversa, ou já passou de 24 h para trás. Senão, indeterminada, e
+  nada muda.
+- **A nota sai pelo robô da caixa** (`portaDaCaixa`), não pelo token de uma
+  pessoa: nota de `user` conta como "a equipe escreveu" para os prazos e o NPS, e
+  cancelaria o prazo de quem não respondeu. Sem robô na caixa, sai pelo token de
+  Integrações. Começa com `⏳ Janela do WhatsApp:` e traz a hora em que fecha, no
+  fuso de São Paulo.
+- **Uma nota por janela**: reserva em `WebhookEvent` (provider `JANELA`,
+  `aviso:<conversa>:<mensagem do cliente>`), conferida antes para não sujar o log
+  com o erro de unique a cada rodada. Nota que não saiu desfaz a reserva.
+- ⚠ **Confere ao vivo antes de escrever.** O cliente pode ter escrito entre a
+  leitura e a escrita, e a automação 31 já ter posto a de aberta: trocar para
+  fechada nesse instante deixaria a conversa errada até a mensagem seguinte.
+- ⚠ **Trocar etiqueta pela API faz o Chatwoot rodar de novo as automações de
+  "conversa atualizada"** (conferido no código dele: `label_list` está em
+  `list_of_keys`, e as condições são avaliadas contra o estado ATUAL). Não é
+  custo novo — `waiting_since` está na mesma lista, e o evento já sai a cada
+  mensagem —, mas cada troca reavalia a 11 (webhook ao n8n), a 26/27 (nota de
+  qualificação, em conversa com etiqueta de parceiro) e a 34 (resolve conversa do
+  usuário 2). O fluxo do n8n escapava disso porque quem trocava era a automação
+  32, e mudança feita por automação não é reavaliada.
+- **Teto de 40 escritas por rodada**, notas primeiro. Ligar pela primeira vez
+  corrige as ~100 vencidas em umas três rodadas, em vez de soltar centenas de
+  chamadas de uma vez.
+- **Cache pelo `last_non_activity_message`**: sem mensagem nova, a conversa não é
+  relida. Medido no ensaio contra a produção: a primeira rodada leu 126 conversas
+  em ~50 s; a seguinte, uma.
+- **Nasce desligada.** Com o fluxo do n8n publicado junto, a conversa que ele
+  pegar ganha as duas notas. A automação 32 do Chatwoot (que troca a etiqueta ao
+  ver a nota do n8n) pode ficar: sem o fluxo, ela nunca dispara.
+
 ### Conexa: armadilhas da API v2
 
 Achadas no primeiro uso real (09/09 a 15/09/2026), depois de semanas de teste
