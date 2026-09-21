@@ -172,8 +172,19 @@ describe("conexa_criar_reserva", () => {
     corpo: { data: itens, pagination: { hasNext: false } },
   });
 
+  /** A pessoa vinculada ao cliente: o Conexa exige uma na reserva. */
+  const ehAsPessoas = (c: Chamada) => c.url.pathname.endsWith("/persons");
+  const PESSOA = { personId: 777, name: "Pessoa Exemplo", isActive: true };
+  const pessoasCom = (...itens: unknown[]) => ({
+    corpo: { data: itens, pagination: { hasNext: false } },
+  });
+  /** O cliente de sempre: uma pessoa só, e o resto como cada teste disser. */
+  const comUmaPessoa =
+    (fn: (c: Chamada) => { status?: number; corpo: unknown }) => (c: Chamada) =>
+      ehAsPessoas(c) ? pessoasCom(PESSOA) : fn(c);
+
   it("devolve a sala e o horário que o Conexa gravou", async () => {
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       // A reserva das 13h às 16h ENCOSTA no pedido das 16h às 17h, e encostar
       // não é sobrepor: tem de deixar gravar.
       ehAAgenda(c)
@@ -188,7 +199,7 @@ describe("conexa_criar_reserva", () => {
                 finalTime: "2026-09-15T17:00:00-03:00",
               },
             },
-    );
+    ));
 
     const r = await criar();
 
@@ -200,26 +211,28 @@ describe("conexa_criar_reserva", () => {
     });
     expect(chamadas.map((c) => `${c.metodo} ${c.url.pathname}`)).toEqual([
       "GET /index.php/api/v2/room/bookings",
+      "GET /index.php/api/v2/persons",
       "POST /index.php/api/v2/room/booking",
       "GET /index.php/api/v2/room/booking/28400",
     ]);
     // O corpo usa yyyy-MM-dd e HH:mm — o formato do CORPO, não o do filtro.
-    // `chamadas[0]` agora é a leitura da agenda; o POST é o segundo.
-    expect(chamadas[1].corpo).toMatchObject({
+    // `chamadas[0]` é a leitura da agenda, `[1]` a das pessoas; o POST é o terceiro.
+    expect(chamadas[2].corpo).toMatchObject({
       customerId: 975,
       roomId: 2107,
       date: "2026-09-15",
       startTime: "16:00",
       finalTime: "17:00",
+      personId: 777,
     });
   });
 
   it("falha do servidor não é 'não reservou': manda conferir antes de repetir", async () => {
     // ⚠ Um 5xx pode ter chegado depois de gravar. Relançar faria o modelo
     // corrigir e chamar de novo — a mesma sala reservada duas vezes.
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       ehAAgenda(c) ? agendaCom() : { status: 502, corpo: { message: "Bad Gateway" } },
-    );
+    ));
 
     const r = await criar();
 
@@ -229,21 +242,21 @@ describe("conexa_criar_reserva", () => {
   });
 
   it("recusa do Conexa (4xx) continua sendo erro: nada foi gravado", async () => {
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       ehAAgenda(c) ? agendaCom() : { status: 422, corpo: { message: "Room unavailable" } },
-    );
+    ));
 
     await expect(criar()).rejects.toBeInstanceOf(ConexaApiError);
   });
 
   it("criada, mas sem conseguir ler de volta: não afirma sala nem horário", async () => {
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       ehAAgenda(c)
         ? agendaCom()
         : c.metodo === "POST"
           ? { corpo: { id: 28400 } }
           : { status: 500, corpo: {} },
-    );
+    ));
 
     const r = await criar();
 
@@ -256,7 +269,7 @@ describe("conexa_criar_reserva", () => {
   // ⚠ A trava de conflito. Até 16/09/2026 o único freio era a instrução de
   // consultar a agenda antes — e o modelo pode pular instrução.
   it("recusa quando o horário pedido está ocupado, e NÃO chama o POST", async () => {
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       ehAAgenda(c)
         ? agendaCom({
             ...reserva(28100),
@@ -264,7 +277,7 @@ describe("conexa_criar_reserva", () => {
             finalTime: "2026-09-15T16:30:00-03:00",
           })
         : { corpo: { id: 28400 } },
-    );
+    ));
 
     const r = await criar();
 
@@ -277,7 +290,7 @@ describe("conexa_criar_reserva", () => {
   });
 
   it("reserva cancelada no mesmo horário não impede", async () => {
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       ehAAgenda(c)
         ? agendaCom({
             ...reserva(28100),
@@ -288,17 +301,17 @@ describe("conexa_criar_reserva", () => {
         : c.metodo === "POST"
           ? { corpo: { id: 28400 } }
           : { corpo: reserva(28400) },
-    );
+    ));
 
     expect((await criar()).criada).toBe(true);
   });
 
   it("agenda cortada não autoriza reservar: sem lista inteira não há como provar que está livre", async () => {
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       ehAAgenda(c)
         ? { corpo: { data: [reserva(28100)], pagination: { hasNext: true } } }
         : { corpo: { id: 28400 } },
-    );
+    ));
 
     const r = await criar();
 
@@ -308,9 +321,9 @@ describe("conexa_criar_reserva", () => {
   });
 
   it("agenda que não dá para ler recusa, em vez de gravar às cegas", async () => {
-    responder((c) =>
+    responder(comUmaPessoa((c) =>
       ehAAgenda(c) ? { status: 500, corpo: {} } : { corpo: { id: 28400 } },
-    );
+    ));
 
     const r = await criar();
 
@@ -329,6 +342,79 @@ describe("conexa_criar_reserva", () => {
 
     expect(String(r.erro)).toContain("não é depois do início");
     expect(chamadas).toEqual([]);
+  });
+
+  // ⚠ A pessoa que vai usar a sala. Em 21/09/2026 a primeira reserva tentada
+  // por um agente voltou 400 "Person Id cannot be blank": a documentação não
+  // marca o campo como obrigatório, e a ferramenta o deixava de fora.
+  describe("a pessoa que vai usar a sala", () => {
+    const gravacao = () => chamadas.find((c) => c.metodo === "POST");
+    const agendaLivreE = (pessoas: () => { status?: number; corpo: unknown }) =>
+      responder((c) =>
+        ehAsPessoas(c)
+          ? pessoas()
+          : ehAAgenda(c)
+            ? agendaCom()
+            : c.metodo === "POST"
+              ? { corpo: { id: 28400 } }
+              : { corpo: reserva(28400) },
+      );
+
+    it("cliente com uma pessoa só: ela vai na reserva, sem perguntar nada", async () => {
+      agendaLivreE(() => pessoasCom(PESSOA));
+      expect((await criar()).criada).toBe(true);
+      expect(gravacao()?.corpo).toMatchObject({ personId: 777 });
+      expect(chamadas.find(ehAsPessoas)?.url.searchParams.get("customerId[]")).toBe("975");
+    });
+
+    it("pessoa inativa não conta: a única ativa é a escolhida", async () => {
+      agendaLivreE(() => pessoasCom({ personId: 700, name: "Ex-sócio", isActive: false }, PESSOA));
+      await criar();
+      expect(gravacao()?.corpo).toMatchObject({ personId: 777 });
+    });
+
+    it("⚠ mais de uma: não escolhe no palpite, devolve a lista e NÃO grava", async () => {
+      agendaLivreE(() => pessoasCom(PESSOA, { personId: 778, name: "Outra Pessoa", isActive: true }));
+      const r = await criar();
+      expect(r.criada).toBe(false);
+      expect(r.pessoas).toEqual([
+        { id: 777, nome: "Pessoa Exemplo" },
+        { id: 778, nome: "Outra Pessoa" },
+      ]);
+      expect(String(r.comoSeguir)).toContain("solicitanteId");
+      expect(gravacao()).toBeUndefined();
+    });
+
+    it("lista que não veio inteira também não vira palpite, mesmo com uma só na página", async () => {
+      agendaLivreE(() => ({ corpo: { data: [PESSOA], pagination: { hasNext: true } } }));
+      const r = await criar();
+      expect(r.criada).toBe(false);
+      expect(String(r.aviso)).toContain("só as 1 primeiras");
+      expect(gravacao()).toBeUndefined();
+    });
+
+    it("nenhuma pessoa: manda a equipe cadastrar, e NÃO grava", async () => {
+      agendaLivreE(() => pessoasCom());
+      const r = await criar();
+      expect(r.criada).toBe(false);
+      expect(String(r.comoSeguir)).toContain("cadastrar");
+      expect(gravacao()).toBeUndefined();
+    });
+
+    it("não conseguir ler as pessoas recusa, em vez de gravar sem ela", async () => {
+      agendaLivreE(() => ({ status: 500, corpo: {} }));
+      const r = await criar();
+      expect(r.criada).toBe(false);
+      expect(String(r.erro)).toContain("não reservei");
+      expect(gravacao()).toBeUndefined();
+    });
+
+    it("pessoa informada pelo agente vai direto, sem consultar a lista", async () => {
+      agendaLivreE(() => pessoasCom(PESSOA));
+      await tool("conexa_criar_reserva").execute({ ...pedido, solicitanteId: 901 }, ctx());
+      expect(chamadas.some(ehAsPessoas)).toBe(false);
+      expect(gravacao()?.corpo).toMatchObject({ personId: 901 });
+    });
   });
 });
 

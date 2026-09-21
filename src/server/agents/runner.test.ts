@@ -23,6 +23,7 @@ let chamadasOpenRouter: Chamada[];
 let chamadasProxy: Chamada[];
 let atualizacoes: Record<string, unknown>[];
 let toolsExecutadas: string[];
+let toolCallsGravadas: Record<string, unknown>[];
 
 const AGENTE = {
   id: "ag-1",
@@ -47,7 +48,12 @@ vi.mock("@/lib/db", () => ({
         return {};
       },
     },
-    toolCall: { create: async () => ({}) },
+    toolCall: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        toolCallsGravadas.push(data);
+        return {};
+      },
+    },
   },
 }));
 
@@ -124,6 +130,7 @@ vi.mock("./cancelamento", async (original) => ({
 }));
 
 const { executarAgente } = await import("./runner");
+const { AVISO_TEXTO_JUNTO } = await import("./texto-junto");
 
 const final = (texto: string, custo?: number): Resposta => ({
   choices: [{ message: { role: "assistant", content: texto }, finish_reason: "stop" }],
@@ -143,6 +150,13 @@ const pedeTool = (q: string): Resposta => ({
   ],
   usage: { prompt_tokens: 50, completion_tokens: 5 },
 });
+
+/** O modelo escreve ao cliente E pede a ferramenta na mesma mensagem. */
+const falaEPedeTool = (texto: string, q: string): Resposta => {
+  const r = pedeTool(q);
+  (r.choices[0] as { message: { content: string | null } }).message.content = texto;
+  return r;
+};
 
 const falha = (status: number, mensagem = "falhou") => Object.assign(new Error(mensagem), { status });
 
@@ -168,6 +182,7 @@ beforeEach(() => {
   chamadasProxy = [];
   atualizacoes = [];
   toolsExecutadas = [];
+  toolCallsGravadas = [];
 });
 
 describe("motor OpenRouter — o sistema de antes", () => {
@@ -324,3 +339,44 @@ describe("motor Claude MAX", () => {
     });
   });
 });
+
+describe("texto escrito junto com a ferramenta", () => {
+  const retornoDaTool = (chamadas: Chamada[], i: number) =>
+    (chamadas[i].messages as Array<{ role: string; content?: unknown }>).filter((m) => m.role === "tool").at(-1)
+      ?.content as string;
+
+  it("⚠ o modelo é avisado de que aquele texto não chegou ao cliente (conversa 13146, 21/09)", async () => {
+    plano = CLAUDE_MAX;
+    respostasProxy = [
+      falaEPedeTool("E qual a pretensão de mudança?", "prazo"),
+      final("E qual a pretensão de mudança, tem uma data em mente?"),
+    ];
+    const r = await rodar();
+
+    expect(retornoDaTool(chamadasProxy, 1)).toBe(`{"achado":"prazo"}
+
+${AVISO_TEXTO_JUNTO}`);
+    // O que fica gravado é o retorno da ferramenta, sem o aviso.
+    expect(toolCallsGravadas[0]).toMatchObject({ output: { achado: "prazo" } });
+    expect(r.resposta).toBe("E qual a pretensão de mudança, tem uma data em mente?");
+  });
+
+  it("na OpenRouter também: o GLM escreve junto com ferramenta do mesmo jeito", async () => {
+    respostasOpenRouter = [falaEPedeTool("Vou conferir a agenda.", "sala 3"), final("A sala 3 está livre.", 0.001)];
+    await rodar();
+    expect(retornoDaTool(chamadasOpenRouter, 1)).toContain(AVISO_TEXTO_JUNTO);
+  });
+
+  it("sem texto junto, o retorno vai como sempre", async () => {
+    respostasOpenRouter = [pedeTool("sala 3"), final("A sala 3 está livre.", 0.001)];
+    await rodar();
+    expect(retornoDaTool(chamadasOpenRouter, 1)).toBe('{"achado":"sala 3"}');
+  });
+
+  it("fora de conversa não há cliente a quem o texto chegaria, e o aviso não vai", async () => {
+    respostasOpenRouter = [falaEPedeTool("Vou lançar a conta.", "cosern"), final("Lançada.", 0.001)];
+    await executarAgente({ agentId: AGENTE.id, source: RunSource.SCHEDULE, mensagem: "rodar" });
+    expect(retornoDaTool(chamadasOpenRouter, 1)).toBe('{"achado":"cosern"}');
+  });
+});
+

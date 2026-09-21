@@ -14,6 +14,7 @@ import {
   periodoDaAgenda,
 } from "./entrada";
 import { conferirHorario, instanteEmSaoPaulo } from "./agenda";
+import { escolherSolicitante, pessoaDaApi } from "./solicitante";
 import { acharCobrancaDaVenda, situacaoDeFaturamento } from "./faturamento";
 import {
   acrescentarAnotacao,
@@ -792,7 +793,9 @@ export const conexaIntegration: IntegrationDefinition = {
           .int()
           .positive()
           .optional()
-          .describe("Id da pessoa, de conexa_listar_pessoas."),
+          .describe(
+            "Id da pessoa que vai usar a sala. Sem ele, se o cliente tiver uma pessoa só, é ela; com mais de uma, a ferramenta devolve a lista para você escolher.",
+          ),
         observacoes: z.string().optional(),
       }),
       async execute(entrada, ctx) {
@@ -882,6 +885,48 @@ export const conexaIntegration: IntegrationDefinition = {
           };
         }
 
+        // ⚠ O Conexa EXIGE a pessoa que vai usar a sala ("Person Id cannot be
+        // blank"), apesar de a documentação não marcar o campo como obrigatório.
+        // Sem ela informada, uma pessoa ativa só é a escolha; o resto volta para
+        // o agente decidir (`solicitante.ts`).
+        let solicitanteId = args.solicitanteId;
+        if (!solicitanteId) {
+          let pessoas: Awaited<ReturnType<typeof cliente.listarPessoas>>;
+          try {
+            pessoas = await cliente.listarPessoas({ customerId: args.clienteId, limit: LIMITE });
+          } catch {
+            return {
+              criada: false,
+              erro: "Não consegui ler as pessoas vinculadas ao cliente, e o Conexa exige uma na reserva — não reservei.",
+              comoSeguir: "Tente de novo em instantes. Se persistir, encaminhe para a equipe.",
+            };
+          }
+          const escolha = escolherSolicitante(
+            pessoas.itens.map(pessoaDaApi),
+            !pessoas.temMais,
+          );
+          if (escolha.tipo === "nenhuma") {
+            return {
+              criada: false,
+              erro: "O cliente não tem nenhuma pessoa ativa vinculada no Conexa, e a reserva exige uma — não reservei.",
+              comoSeguir: "Encaminhe para a equipe cadastrar no Conexa a pessoa que vai usar a sala.",
+            };
+          }
+          if (escolha.tipo === "varias") {
+            return {
+              criada: false,
+              erro: "O cliente tem mais de uma pessoa vinculada no Conexa, e a reserva precisa dizer qual vai usar a sala — não reservei.",
+              pessoas: escolha.opcoes,
+              ...(escolha.listaCompleta
+                ? {}
+                : { aviso: `A lista mostra só as ${escolha.opcoes.length} primeiras.` }),
+              comoSeguir:
+                "Chame de novo com solicitanteId. Se o nome de uma delas for o da pessoa com quem você está falando, use essa; senão, pergunte ao cliente quem vai usar a sala.",
+            };
+          }
+          solicitanteId = escolha.id;
+        }
+
         let id: number;
         try {
           ({ id } = await cliente.criarReserva({
@@ -890,7 +935,7 @@ export const conexaIntegration: IntegrationDefinition = {
             date: args.data,
             startTime: args.inicio,
             finalTime: args.fim,
-            personId: args.solicitanteId,
+            personId: solicitanteId,
             notes: args.observacoes,
           }));
         } catch (erro) {

@@ -28,6 +28,7 @@ import {
   limparPedido,
 } from "./cancelamento";
 import { ehSemCredito, marcarSemCredito } from "./sem-credito";
+import { avisarTextoJunto } from "./texto-junto";
 import { RunSource, RunStatus } from "@/generated/prisma/enums";
 
 export type MensagemHistorico = {
@@ -350,7 +351,9 @@ export async function executarAgente(
           }),
         ),
       );
-      messages.push(...resultados);
+      // Texto escrito junto com o pedido não chega ao cliente — só o da última
+      // mensagem do turno. O aviso diz isso ao modelo na hora (`texto-junto.ts`).
+      messages.push(...avisarTextoJunto(resultados, texto, entrada.source));
 
       // Transferir encerra o turno deste agente: o que ele escrevesse depois
       // seria falado por quem já não é mais o responsável pela conversa.

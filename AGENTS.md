@@ -120,7 +120,31 @@ dois motores em `runner.test.ts`.
   uma vez só o pedido repetido (mesmo nome, mesmos argumentos) numa resposta do
   PROXY, e a mensagem do modelo leva só o que rodou. Na OpenRouter nada muda —
   tem teste nos dois sentidos. O conserto de verdade é no proxy, projeto do
-  usuário.
+  usuário. **Na instância da Seahub, no primeiro dia em produção, foram 59 de
+  60 respostas com ferramenta em dobro** — inclusive criar reserva, criar task
+  e atribuir —, e a trava segurou todas.
+- ⚠⚠ **Texto escrito JUNTO com um pedido de ferramenta não chega ao cliente, e
+  o modelo agora é avisado disso** (`agents/texto-junto.ts`, 21/09/2026). O
+  worker envia só o texto da ÚLTIMA mensagem do turno. Para o Claude, falar e
+  agir na mesma mensagem é o natural: na conversa 13146 o agente de salas
+  privativas escreveu a pergunta ao cliente junto com o registro do prazo, o
+  retorno da ferramenta disse "termine o seu turno normalmente", e ele fechou
+  com um recado para si mesmo — *"Aguardando o cliente responder. Não vou
+  enviar nova mensagem agora."* Foi esse o texto enviado, três vezes seguidas.
+  Quando a mensagem que pede ferramenta traz texto, o último retorno do lote
+  ganha um aviso dizendo que aquele texto não saiu e que só a última mensagem
+  chega ao cliente. **Vale para os dois motores** — o GLM também escreve junto
+  com ferramenta (5 de 10 turnos naquela manhã), e só não aparecia porque quase
+  sempre era antes de atribuir a uma pessoa. Só em conversa (Chatwoot e
+  playground): nas outras origens o texto não vai a cliente nenhum, e o aviso
+  mentiria. Vai no retorno, e não numa mensagem `system`, porque o proxy junta
+  toda `system` no prompt de sistema, longe do ponto da conversa. O que fica
+  gravado em `ToolCall` é o retorno da ferramenta, sem o aviso.
+- **Duas chamadas de ~112 s no primeiro dia**, uma resposta de uma linha e uma
+  transferência, sem fila e sem nada rodando junto: a demora foi dentro do
+  proxy, e o log dele não diz por quê. Fora elas, a mais lenta de 96 levou
+  23 s. Ficaram abaixo do teto de 120 s; se passar, a etapa volta para a
+  OpenRouter.
 - **Validado contra o proxy real em 21/09/2026** (instância pessoal, com
   autorização e uma chave temporária apagada no fim): as 96 ferramentas do
   catálogo chegaram ao modelo sem nenhuma simplificada; o runner real fez uma
@@ -1330,6 +1354,16 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
 - **`criar_reserva` lê a reserva de volta** e devolve a sala e o horário que o
   Conexa gravou: é isso que vai na confirmação ao cliente, nunca o que o agente
   pediu.
+- ⚠ **A reserva EXIGE a pessoa que vai usar a sala** (`personId`), apesar de a
+  documentação não marcar o campo como obrigatório: sem ela, `400 "Person Id
+  cannot be blank"`. Achado em 21/09/2026 na PRIMEIRA reserva tentada por um
+  agente em produção — o cliente tinha uma pessoa só, e o agente de salas nem
+  tinha a ferramenta de listar pessoas. Hoje, sem `solicitanteId`, a ferramenta
+  lê as pessoas do cliente (`conexa/solicitante.ts`): uma ativa só, usa ela;
+  mais de uma, ou lista que não veio inteira, devolve as opções e NÃO grava —
+  quem usa a sala define quem entra no prédio, e isso não vira palpite; nenhuma,
+  manda a equipe cadastrar. Pessoa sem a marca de ativa conta como ativa: a
+  listagem pode não trazer o campo.
 - ⚠ **`conexa_criar_reserva` confere o conflito NO CÓDIGO antes de gravar**
   (`conexa/agenda.ts`, puro e testado). O Conexa não recusa sobreposição de
   forma clara, e até 16/09/2026 o único freio era a instrução de consultar a
