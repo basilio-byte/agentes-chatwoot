@@ -969,6 +969,18 @@ conta própria.
   engano um agendamento são. Só `falhou` conta, e ao bater
   `FALHAS_ATE_DESLIGAR` o agendamento se desliga **e sai do relógio** — só
   desligar no banco continuaria disparando até o próximo boot.
+- ⚠ **Ocorrência cortada por deploy NÃO é refeita, e isso é de propósito.** O
+  painel reinicia com o turno no meio; quando o worker volta, o BullMQ entrega o
+  job de novo e a chave de idempotência o recusa como "ocorrência já
+  processada" — a primeira tentativa pode ter gravado metade (linhas na
+  planilha, tasks). Achado em 21/09/2026, quando as contas de energia das 12:30
+  sumiram assim. O que existia de errado era o SILÊNCIO: a entrega ficava sem
+  desfecho e a tela mostrava a rodada anterior como a última. Desde então o
+  vigia (`encerrarOcorrenciasInterrompidas`, com a execução órfã) fecha como
+  `interrompido` toda entrega sem desfecho há mais de 30 min, e escreve na linha
+  do agendamento só se ela for mais nova que a última registrada — num
+  agendamento curto, as rodadas seguintes já terminaram. `interrompido`, não
+  `falhou`: três deploys na hora errada não podem desligar um agendamento são.
 
 ### Conversa encerrada: o agente trabalha sobre o atendimento que acabou
 
@@ -2439,10 +2451,31 @@ interrompe um atendimento com cliente do outro lado.
   `aguardandoDesde` segue correndo e o vigia escala como escala qualquer turno
   sem resposta. Fica uma **nota interna** nomeando quem parou, senão o agente
   emudecer no meio do atendimento seria indistinguível de travamento.
-- **Execução órfã é encerrada na hora.** `RUNNING` com mais de 10 min, ou com o
+- **Execução órfã é encerrada na hora.** `RUNNING` com mais de 30 min, ou com o
   worker morto, não tem ninguém para receber o recado — ficaria "rodando" para
   sempre. Redis indeterminado **não** conta como worker morto: não se fecha o
   que pode estar vivo.
+  ⚠ **Eram 10 min até 21/09/2026**, na conta de que o vigia escala em 3. Vale
+  para o atendimento, não para o resto: o turno mais longo que terminou BEM em
+  30 dias foi de 945 s (agente de contratos, gatilho HTTP, 26/08, antes da
+  preferência por vazão). Com 10, "parar" encerraria como órfã uma execução
+  viva. A régua é `IDADE_DE_ZUMBI_MS`, uma só para o botão e para o vigia.
+- **E sozinha, pelo vigia** (`execucoes/orfas.ts`, de dez em dez minutos, desde
+  21/09/2026). Antes, a única saída era alguém clicar em "parar" — e ninguém
+  abre a tela procurando o que não aparece como erro: no dia havia QUATRO
+  rodando, uma do deploy daquela manhã e três de agosto, paradas havia semanas.
+  - **Entra como `ERROR`, não `CANCELED`.** Ninguém decidiu parar, e o trabalho
+    não foi feito; como parada, ficaria fora da contagem de erros — o mesmo
+    esconderijo de antes.
+  - **Deixa também o recado de parada**, porque idade não prova morte: um turno
+    vivo pendurado numa chamada ao modelo também passa de 30 min (o SDK da
+    OpenRouter, sem prazo nosso, espera 10 min por tentativa, três vezes). Ele
+    para na verificação seguinte e se grava como parado por "encerramento
+    automático", por cima do nosso erro. ⚠ O recado tem prazo de 1,5 s: a
+    conexão do Redis espera para sempre quando ele cai, e penduraria o vigia
+    inteiro.
+  - ⚠ **O `status: RUNNING` vai no `where` do UPDATE**: turno que terminou
+    entre a leitura e a escrita fica com o desfecho dele.
 
 ### Apuração de consumo (`/consumo`)
 

@@ -7,6 +7,7 @@ import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
 import { executarPrazosVencidos } from "@/server/prazos/executar";
 import { executarPesquisasVencidas } from "@/server/nps/executar";
 import { conferirSaldoEAvisar } from "@/server/alerta-de-saldo/alerta";
+import { encerrarOrfas } from "@/server/execucoes/orfas";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -21,8 +22,9 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  * Roda de minuto em minuto no worker e entrega a uma pessoa toda conversa em
  * que o cliente esperou além do tempo configurado. No mesmo relógio, executa os
  * prazos que os agentes registraram (`prazos/executar.ts`), as etapas vencidas
- * da pesquisa de satisfação (`nps/executar.ts`) e confere o saldo da OpenRouter
- * para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`).
+ * da pesquisa de satisfação (`nps/executar.ts`), encerra as execuções que um
+ * reinício deixou marcadas como rodando (`execucoes/orfas.ts`) e confere o saldo
+ * da OpenRouter para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -179,6 +181,15 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.vistas > 0) logger.info(rodada, "pesquisas de satisfação conferidas");
     } catch (erro) {
       logger.error({ erro }, "pesquisas de satisfação falharam");
+    }
+
+    try {
+      const rodada = await encerrarOrfas();
+      if (rodada.execucoes || rodada.agendamentos) {
+        logger.warn(rodada, "execuções órfãs encerradas");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "encerramento de execuções órfãs falhou");
     }
 
     // Por último: é a única tarefa que fala com a OpenRouter e pode demorar, e

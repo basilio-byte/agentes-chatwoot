@@ -277,6 +277,72 @@ async function encerrar(
   }
 }
 
+/**
+ * Fecha as ocorrências que começaram e nunca terminaram.
+ *
+ * O caso é o deploy: o painel reinicia com um turno do agendamento no meio, e a
+ * entrega fica sem desfecho para sempre. Nada a refaz: quando o worker volta, o
+ * BullMQ entrega o job de novo, e a chave de idempotência logo acima o recusa
+ * como "ocorrência já processada" — de propósito, porque a primeira tentativa
+ * pode ter gravado metade (linhas na planilha, tasks no ClickUp). Sem isto, a
+ * tela do agendamento continuava mostrando a rodada ANTERIOR como a última, e a
+ * que se perdeu não aparecia em lugar nenhum.
+ *
+ * Entra como `interrompido`, e não como `falhou`: `falhou` conta para
+ * FALHAS_ATE_DESLIGAR, e três deploys na hora errada desligariam sozinho um
+ * agendamento são — a mesma lógica do atraso e da falta de saldo.
+ *
+ * ⚠ A linha do agendamento só muda se esta ocorrência for mais nova que a
+ * última registrada. Num agendamento de dez em dez minutos, as rodadas
+ * seguintes já terminaram quando esta é fechada, e escrever por cima delas
+ * mostraria como "última" uma rodada velha.
+ */
+export async function encerrarOcorrenciasInterrompidas(
+  corte: Date,
+  agora = new Date(),
+): Promise<number> {
+  const pendentes = await db.webhookEvent.findMany({
+    where: { provider: PROVIDER, processedAt: null, createdAt: { lt: corte } },
+    select: { id: true, payload: true, createdAt: true },
+    take: 100,
+  });
+
+  const detalhe =
+    "a execução começou e nunca terminou — o mais provável é o painel ter " +
+    "reiniciado no meio (deploy). Ela não é refeita sozinha: o que as " +
+    "ferramentas já tinham feito continua feito, e o resto fica para a próxima " +
+    "ocorrência, ou para alguém rodar à mão.";
+
+  let fechadas = 0;
+  for (const entrega of pendentes) {
+    const { count } = await db.webhookEvent.updateMany({
+      // `processedAt: null` no where: se a própria ocorrência terminou entre a
+      // leitura e esta escrita, o desfecho dela vale, não o nosso.
+      where: { id: entrega.id, processedAt: null },
+      data: { processedAt: agora, resultado: "interrompido", detalhe },
+    });
+    if (count === 0) continue;
+    fechadas++;
+
+    const scheduleId = (entrega.payload as { scheduleId?: unknown } | null)?.scheduleId;
+    if (typeof scheduleId !== "string") continue;
+
+    await db.agentSchedule.updateMany({
+      where: {
+        id: scheduleId,
+        OR: [{ ultimaExecucaoEm: null }, { ultimaExecucaoEm: { lt: entrega.createdAt } }],
+      },
+      data: {
+        ultimaExecucaoEm: entrega.createdAt,
+        ultimoResultado: "interrompido",
+        ultimoDetalhe: detalhe,
+      },
+    });
+  }
+
+  return fechadas;
+}
+
 function ehConflitoDeUnique(erro: unknown) {
   return (
     typeof erro === "object" &&

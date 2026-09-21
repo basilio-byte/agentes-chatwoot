@@ -34,6 +34,20 @@ let agendadoresRemovidos: string[];
 let comportamentoDoAgente: "ok" | "falha" | "interrompida" | "sem-credito";
 let execucoes: number;
 
+/** Entregas de agendamento ainda sem desfecho — as que um reinício deixou para trás. */
+type Pendente = {
+  id: string;
+  provider: string;
+  payload: { scheduleId?: string };
+  createdAt: Date;
+  processedAt: Date | null;
+  resultado?: string;
+  detalhe?: string;
+};
+let pendentes: Pendente[];
+/** O estado da linha do agendamento que `encerrarOcorrenciasInterrompidas` lê no where. */
+let linhaDoAgendamento: { ultimaExecucaoEm: Date | null; ultimoResultado?: string };
+
 vi.mock("@/lib/db", () => ({
   db: {
     agentSchedule: {
@@ -50,6 +64,19 @@ vi.mock("@/lib/db", () => ({
         }
         return { falhasConsecutivas: schedule?.falhasConsecutivas ?? 0 };
       },
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { OR: [unknown, { ultimaExecucaoEm: { lt: Date } }] };
+        data: { ultimaExecucaoEm: Date; ultimoResultado: string };
+      }) => {
+        const limite = where.OR[1].ultimaExecucaoEm.lt;
+        const ultima = linhaDoAgendamento.ultimaExecucaoEm;
+        if (ultima !== null && ultima >= limite) return { count: 0 };
+        Object.assign(linhaDoAgendamento, data);
+        return { count: 1 };
+      },
     },
     webhookEvent: {
       create: async ({ data }: { data: { externalId: string } }) => {
@@ -64,6 +91,29 @@ vi.mock("@/lib/db", () => ({
         const ultima = entregas.at(-1);
         if (ultima) Object.assign(ultima, data);
         return data;
+      },
+      findMany: async ({
+        where,
+      }: {
+        where: { provider: string; createdAt: { lt: Date } };
+      }) =>
+        pendentes.filter(
+          (p) =>
+            p.provider === where.provider &&
+            p.processedAt === null &&
+            p.createdAt < where.createdAt.lt,
+        ),
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: Partial<Pendente>;
+      }) => {
+        const p = pendentes.find((x) => x.id === where.id && x.processedAt === null);
+        if (!p) return { count: 0 };
+        Object.assign(p, data);
+        return { count: 1 };
       },
     },
     toolCall: { count: async () => 0 },
@@ -97,7 +147,7 @@ vi.mock("@/server/agents/runner", () => ({
   },
 }));
 
-const { processarAgendamento, FALHAS_ATE_DESLIGAR } = await import(
+const { processarAgendamento, encerrarOcorrenciasInterrompidas, FALHAS_ATE_DESLIGAR } = await import(
   "./agendamento-worker"
 );
 
@@ -126,6 +176,8 @@ beforeEach(() => {
   agendadoresRemovidos = [];
   comportamentoDoAgente = "ok";
   execucoes = 0;
+  pendentes = [];
+  linhaDoAgendamento = { ultimaExecucaoEm: null };
 });
 
 const ultimaEntrega = () => entregas.at(-1);
@@ -277,3 +329,60 @@ describe("parada pelo painel", () => {
     expect(schedule!.enabled).toBe(true);
   });
 });
+
+describe("ocorrência que um reinício deixou pela metade", () => {
+  // 12:30 em São Paulo: a rodada que o deploy de 21/09/2026 cortou.
+  const INICIO = new Date("2026-09-21T15:30:00Z");
+  const CORTE = new Date("2026-09-21T16:10:00Z");
+  const pendente = (extra: Partial<Pendente> = {}): Pendente => ({
+    id: "ev-1230",
+    provider: "SCHEDULE",
+    payload: { scheduleId: "s1" },
+    createdAt: INICIO,
+    processedAt: null,
+    ...extra,
+  });
+
+  it("vira interrompido na entrega e na linha do agendamento", async () => {
+    pendentes = [pendente()];
+    linhaDoAgendamento = { ultimaExecucaoEm: new Date("2026-09-20T15:31:00Z"), ultimoResultado: "executado" };
+
+    expect(await encerrarOcorrenciasInterrompidas(CORTE)).toBe(1);
+
+    expect(pendentes[0].resultado).toBe("interrompido");
+    expect(pendentes[0].detalhe).toContain("não é refeita sozinha");
+    expect(linhaDoAgendamento.ultimoResultado).toBe("interrompido");
+    expect(linhaDoAgendamento.ultimaExecucaoEm).toEqual(INICIO);
+  });
+
+  it("⚠ não conta como falha: três deploys na hora errada não desligam um agendamento são", async () => {
+    pendentes = [pendente()];
+    await encerrarOcorrenciasInterrompidas(CORTE);
+    expect(updates).toEqual([]);
+    expect(schedule!.falhasConsecutivas).toBe(0);
+    expect(agendadoresRemovidos).toEqual([]);
+  });
+
+  it("⚠ não escreve por cima de uma rodada mais nova na linha do agendamento", async () => {
+    pendentes = [pendente()];
+    const maisNova = new Date("2026-09-21T15:41:00Z");
+    linhaDoAgendamento = { ultimaExecucaoEm: maisNova, ultimoResultado: "executado" };
+
+    await encerrarOcorrenciasInterrompidas(CORTE);
+
+    expect(pendentes[0].resultado).toBe("interrompido");
+    expect(linhaDoAgendamento).toEqual({ ultimaExecucaoEm: maisNova, ultimoResultado: "executado" });
+  });
+
+  it("deixa em paz o que ainda está dentro do prazo, e o que já tem desfecho", async () => {
+    pendentes = [
+      pendente({ id: "recente", createdAt: new Date("2026-09-21T16:15:00Z") }),
+      pendente({ id: "fechada", processedAt: INICIO, resultado: "executado" }),
+      pendente({ id: "de-gatilho", provider: "GATILHO" }),
+    ];
+
+    expect(await encerrarOcorrenciasInterrompidas(CORTE)).toBe(0);
+    expect(pendentes.map((p) => p.resultado)).toEqual([undefined, "executado", undefined]);
+  });
+});
+
