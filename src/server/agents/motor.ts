@@ -112,6 +112,50 @@ export function motivoDaVolta(erro: unknown): string {
   return status !== null ? `o proxy respondeu ${status}: ${detalhe}` : `o proxy falhou: ${detalhe}`;
 }
 
+/** JSON com as chaves em ordem: `{"a":1,"b":2}` e `{"b":2,"a":1}` são o mesmo pedido. */
+function jsonEstavel(valor: unknown): string {
+  if (Array.isArray(valor)) return `[${valor.map(jsonEstavel).join(",")}]`;
+  if (valor && typeof valor === "object") {
+    const chaves = Object.keys(valor as Record<string, unknown>).sort();
+    return `{${chaves.map((k) => `${JSON.stringify(k)}:${jsonEstavel((valor as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(valor);
+}
+
+/**
+ * Pedidos de ferramenta repetidos na MESMA resposta do proxy — mesmo nome, mesmos
+ * argumentos — viram um só.
+ *
+ * ⚠ Medido no proxy real em 21/09/2026: o Claude pediu `documento_conferir_cpf`
+ * UMA vez (o rastro do proxy diz "usada: 1") e o proxy devolveu DOIS pedidos.
+ * Ele registra cada pedido por dois caminhos e descarta a repetição comparando
+ * nome e argumentos, mas um caminho grava o nome com o prefixo `mcp__fn__` e o
+ * outro sem — a comparação nunca casa. Numa ferramenta que ESCREVE (reserva,
+ * tarefa, nota), seriam duas. O conserto de verdade é no proxy (projeto à parte
+ * do usuário); isto protege os agentes enquanto ele não sai, e continua valendo
+ * depois: dois pedidos idênticos na mesma resposta nunca são o que se quer.
+ */
+export function semPedidosRepetidos<T>(pedidos: T[]): T[] {
+  const vistos = new Set<string>();
+  return pedidos.filter((item) => {
+    // Pedido sem `function` (ferramenta "custom" da OpenAI, que não geramos)
+    // passa como está: não há o que comparar.
+    const pedido = item as { function?: { name?: string; arguments?: string } };
+    if (!pedido.function) return true;
+    const bruto = pedido.function.arguments ?? "";
+    let argumentos: string;
+    try {
+      argumentos = jsonEstavel(bruto ? JSON.parse(bruto) : {});
+    } catch {
+      argumentos = bruto;
+    }
+    const chave = `${pedido.function.name ?? ""}:${argumentos}`;
+    if (vistos.has(chave)) return false;
+    vistos.add(chave);
+    return true;
+  });
+}
+
 export type ChamadaDoModelo<R> = {
   motor: Motor;
   /** Como fica gravado em `AgentRun.model`. */

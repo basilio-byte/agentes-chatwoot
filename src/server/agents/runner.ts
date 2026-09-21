@@ -8,8 +8,13 @@ import {
   PREFERENCIA_DE_PROVEDOR,
 } from "./openrouter";
 import { estimarCusto, limitarSaida, type UsoTokens } from "./catalogo";
-import { getClaudeMax, obterModeloClaudeMax, planejarMotor } from "./claude-max";
-import { chamarComVolta, PREFIXO_CLAUDE_MAX, type Motor } from "./motor";
+import { getClaudeMax, planejarMotor } from "./claude-max";
+import {
+  chamarComVolta,
+  PREFIXO_CLAUDE_MAX,
+  semPedidosRepetidos,
+  type Motor,
+} from "./motor";
 import type { ToolResolvida } from "@/server/integrations/resolve";
 import type {
   SinaisDoTurno,
@@ -128,9 +133,6 @@ export async function executarAgente(
   // desligada e o agente em PADRAO, é a OpenRouter de sempre, e nada abaixo
   // muda para ela: mesmos parâmetros, mesmo cliente, mesma conta de custo.
   const plano = await planejarMotor(agente);
-  const modeloClaude = plano.modeloClaude
-    ? await obterModeloClaudeMax(plano.modeloClaude)
-    : null;
   const modeloPlanejado =
     plano.motor === "CLAUDE_MAX" ? `${PREFIXO_CLAUDE_MAX}${plano.modeloClaude}` : agente.model;
 
@@ -231,11 +233,16 @@ export async function executarAgente(
       // `usage`, `reasoning`) ele ignora, e o esforço de raciocínio é
       // configuração DELE, não do agente. `user` ajuda o proxy a reaproveitar a
       // sessão do Claude entre as etapas do mesmo turno.
+      // ⚠ SEM `max_tokens`, de propósito. No proxy ele vira
+      // CLAUDE_CODE_MAX_OUTPUT_TOKENS, que FAZ A CHAMADA FALHAR quando a
+      // resposta passa do teto — o raciocínio conta junto —, em vez de cortar
+      // como a OpenRouter corta. Medido no proxy real em 21/09/2026: 502 com
+      // "response exceeded the 50 output token maximum". O teto do agente
+      // continua valendo na OpenRouter, inclusive na volta.
       const parametrosDoProxy: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming | null =
         motorAtual === "CLAUDE_MAX" && plano.modeloClaude
           ? {
               model: plano.modeloClaude,
-              max_tokens: limitarSaida(agente.maxTokens, modeloClaude),
               messages,
               ...(enviarFerramentas ? { tools: ferramentas } : {}),
               ...(entrada.conversationId ? { user: `conversa:${entrada.conversationId}` } : {}),
@@ -298,7 +305,12 @@ export async function executarAgente(
       const texto = escolha.message.content?.trim();
       if (texto) resposta = texto;
 
-      const pedidos = escolha.message.tool_calls ?? [];
+      // Do proxy, pedido repetido na mesma resposta vira um só — ele duplica o
+      // pedido do Claude (ver `semPedidosRepetidos`). Da OpenRouter, como sempre.
+      const pedidos =
+        chamada.motor === "CLAUDE_MAX"
+          ? semPedidosRepetidos(escolha.message.tool_calls ?? [])
+          : (escolha.message.tool_calls ?? []);
       if (pedidos.length === 0) {
         if (escolha.finish_reason === "length") {
           logger.warn(
@@ -309,7 +321,13 @@ export async function executarAgente(
         break;
       }
 
-      messages.push(escolha.message);
+      // A mensagem do modelo leva só os pedidos que vão rodar: no protocolo,
+      // cada pedido precisa da SUA resposta, e o descartado não terá nenhuma.
+      messages.push(
+        chamada.motor === "CLAUDE_MAX"
+          ? { ...escolha.message, tool_calls: pedidos }
+          : escolha.message,
+      );
 
       // No protocolo de chat completions cada tool_call devolve a SUA mensagem
       // `role: "tool"` — diferente do formato da Anthropic, que agrupava tudo

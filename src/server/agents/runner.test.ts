@@ -103,7 +103,6 @@ vi.mock("./openrouter", () => ({
 
 vi.mock("./claude-max", () => ({
   planejarMotor: async () => plano,
-  obterModeloClaudeMax: async (id: string) => ({ id, nome: id, contexto: null, maxSaida: 64000 }),
   getClaudeMax: () => ({
     chat: {
       completions: {
@@ -209,7 +208,8 @@ describe("motor Claude MAX", () => {
     expect(chamadasOpenRouter).toEqual([]);
     const { messages, tools, ...resto } = chamadasProxy[0];
     // Nada de provider, usage nem reasoning: o proxy ignora, e o esforço é dele.
-    expect(resto).toEqual({ model: "claude-sonnet-5", max_tokens: 16384, user: "conversa:conv-1" });
+    // ⚠ Nem max_tokens: no proxy o teto FAZ A CHAMADA FALHAR em vez de cortar.
+    expect(resto).toEqual({ model: "claude-sonnet-5", user: "conversa:conv-1" });
     expect(tools).toHaveLength(1);
     // Prompt, data/hora e a mensagem: as mesmas que iriam à OpenRouter.
     expect((messages as Array<{ role: string }>).map((m) => m.role)).toEqual(["system", "system", "user"]);
@@ -235,6 +235,29 @@ describe("motor Claude MAX", () => {
     const segunda = chamadasProxy[1].messages as Array<{ role: string; content?: unknown }>;
     expect(segunda.at(-1)).toMatchObject({ role: "tool", tool_call_id: "call-sala 3" });
     expect(r.resposta).toBe("a sala 3 está livre");
+  });
+
+  it("⚠ pedido repetido pelo proxy roda UMA vez, e a conversa leva um pedido só", async () => {
+    plano = CLAUDE_MAX;
+    const duplicado = pedeTool("529");
+    const [primeiro] = (duplicado.choices[0] as { message: { tool_calls: Chamada[] } }).message.tool_calls;
+    (duplicado.choices[0] as { message: { tool_calls: Chamada[] } }).message.tool_calls.push({ ...primeiro, id: "call-dup" });
+    respostasProxy = [duplicado, final("CPF válido")];
+    await rodar();
+
+    expect(toolsExecutadas).toEqual(["529"]);
+    const segunda = chamadasProxy[1].messages as Array<{ role: string; tool_calls?: unknown[] }>;
+    expect(segunda.filter((m) => m.role === "tool")).toHaveLength(1);
+    expect(segunda.find((m) => m.tool_calls)?.tool_calls).toHaveLength(1);
+  });
+
+  it("na OpenRouter, nada muda: pedidos repetidos rodam como antes", async () => {
+    const duplicado = pedeTool("529");
+    const [primeiro] = (duplicado.choices[0] as { message: { tool_calls: Chamada[] } }).message.tool_calls;
+    (duplicado.choices[0] as { message: { tool_calls: Chamada[] } }).message.tool_calls.push({ ...primeiro, id: "call-dup" });
+    respostasOpenRouter = [duplicado, final("ok", 0.001)];
+    await rodar();
+    expect(toolsExecutadas).toEqual(["529", "529"]);
   });
 
   it("⚠ proxy falhou: a MESMA etapa vai para a OpenRouter, e o resto do turno fica nela", async () => {

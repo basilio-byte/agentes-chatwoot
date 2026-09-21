@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { motivoDaVolta, resolverMotor, type MotorDoAgente } from "./motor";
+import { motivoDaVolta, resolverMotor, semPedidosRepetidos, type MotorDoAgente } from "./motor";
 
 const resolver = (
   motorDoAgente: MotorDoAgente,
@@ -67,5 +67,39 @@ describe("motivoDaVolta", () => {
       "o proxy respondeu 400: schema ruim",
     );
     expect(motivoDaVolta(new Error("a".repeat(500))).length).toBeLessThan(230);
+  });
+});
+
+describe("semPedidosRepetidos", () => {
+  const pedido = (id: string, name: string, args: unknown) => ({
+    id,
+    type: "function" as const,
+    function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) },
+  });
+
+  it("⚠ o mesmo pedido duas vezes (o que o proxy devolveu) vira um", () => {
+    const pedidos = [
+      pedido("a", "documento_conferir_cpf", { cpf: "529.982.247-25" }),
+      pedido("b", "documento_conferir_cpf", { cpf: "529.982.247-25" }),
+    ];
+    expect(semPedidosRepetidos(pedidos).map((p) => p.id)).toEqual(["a"]);
+  });
+
+  it("a ordem das chaves não disfarça a repetição", () => {
+    const pedidos = [pedido("a", "t", { x: 1, y: 2 }), pedido("b", "t", '{"y":2,"x":1}')];
+    expect(semPedidosRepetidos(pedidos)).toHaveLength(1);
+  });
+
+  it("pedidos diferentes, ou a mesma ferramenta com outros argumentos, ficam", () => {
+    const pedidos = [
+      pedido("a", "documento_conferir_cpf", { cpf: "1" }),
+      pedido("b", "documento_conferir_cpf", { cpf: "2" }),
+      pedido("c", "documento_conferir_cnpj", { cnpj: "1" }),
+    ];
+    expect(semPedidosRepetidos(pedidos)).toHaveLength(3);
+  });
+
+  it("argumento que não é JSON compara pelo texto", () => {
+    expect(semPedidosRepetidos([pedido("a", "t", "{quebrado"), pedido("b", "t", "{quebrado")])).toHaveLength(1);
   });
 });

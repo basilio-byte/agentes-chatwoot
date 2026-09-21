@@ -144,11 +144,6 @@ export async function listarModelosClaudeMax(): Promise<{
   }
 }
 
-export async function obterModeloClaudeMax(id: string): Promise<ModeloClaudeMax | null> {
-  const { modelos } = await listarModelosClaudeMax();
-  return modelos.find((m) => m.id === id) ?? null;
-}
-
 /** A chave geral. Sem linha gravada, desligada — o sistema de antes. */
 export async function lerMotorGlobal(): Promise<{ claudeMaxLigado: boolean; modeloPadrao: string }> {
   const linha = await db.motorDosAgentes.findUnique({ where: { id: "unico" } });

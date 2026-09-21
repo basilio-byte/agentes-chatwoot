@@ -105,6 +105,43 @@ dois motores em `runner.test.ts`.
   proxy vai o protocolo puro (`provider`, `usage` e `reasoning` ele ignoraria) e
   `user: conversa:<id>`, que ajuda o proxy a reaproveitar a sessão do Claude
   entre as etapas do turno.
+- ⚠ **Ao proxy NÃO vai `max_tokens`.** Lá ele vira `CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
+  que FAZ A CHAMADA FALHAR quando a resposta passa do teto — o raciocínio conta
+  junto —, em vez de cortar como a OpenRouter corta. Medido no proxy real em
+  21/09/2026 (502, *"response exceeded the 50 output token maximum"*). Um 5xx do
+  proxy atrás do Easypanel chega como página HTML do Easypanel, não como o JSON
+  dele: o SDK ainda lê o status, e a volta acontece igual.
+- ⚠⚠ **O proxy DUPLICA o pedido de ferramenta** (medido em 21/09/2026: o Claude
+  pediu uma vez, o rastro do proxy diz "usada: 1", e voltaram dois `tool_calls`
+  idênticos). A causa está no `engine/tools.ts` DELE: cada pedido é registrado
+  por dois caminhos, e a comparação que descartaria a repetição usa o nome com
+  o prefixo `mcp__fn__` num caminho e sem no outro. Numa ferramenta que escreve,
+  seriam duas reservas, duas tasks, duas notas. `semPedidosRepetidos` executa
+  uma vez só o pedido repetido (mesmo nome, mesmos argumentos) numa resposta do
+  PROXY, e a mensagem do modelo leva só o que rodou. Na OpenRouter nada muda —
+  tem teste nos dois sentidos. O conserto de verdade é no proxy, projeto do
+  usuário.
+- **Validado contra o proxy real em 21/09/2026** (instância pessoal, com
+  autorização e uma chave temporária apagada no fim): as 96 ferramentas do
+  catálogo chegaram ao modelo sem nenhuma simplificada; o runner real fez uma
+  conferência de CPF de ponta a ponta em 7,5 s com Sonnet (duas idas, a segunda
+  retomando a sessão do Claude); seis pedidos ao mesmo tempo com concorrência 2
+  terminaram em 7,8 s, em levas de ~2,5 s — abrir e fechar o motor custa ~2 s.
+- **Concorrência: cada resposta simultânea é um processo do Claude Code de
+  ~300 MB** (README do proxy), que abre e fecha a cada ida ao modelo — não há
+  processo vivo por conversa; a sessão fica em disco e a ida seguinte a retoma.
+  Do nosso lado, as filas que chamam modelo somam até 16 turnos simultâneos
+  (atendimento 4, gatilho 4, e 2 em agendamento, conversa encerrada, checkbox e
+  varredura), cada turno com UMA ida ao modelo por vez. O que passa da
+  concorrência do proxy espera na fila dele; o que espera além de
+  `QUEUE_TIMEOUT_MS` volta com 503, e a nossa chamada vai para a OpenRouter.
+  ⚠ **Mais concorrência não é mais rápido além do que o servidor aguenta.**
+  Medido na instância pessoal com o limite em 16 (pedidos curtos de Haiku): 1
+  ao mesmo tempo → 2,1 s; 4 → 3–4 s cada; 8 → 6–7 s cada; 16 → 13–17 s cada,
+  todos certos. A vazão ficou perto de 1 pedido/s em qualquer nível — o custo
+  de abrir o motor divide o processador, e a demora se espalha por todos. Em
+  turno de verdade o efeito é menor (o tempo é quase todo espera pela
+  Anthropic), mas o número certo sai do processador da VPS, medido lá.
 - ⚠ **O esforço de raciocínio do agente não vale no proxy**: `EFFORT` e
   `THINKING` são configuração DELE, globais. A tela diz isso.
 - **Custo zero no proxy.** Ele devolve `estimated_cost_usd`, que é estimativa, e
