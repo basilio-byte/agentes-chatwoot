@@ -32,6 +32,8 @@ export type ResumoDaExecucao = {
   status: string;
   source: string;
   model: string | null;
+  /** O proxy Claude MAX falhou e o turno seguiu na OpenRouter — e por quê. */
+  voltaDoProxy?: string | null;
   createdAt: Date;
   latencyMs: number | null;
   costUsd: number;
@@ -205,6 +207,13 @@ function Detalhe({
           </div>
         ))}
       </dl>
+
+      {resumo.voltaDoProxy ? (
+        <Aviso tone="warning">
+          O proxy Claude MAX falhou — {resumo.voltaDoProxy} — e o turno seguiu
+          na OpenRouter, com o modelo acima — a resposta saiu normalmente.
+        </Aviso>
+      ) : null}
 
       {detalhe.conversa ? (
         <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -465,11 +474,22 @@ export function Execucao({
               {resumo.model}
             </Meta>
           ) : null}
+          {resumo.voltaDoProxy ? (
+            <Badge tone="warning" title={`O proxy Claude MAX falhou: ${resumo.voltaDoProxy}`}>
+              voltou para a OpenRouter
+            </Badge>
+          ) : null}
           <span title="Quando rodou">{formatarData(resumo.createdAt)}</span>
           <span title="Quanto o turno levou">
             {formatarDuracao(resumo.latencyMs)}
           </span>
-          <span title="Custo real cobrado pela OpenRouter">
+          <span
+            title={
+              resumo.model?.startsWith("claude-max/")
+                ? "Claude MAX: a assinatura não cobra por token"
+                : "Custo real cobrado pela OpenRouter"
+            }
+          >
             {formatarUsd(resumo.costUsd)}
           </span>
           <span title="Tokens de entrada mais os de saída">

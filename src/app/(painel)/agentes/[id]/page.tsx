@@ -50,7 +50,14 @@ import {
 } from "@/server/actions/agents";
 import { AgenteForm } from "@/components/agente-form";
 import { Playground } from "@/components/playground";
-import { Aviso, Badge, Button, Card, EmptyState } from "@/components/ui";
+import { Aviso, Badge, Button, Card, EmptyState, TituloDeBloco } from "@/components/ui";
+import { MotorDoAgenteForm } from "@/components/motor";
+import {
+  claudeMaxConfigurado,
+  lerMotorGlobal,
+  listarModelosClaudeMax,
+} from "@/server/agents/claude-max";
+import { resolverMotor } from "@/server/agents/motor";
 import { formatarData } from "@/lib/utils";
 import { openrouterConfigurada } from "@/server/agents/openrouter";
 import { listarModelos } from "@/server/agents/catalogo";
@@ -84,6 +91,23 @@ export default async function AgentePage({
   if (!agente) notFound();
 
   const modelos = await listarModelos();
+
+  // Motor: o cartão só aparece com o proxy configurado, ou com o agente já
+  // fixado num motor — sem proxy, a tela fica exatamente como era.
+  const configurado = claudeMaxConfigurado();
+  const mostraMotor = configurado || agente.motor !== "PADRAO";
+  const motorGlobal = mostraMotor ? await lerMotorGlobal() : null;
+  const catalogoClaude =
+    mostraMotor ? await listarModelosClaudeMax() : { modelos: [], doProxy: false };
+  const motorAgora = motorGlobal
+    ? resolverMotor({
+        motorDoAgente: agente.motor,
+        modeloDoAgente: agente.modeloClaudeMax,
+        chaveGeralLigada: motorGlobal.claudeMaxLigado,
+        modeloPadrao: motorGlobal.modeloPadrao,
+        proxyConfigurado: configurado,
+      })
+    : null;
 
   // O bloco de conduta exibido no formulário tem de ser o que este agente
   // recebe de verdade: a linha de encaminhamento depende da transferência
@@ -286,7 +310,29 @@ export default async function AgentePage({
             rotulo: "Agente",
             icone: <Bot size={15} aria-hidden />,
             conteudo: (
-              <div className="max-w-3xl">
+              <div className="max-w-3xl space-y-4">
+                {motorGlobal && motorAgora ? (
+                  <Card className="space-y-3">
+                    <TituloDeBloco
+                      descricao={
+                        motorAgora.motor === "CLAUDE_MAX"
+                          ? `Agora: Claude MAX, com o ${motorAgora.modeloClaude} — ${motorAgora.porque}.`
+                          : `Agora: OpenRouter, com o ${agente.model} — ${motorAgora.porque}.`
+                      }
+                    >
+                      Motor
+                    </TituloDeBloco>
+                    <MotorDoAgenteForm
+                      agentId={agente.id}
+                      motor={agente.motor}
+                      modeloClaudeMax={agente.modeloClaudeMax}
+                      modeloPadrao={motorGlobal.modeloPadrao}
+                      modelos={catalogoClaude.modelos.map((m) => ({ id: m.id, nome: m.nome }))}
+                      configurado={configurado}
+                      somenteLeitura={!editavel}
+                    />
+                  </Card>
+                ) : null}
                 <AgenteForm
                   acao={atualizarAgente.bind(null, agente.id)}
                   modelos={modelos}

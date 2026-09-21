@@ -63,6 +63,82 @@ modelos `anthropic/*` como padrão.
   `/audio/transcriptions` não existe na OpenRouter. Mesmo SDK, outra `baseURL`,
   outra chave, outra fatura. A conversa continua 100% na OpenRouter — não use um
   cliente pelo outro.
+  ⚠ **Salvo pelo motor alternativo, logo abaixo**, que é opt-in e nasce desligado.
+
+### Motor alternativo: o proxy Claude MAX
+
+Pedido do usuário em 21/09/2026: usar o `claude-max-api-proxy` (projeto à parte
+dele — o Claude Code da assinatura Max atrás de um endpoint compatível com a
+OpenAI) como opção à OpenRouter. Duas condições dele, e o desenho sai delas:
+*"não quebrar nosso sistema atual"* e *"fácil de dar switch openrouter <>
+proxy"*. Regras puras em `agents/motor.ts`, cliente e catálogo em
+`agents/claude-max.ts`, gestão em `gestao/motor.ts`, e o runner testado nos
+dois motores em `runner.test.ts`.
+
+- **Chave geral na lista de agentes + escolha por agente** (`Agent.motor`:
+  segue a chave · sempre OpenRouter · sempre Claude MAX). A chave
+  (`MotorDosAgentes`, linha única) **nasce desligada**, e desligada é o sistema
+  de antes: nenhum turno de agente em `PADRAO` passa pelo código novo além de
+  ler que a chave está desligada. Fixar um agente é como se testa num só.
+- ⚠ **Sem `CLAUDE_MAX_BASE_URL` e `CLAUDE_MAX_API_KEY`, nada muda** — nem com a
+  chave ligada no banco, nem com agente fixado no Claude MAX: a OpenRouter é o
+  chão. E o turno de sempre não ganha nem uma consulta a mais (tem teste).
+- ⚠ **`Agent.model` continua sendo o da OpenRouter**, e o modelo do proxy mora
+  à parte (`Agent.modeloClaudeMax`, nulo = o padrão da chave geral). É para o
+  da OpenRouter que a chamada volta — trocar de motor nunca apaga a
+  configuração do outro, e voltar é um clique.
+- **O proxy falhou, a MESMA etapa vai para a OpenRouter** (`chamarComVolta`), e
+  o resto do turno fica nela — insistir no proxy somaria a espera da falha em
+  toda etapa. O que já rodou no proxy vale (a ferramenta não roda de novo). A
+  execução grava `voltaDoProxy` com o motivo em português, e Execuções mostra o
+  selo "voltou para a OpenRouter". Proxy e OpenRouter falhando juntos: a
+  execução guarda as duas causas.
+  ⚠ **Parada no painel NÃO volta**: refazer na OpenRouter entregaria ao cliente
+  a resposta que alguém mandou parar. Qualquer outra falha volta, inclusive
+  400 — a condição é não quebrar, e a OpenRouter é o que funciona.
+- ⚠ **O cliente do proxy tem `maxRetries: 0` e teto de 120 s**, ao contrário do
+  da OpenRouter. O SDK repetiria 429 e 5xx sozinho, com espera, e a volta já
+  é a nova tentativa; acima de 2 minutos, o vigia (3 min) está quase entregando
+  a conversa a uma pessoa.
+- **Com o motor na OpenRouter, a chamada sai IGUAL**: mesmos campos, mesmo
+  cliente, mesma conta de custo — `runner.test.ts` trava os campos um a um. No
+  proxy vai o protocolo puro (`provider`, `usage` e `reasoning` ele ignoraria) e
+  `user: conversa:<id>`, que ajuda o proxy a reaproveitar a sessão do Claude
+  entre as etapas do turno.
+- ⚠ **O esforço de raciocínio do agente não vale no proxy**: `EFFORT` e
+  `THINKING` são configuração DELE, globais. A tela diz isso.
+- **Custo zero no proxy.** Ele devolve `estimated_cost_usd`, que é estimativa, e
+  a tela de Consumo promete bater com a fatura da OpenRouter. `AgentRun.model`
+  sai com o prefixo `claude-max/` e `AgentRun.motor` diz quem respondeu; numa
+  volta no meio do turno, o modelo é o da OpenRouter, que é onde o custo foi
+  cobrado — e a estimativa de reserva só conta os tokens que passaram por ela.
+- ⚠ **O proxy junta TODAS as mensagens `system` num prompt só**, em qualquer
+  posição. A data/hora e o bastão, que mandamos no fim para não quebrar o cache,
+  entram no prompt de sistema dele e o fazem mudar a cada mensagem: funciona,
+  mas perde cache e reuso de sessão entre mensagens (dentro do mesmo turno,
+  não). Mandar de outro jeito contradiria a regra 3 das Regras da Casa ("a
+  mensagem de sistema com a data e a hora"). Se incomodar, o conserto é no
+  proxy (renderizar sistema do meio da conversa dentro do transcrito), que é
+  projeto à parte e do usuário.
+- **Catálogo do proxy** em `GET /v1/models` (exige a chave), cache de 1 h, com
+  reserva dos quatro modelos do plano se ele não responder — e a tela diz quando
+  a lista é a reserva. Modelo gravado que o proxy parou de anunciar continua na
+  lista, marcado: `<select>` sem a opção enviaria a primeira.
+- ⚠ **Termos de uso.** O README do próprio proxy: *"É para uso pessoal… Não use
+  isso como backend de um SaaS para terceiros."* Atender clientes da Seahub pela
+  assinatura Max é esse caso; o risco é da conta (limitação ou suspensão), e foi
+  apresentado ao usuário antes de construir. A conta usada é a **MAX da própria
+  Seahub**, não a pessoal do usuário. O caminho sem esse risco para ter Claude
+  num agente é um modelo `anthropic/*` pela própria OpenRouter.
+- **A instância do projeto roda na VPS da Seahub, com as credenciais da Seahub**
+  — o mesmo código da instância pessoal do usuário, outro servidor. O MCP
+  `claude-max-proxy` das sessões de desenvolvimento aponta para a PESSOAL:
+  configuração, cota e histórico lidos por ele não são os do projeto. O proxy
+  não é tocado daqui. Configuração recomendada: busca na web DESLIGADA (a
+  pessoal está ligada, e um cliente poderia induzir buscas), raciocínio
+  desligado ou esforço baixo, concorrência ≥ 4 (o worker atende 4 conversas
+  mais as tarefas de fundo) e fila de ~30 s, para a volta acontecer antes de o
+  vigia escalar.
 
 ### Saldo da OpenRouter, e por que o 402 não é instabilidade
 

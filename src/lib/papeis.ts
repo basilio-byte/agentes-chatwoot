@@ -64,6 +64,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Configurar e ligar a leitura de mídia (áudio, imagem, documento)",
       "Ligar e desligar o gatilho HTTP de um agente",
       "Configurar o alerta de saldo por WhatsApp — limite e telefones — e mandar a mensagem de teste",
+      "Trocar o motor dos agentes entre OpenRouter e Claude MAX, na chave geral ou agente por agente",
       "Testar no playground",
       "Operar os agentes por um assistente de I.A. (MCP), com os limites deste papel",
     ],

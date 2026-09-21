@@ -35,6 +35,15 @@ const schema = z.object({
   /** Sobrescreve o endpoint. Serve para testes com mock e para proxy interno. */
   OPENROUTER_BASE_URL: z.string().optional(),
 
+  /**
+   * Proxy Claude MAX (`claude-max-api-proxy`): o motor alternativo à OpenRouter,
+   * pela assinatura Max. Os dois opcionais, e só valem JUNTOS — sem eles a
+   * opção nem aparece no painel e todo agente roda na OpenRouter, como antes.
+   * A URL é a base OpenAI do proxy, terminando em `/v1`. Ver `agents/motor.ts`.
+   */
+  CLAUDE_MAX_BASE_URL: z.string().optional(),
+  CLAUDE_MAX_API_KEY: z.string().optional(),
+
   AUTH_SECRET: z.string().min(1, "AUTH_SECRET é obrigatória"),
   AUTH_TRUST_HOST: z.string().optional(),
 

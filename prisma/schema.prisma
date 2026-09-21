@@ -107,6 +107,13 @@ model Agent {
   // `model` é o slug da OpenRouter (ex.: "openai/gpt-5.6-luna").
   model             String @default("openai/gpt-5.6-luna")
   effort            String @default("medium") // none | low | medium | high
+  /// Por onde este agente pensa: segue a chave geral (`MotorDosAgentes`), ou
+  /// fica fixo num motor. `PADRAO` com a chave desligada é a OpenRouter de
+  /// sempre. `model` continua sendo o da OpenRouter em qualquer caso: é para
+  /// ele que o turno volta quando o proxy falha.
+  motor             MotorDoAgente @default(PADRAO)
+  /// Modelo no proxy Claude MAX (`claude-sonnet-5`…). Nulo = o padrão geral.
+  modeloClaudeMax   String?
   /// Teto de saída por chamada. Alto de propósito: um turno pode encadear
   /// transferências e vários usos de tool antes da resposta final, e o runner
   /// ainda corta pelo limite real do modelo (ModeloCatalogo.maxSaida).
@@ -746,7 +753,15 @@ model AgentRun {
   /// tela de Consumo mostra "modelo não registrado" em vez de chutar o modelo
   /// atual do agente — o custo total continua certo, e a quebra por modelo diz
   /// a verdade sobre o que não dá para saber.
+  /// No Claude MAX vem com prefixo (`claude-max/claude-sonnet-5`). Com volta
+  /// para a OpenRouter no meio do turno, é o modelo da OpenRouter: é onde o
+  /// custo foi cobrado.
   model String?
+  /// Motor que deu a resposta. Nulo nas execuções anteriores a 21/09/2026,
+  /// todas da OpenRouter.
+  motor MotorDaExecucao?
+  /// Por que o proxy Claude MAX falhou e o turno foi para a OpenRouter.
+  voltaDoProxy String? @db.Text
 
   input  String  @db.Text
   output String? @db.Text
@@ -1120,4 +1135,31 @@ model AuditLog {
 
   @@index([entity, entityId])
   @@index([createdAt])
+}
+
+enum MotorDoAgente {
+  /// Segue a chave geral de `MotorDosAgentes`.
+  PADRAO
+  OPENROUTER
+  CLAUDE_MAX
+}
+
+enum MotorDaExecucao {
+  OPENROUTER
+  CLAUDE_MAX
+}
+
+/// A chave geral OpenRouter ⇄ Claude MAX (21/09/2026). Linha ÚNICA
+/// (`id = "unico"`), mudada na lista de agentes.
+///
+/// ⚠ Nasce DESLIGADA, e desligada é exatamente o sistema de antes: todo agente
+/// em `PADRAO` roda na OpenRouter. Ligar só vale com o proxy configurado nas
+/// variáveis `CLAUDE_MAX_*`; sem elas, a chave ligada não muda nada.
+model MotorDosAgentes {
+  id              String   @id @default("unico")
+  claudeMaxLigado Boolean  @default(false)
+  /// Modelo do proxy para quem não escolheu um (`Agent.modeloClaudeMax` nulo).
+  modeloPadrao    String   @default("claude-sonnet-5")
+  atualizadoPorId String?
+  updatedAt       DateTime @updatedAt
 }

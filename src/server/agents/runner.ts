@@ -2,8 +2,14 @@ import type OpenAI from "openai";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { mensagemDeContextoTemporal } from "@/lib/tempo";
-import { getOpenRouter, PREFERENCIA_DE_PROVEDOR } from "./openrouter";
+import {
+  getOpenRouter,
+  openrouterConfigurada,
+  PREFERENCIA_DE_PROVEDOR,
+} from "./openrouter";
 import { estimarCusto, limitarSaida, type UsoTokens } from "./catalogo";
+import { getClaudeMax, obterModeloClaudeMax, planejarMotor } from "./claude-max";
+import { chamarComVolta, PREFIXO_CLAUDE_MAX, type Motor } from "./motor";
 import type { ToolResolvida } from "@/server/integrations/resolve";
 import type {
   SinaisDoTurno,
@@ -118,6 +124,16 @@ export async function executarAgente(
     );
   }
 
+  // OpenRouter ou proxy Claude MAX — ver `motor.ts`. Com a chave geral
+  // desligada e o agente em PADRAO, é a OpenRouter de sempre, e nada abaixo
+  // muda para ela: mesmos parâmetros, mesmo cliente, mesma conta de custo.
+  const plano = await planejarMotor(agente);
+  const modeloClaude = plano.modeloClaude
+    ? await obterModeloClaudeMax(plano.modeloClaude)
+    : null;
+  const modeloPlanejado =
+    plano.motor === "CLAUDE_MAX" ? `${PREFIXO_CLAUDE_MAX}${plano.modeloClaude}` : agente.model;
+
   const sinais: SinaisDoTurno = {};
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -146,21 +162,30 @@ export async function executarAgente(
       // Congelado aqui, e não lido de `Agent.model` na hora de apurar: o
       // agente troca de modelo, e a fatura de ontem não pode mudar por causa
       // disso. Gravado na criação para valer também quando o turno falha.
-      model: agente.model,
+      model: modeloPlanejado,
+      motor: plano.motor,
       input: entrada.mensagem,
     },
   });
 
   const uso: UsoTokens = { ...USO_ZERADO };
+  // Só o que passou pela OpenRouter: é o que ela cobra, e é sobre isto que a
+  // estimativa de reserva calcula. O proxy não cobra por token.
+  const usoOpenRouter: UsoTokens = { ...USO_ZERADO };
+  let houveOpenRouter = false;
   const toolCalls: ToolCallRegistrado[] = [];
   let iteracoes = 0;
   let resposta = "";
   let custoRelatado: number | null = null;
   let atingiuLimite = false;
+  // O proxy falhou uma vez, o resto do turno fica na OpenRouter: insistir nele
+  // a cada etapa somaria a espera da falha em todas elas.
+  let motorAtual: Motor = plano.motor;
+  let motorUsado: Motor = plano.motor;
+  let modeloUsado = modeloPlanejado;
+  let voltaDoProxy: string | null = null;
 
   try {
-    const cliente = getOpenRouter();
-
     while (true) {
       // Ponto de parada entre etapas: pega quem mandou parar durante uma tool.
       await conferirParada(run.id);
@@ -202,17 +227,65 @@ export async function executarAgente(
           : {}),
       };
 
+      // No proxy vai o protocolo puro: os campos da OpenRouter (`provider`,
+      // `usage`, `reasoning`) ele ignora, e o esforço de raciocínio é
+      // configuração DELE, não do agente. `user` ajuda o proxy a reaproveitar a
+      // sessão do Claude entre as etapas do mesmo turno.
+      const parametrosDoProxy: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming | null =
+        motorAtual === "CLAUDE_MAX" && plano.modeloClaude
+          ? {
+              model: plano.modeloClaude,
+              max_tokens: limitarSaida(agente.maxTokens, modeloClaude),
+              messages,
+              ...(enviarFerramentas ? { tools: ferramentas } : {}),
+              ...(entrada.conversationId ? { user: `conversa:${entrada.conversationId}` } : {}),
+            }
+          : null;
+
       // Vigiada porque é aqui que o turno passa quase todo o tempo: parar só
       // entre iterações nunca alcançaria um turno pendurado, que é justamente o
       // que alguém quer matar.
-      const retorno = await comParadaVigiada(run.id, (signal) =>
-        cliente.chat.completions.create(parametros, { signal }),
-      );
+      const chamada = await chamarComVolta({
+        proxy: parametrosDoProxy
+          ? {
+              motor: "CLAUDE_MAX",
+              modelo: modeloPlanejado,
+              chamar: () =>
+                comParadaVigiada(run.id, (signal) =>
+                  getClaudeMax().chat.completions.create(parametrosDoProxy, { signal }),
+                ),
+            }
+          : null,
+        openrouter: () => ({
+          motor: "OPENROUTER",
+          modelo: agente.model,
+          chamar: () =>
+            comParadaVigiada(run.id, (signal) =>
+              getOpenRouter().chat.completions.create(parametros, { signal }),
+            ),
+        }),
+        podeVoltarParaOpenRouter: openrouterConfigurada(),
+      });
+      const retorno = chamada.resposta;
+      motorUsado = chamada.motor;
+      modeloUsado = chamada.modelo;
+      if (chamada.voltaDoProxy) {
+        voltaDoProxy = chamada.voltaDoProxy;
+        motorAtual = "OPENROUTER";
+        logger.warn(
+          { runId: run.id, agentId: agente.id, motivo: chamada.voltaDoProxy },
+          "proxy Claude MAX falhou — o turno seguiu na OpenRouter",
+        );
+      }
 
       const usoRetorno = retorno.usage as UsoOpenRouter | undefined;
       acumularUso(uso, usoRetorno);
-      if (typeof usoRetorno?.cost === "number") {
-        custoRelatado = (custoRelatado ?? 0) + usoRetorno.cost;
+      if (chamada.motor === "OPENROUTER") {
+        houveOpenRouter = true;
+        acumularUso(usoOpenRouter, usoRetorno);
+        if (typeof usoRetorno?.cost === "number") {
+          custoRelatado = (custoRelatado ?? 0) + usoRetorno.cost;
+        }
       }
 
       const escolha = retorno.choices?.[0];
@@ -266,13 +339,21 @@ export async function executarAgente(
       if (sinais.handoff) break;
     }
 
-    const custoUsd = custoRelatado ?? estimarCusto(modelo, uso);
+    // Turno inteiro no proxy custa zero: a assinatura não cobra por token, e a
+    // tela de Consumo promete bater com a fatura da OpenRouter. Estimar pela
+    // tabela do modelo da OpenRouter inventaria um gasto que não existiu.
+    const custoUsd = houveOpenRouter
+      ? (custoRelatado ?? estimarCusto(modelo, usoOpenRouter))
+      : 0;
     const latenciaMs = Date.now() - inicio;
 
     await db.agentRun.update({
       where: { id: run.id },
       data: {
         status: RunStatus.SUCCESS,
+        model: modeloUsado,
+        motor: motorUsado,
+        voltaDoProxy,
         output: resposta,
         messages: JSON.parse(JSON.stringify(messages)),
         ...uso,
@@ -319,10 +400,23 @@ export async function executarAgente(
       logger.error({ runId: run.id, erro: registro }, "falha ao executar agente");
     }
 
+    // O proxy falhou, a volta foi para a OpenRouter e ela também falhou: a
+    // execução registra as duas causas, senão o erro da OpenRouter esconderia
+    // que o turno nem era para estar nela.
+    const voltaNoErro = (erro as { voltaDoProxy?: unknown } | null)?.voltaDoProxy;
+    if (typeof voltaNoErro === "string") {
+      voltaDoProxy = voltaNoErro;
+      motorUsado = "OPENROUTER";
+      modeloUsado = agente.model;
+    }
+
     await db.agentRun.update({
       where: { id: run.id },
       data: {
         status: interrompida ? RunStatus.CANCELED : RunStatus.ERROR,
+        model: modeloUsado,
+        motor: motorUsado,
+        voltaDoProxy,
         error: registro,
         messages: JSON.parse(JSON.stringify(messages)),
         ...uso,
