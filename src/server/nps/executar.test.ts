@@ -245,8 +245,14 @@ describe("envio da pesquisa", () => {
     });
     expect((linha().enviadaEm as Date).getTime()).toBe(AGORA);
     expect((linha().venceEm as Date).getTime()).toBe(AGORA + 3 * HORA);
+    // ⚠ Volta ao robô com o relógio da espera zerado: um valor velho, esquecido
+    // enquanto a conversa era de uma pessoa, fazia o vigia pedir desculpas pela
+    // demora logo depois da nota (conversa 14149, 22/09/2026).
     expect(conversasAtualizadas).toEqual([
-      { where: { chatwootConversationId: 12345, status: "HUMAN" }, data: { status: "BOT" } },
+      {
+        where: { chatwootConversationId: 12345, status: "HUMAN" },
+        data: { status: "BOT", aguardandoDesde: null },
+      },
     ]);
     // O CRM não é tocado no envio: a task fica como está, e a nota é depois.
     expect(gravarArgs).toBeNull();

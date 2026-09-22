@@ -1269,6 +1269,10 @@ fixas e gravar um número — e levou 59 s e quatro idas ao modelo para gravar u
   porque no Chatwoot ela fica sem dono — é o que a rota de conta gravaria se
   lesse o evento de topo. Sem isso, a mensagem do cliente que não é nota ficaria
   sem ninguém: o worker recusa conversa `HUMAN`.
+  ⚠ **E volta com `aguardandoDesde` zerado.** Enquanto a conversa é de uma
+  pessoa, o vigia não olha para ela, e um valor velho fica esquecido no
+  relógio; ao virar `BOT`, o vigia o via na hora e mandava "Desculpe a demora!"
+  ao cliente que tinha acabado de dar a nota (conversa 14149, 22/09/2026).
 - **Depois da nota, a conversa é resolvida quando o cliente fica
   `minutosAposNota` sem escrever** — 10 por padrão. O n8n usava 1 minuto; o
   usuário pediu 5 ou 10 (15/09/2026), para quem responde "o que aconteceu?" ter

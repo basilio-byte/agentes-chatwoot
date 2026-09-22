@@ -251,11 +251,17 @@ async function enviar(p: Pesquisa, config: NpsConfig, agora: number) {
   // Sem dono no Chatwoot, a conversa volta a ser do robô aqui também — é o que a
   // rota de conta gravaria ao ler o evento —, e uma mensagem do cliente que não
   // seja a nota é atendida pelo agente em vez de ficar sem ninguém.
+  //
+  // ⚠ O relógio da espera volta ZERADO. Com a conversa nas mãos de uma pessoa,
+  // um valor velho fica esquecido nele (o vigia não olha conversa humana); ao
+  // virar BOT, o vigia o via na hora e mandava "Desculpe a demora!" ao cliente
+  // que tinha acabado de dar a nota. Foi o que aconteceu na conversa 14149, em
+  // 22/09/2026, com um valor da tarde anterior.
   try {
     await cliente.desatribuir(conversa);
     await db.conversation.updateMany({
       where: { chatwootConversationId: conversa, status: ConversationStatus.HUMAN },
-      data: { status: ConversationStatus.BOT },
+      data: { status: ConversationStatus.BOT, aguardandoDesde: null },
     });
   } catch (erro) {
     avisos.push(`não desatribuí: ${mensagemDe(erro)}`);
