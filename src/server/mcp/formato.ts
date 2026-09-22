@@ -56,6 +56,13 @@ export function arredondarUsd(valor: number): number {
 const CARA_DE_SEGREDO = /token|secret|senha|password|private|credencial|api_?key/i;
 
 /**
+ * Telefone de pessoa da equipe (quem recebe o aviso do presente de
+ * aniversário). Não é segredo, mas na tela só Administrador vê — e o token do
+ * MCP de quem tem papel Leitura não pode ser o caminho lateral até ele.
+ */
+const DADO_PESSOAL = /^telefones?$/i;
+
+/**
  * Config de integração é não sensível por contrato — segredo mora cifrado em
  * `IntegrationCredential`. Mas uma chave com cara de segredo não sai daqui nem
  * assim: basta alguém um dia gravar um token no lugar errado.
@@ -66,7 +73,7 @@ export function semSegredos(valor: unknown): unknown {
     return Object.fromEntries(
       Object.entries(valor).map(([chave, v]) => [
         chave,
-        CARA_DE_SEGREDO.test(chave) ? "[omitido]" : semSegredos(v),
+        CARA_DE_SEGREDO.test(chave) || DADO_PESSOAL.test(chave) ? "[omitido]" : semSegredos(v),
       ]),
     );
   }

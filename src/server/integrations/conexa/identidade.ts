@@ -39,8 +39,12 @@ export type ExigenciaDeIdentidade =
  * em vez de cair num padrão silencioso.
  */
 export function exigenciaDeIdentidade(
-  ctx: Pick<ToolContext, "source" | "historico" | "mensagem">,
+  ctx: Pick<ToolContext, "source" | "historico" | "mensagem" | "sistema">,
 ): ExigenciaDeIdentidade {
+  // O sistema agindo sozinho (o vigia reservando o presente de aniversário) não
+  // tem cliente a provar: a prova foi feita quando o pedido nasceu.
+  if (ctx.sistema) return { tipo: "livre" };
+
   const doHistorico = (ctx.historico ?? [])
     .filter((m) => m.role === "user")
     .map((m) => m.content);

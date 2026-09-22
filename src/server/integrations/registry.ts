@@ -9,6 +9,7 @@ import { openaiIntegration } from "./openai";
 import { zapsignIntegration } from "./zapsign";
 import { prazosIntegration } from "./prazos";
 import { materiaisIntegration } from "./materiais";
+import { aniversarioIntegration } from "./aniversario";
 
 /**
  * Registro central de integrações.
@@ -45,6 +46,9 @@ const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = 
   // Imagens dos macros do Chatwoot, pelo robô da conversa. Provider próprio,
   // como os Prazos, para mandar arquivo ao cliente ser opt-in por agente.
   [materiaisIntegration.provider]: materiaisIntegration,
+  // O agente registra o pedido do presente e o vigia reserva quando o pacote
+  // aparece pago. Provider próprio para ser opt-in por agente.
+  [aniversarioIntegration.provider]: aniversarioIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {

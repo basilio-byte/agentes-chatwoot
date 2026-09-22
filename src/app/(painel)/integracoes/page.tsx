@@ -14,6 +14,7 @@ import { dadosDaContaGoogle } from "@/server/actions/google";
 import {
   IntegrationProvider,
   IntegrationStatus,
+  type PresenteStatus,
   UserRole,
 } from "@/generated/prisma/enums";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
@@ -26,6 +27,9 @@ import { DocumentosConfigForm } from "@/components/documentos-config";
 import { PrazosConfigForm } from "@/components/prazos-config";
 import { MateriaisConfigForm } from "@/components/materiais-config";
 import { CobrancaConfigForm } from "@/components/cobranca-config";
+import { AniversarioConfigForm } from "@/components/aniversario-config";
+import { lerConfigAniversario } from "@/server/aniversario/regras";
+import { formatarTelefone } from "@/server/alerta-de-saldo/regras";
 import { lerConfigCobranca, PROVIDER_DA_COBRANCA } from "@/server/cobranca/regras";
 import {
   configMateriaisSchema,
@@ -45,6 +49,7 @@ import {
 } from "@/server/janela/regras";
 import {
   Building2,
+  Cake,
   Ear,
   FileSignature,
   Hourglass,
@@ -62,6 +67,24 @@ import { Aviso, Badge, Card, PageHeader, Tabela } from "@/components/ui";
 import { formatarData } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+
+const SITUACAO_DO_PRESENTE: Record<PresenteStatus, string> = {
+  AGUARDANDO: "esperando o pacote",
+  PROCESSANDO: "reservando",
+  RESERVADO: "reservado",
+  ENTREGUE: "com a equipe",
+  CANCELADO: "cancelado",
+  FALHOU: "falhou",
+};
+
+const TOM_DO_PRESENTE: Record<PresenteStatus, "success" | "danger" | "warning" | "neutral"> = {
+  AGUARDANDO: "neutral",
+  PROCESSANDO: "neutral",
+  RESERVADO: "success",
+  ENTREGUE: "warning",
+  CANCELADO: "neutral",
+  FALHOU: "danger",
+};
 
 export default async function IntegracoesPage({
   searchParams,
@@ -139,6 +162,30 @@ export default async function IntegracoesPage({
         where: { integrationId: materiais.id, enabled: true },
       })
     : 0;
+  const aniversario = registros.find((i) => i.provider === IntegrationProvider.ANIVERSARIO);
+  const configAniversario = lerConfigAniversario(aniversario?.config);
+  const agentesComAniversario = aniversario
+    ? await db.agentIntegration.count({
+        where: { integrationId: aniversario.id, enabled: true },
+      })
+    : 0;
+  // Sem nome nem telefone do cliente: a tela é aberta pela equipe inteira.
+  const presentes = await db.presenteDeAniversario.findMany({
+    orderBy: { criadoEm: "desc" },
+    take: 15,
+    select: {
+      id: true,
+      chatwootConversationId: true,
+      salaNome: true,
+      salaId: true,
+      data: true,
+      inicio: true,
+      fim: true,
+      status: true,
+      resultado: true,
+      criadoEm: true,
+    },
+  });
   const cobranca = registros.find((i) => i.provider === IntegrationProvider.COBRANCA);
   const configCobranca = lerConfigCobranca(cobranca?.config);
   // "reservado" é envio a caminho (ou que caiu no meio e vira "incerto"): não é rastro.
@@ -645,6 +692,142 @@ export default async function IntegracoesPage({
                   somenteLeitura={!editavel}
                 />
               </Card>
+            ),
+          },
+          {
+            id: "aniversario",
+            rotulo: "Aniversário",
+            icone: <Cake size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Presente de aniversário</h2>
+                    {aniversario?.enabled ? (
+                      <Badge tone="success">ligada</Badge>
+                    ) : (
+                      <Badge>desligada</Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    O cliente que recebeu o e-mail de aniversário pede as{" "}
+                    {configAniversario.horas} h de sala na conversa. O agente
+                    combina sala, dia e horário, confere o CPF ou CNPJ, o
+                    aniversário no cadastro do Conexa (até{" "}
+                    {configAniversario.diasDepois} dias depois) e a agenda, e
+                    registra o pedido. Quem está abaixo recebe um WhatsApp para{" "}
+                    <strong>lançar e faturar o pacote</strong> no Conexa (Pré-Venda
+                    Pacote de Horas, R$ 0). Assim que a venda aparece paga, o
+                    sistema reserva e confirma ao cliente — ninguém precisa
+                    reservar. Agentes com a integração ligada:{" "}
+                    <strong>{agentesComAniversario}</strong>.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+                    <li>
+                      O agente <strong>nunca oferece</strong> o presente: só
+                      registra quando o cliente diz que recebeu o e-mail.
+                    </li>
+                    <li>
+                      O Conexa é conferido a cada 5 minutos, só enquanto houver
+                      pedido esperando. Sem o pacote pago em{" "}
+                      {configAniversario.prazoHoras} h (ou até 30 min antes da
+                      reserva), a conversa vai para{" "}
+                      <strong>{configAniversario.atendente}</strong>.
+                    </li>
+                    <li>
+                      A reserva só é confirmada ao cliente se sair{" "}
+                      <strong>descontada do pacote</strong>. Se sair como
+                      cobrança, a conversa vai para a equipe conferir.
+                    </li>
+                    <li>
+                      Um presente por cliente a cada 300 dias, pelos registros
+                      daqui.
+                    </li>
+                  </ul>
+
+                  <Aviso>
+                    Ao faturar a cobrança de R$ 0, o fluxo do n8n que manda o
+                    template de &ldquo;fatura disponível&rdquo; manda o link de
+                    pagamento ao cliente. Isso é ajuste do lado do n8n.
+                  </Aviso>
+
+                  {aniversario?.lastCheckedAt ? (
+                    <p className="text-xs text-muted">
+                      Última conferência com pedido: {formatarData(aniversario.lastCheckedAt)}
+                      {aniversario.lastError ? ` — ${aniversario.lastError}` : ""}
+                    </p>
+                  ) : null}
+
+                  {editavel ? (
+                    <AniversarioConfigForm
+                      habilitada={aniversario?.enabled ?? false}
+                      avisar={configAniversario.avisar.map((d) => ({
+                        nome: d.nome,
+                        telefone: formatarTelefone(d.telefone),
+                      }))}
+                      caixaDoAviso={String(configAniversario.caixaDoAviso)}
+                      atendente={configAniversario.atendente}
+                      prazoHoras={String(configAniversario.prazoHoras)}
+                      diasDepois={String(configAniversario.diasDepois)}
+                      confirmacao={configAniversario.confirmacao}
+                      entrega={configAniversario.entrega}
+                    />
+                  ) : (
+                    <p className="text-sm text-muted">
+                      {configAniversario.avisar.length
+                        ? `Avisa ${configAniversario.avisar.length} pessoa(s) por WhatsApp.`
+                        : "Ninguém cadastrado para receber o aviso."}
+                    </p>
+                  )}
+                </Card>
+
+                <Card className="space-y-3">
+                  <h3 className="font-medium">Últimos pedidos</h3>
+                  {presentes.length === 0 ? (
+                    <p className="text-sm text-muted">Nenhum pedido ainda.</p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>Conversa</th>
+                          <th>Reserva pedida</th>
+                          <th>Situação</th>
+                          <th>Quando</th>
+                        </>
+                      }
+                    >
+                      {presentes.map((p) => {
+                        const link = linkDaConversa(p.chatwootConversationId);
+                        return (
+                          <tr key={p.id}>
+                            <td className="whitespace-nowrap">
+                              {link ? (
+                                <a href={link} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                                  #{p.chatwootConversationId}
+                                </a>
+                              ) : (
+                                `#${p.chatwootConversationId}`
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap">
+                              {p.salaNome ?? `sala ${p.salaId}`}, {p.data.split("-").reverse().slice(0, 2).join("/")}, {p.inicio}–{p.fim}
+                            </td>
+                            <td>
+                              <Badge tone={TOM_DO_PRESENTE[p.status]}>
+                                {SITUACAO_DO_PRESENTE[p.status]}
+                              </Badge>
+                              {p.resultado ? <p className="mt-1 text-xs text-muted">{p.resultado}</p> : null}
+                            </td>
+                            <td className="whitespace-nowrap tabular-nums">{formatarData(p.criadoEm)}</td>
+                          </tr>
+                        );
+                      })}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
             ),
           },
           {

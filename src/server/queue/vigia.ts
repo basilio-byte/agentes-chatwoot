@@ -10,6 +10,7 @@ import { conferirSaldoEAvisar } from "@/server/alerta-de-saldo/alerta";
 import { encerrarOrfas } from "@/server/execucoes/orfas";
 import { conferirJanelas } from "@/server/janela/conferir";
 import { conferirCobrancas } from "@/server/cobranca/conferir";
+import { conferirPresentes } from "@/server/aniversario/conferir";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -27,8 +28,9 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  * da pesquisa de satisfação (`nps/executar.ts`), encerra as execuções que um
  * reinício deixou marcadas como rodando (`execucoes/orfas.ts`), confere o saldo
  * da OpenRouter para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`), a
- * janela de 24 h do WhatsApp (`janela/conferir.ts`) e as etiquetas de cobrança
- * do ClickUp (`cobranca/conferir.ts`).
+ * janela de 24 h do WhatsApp (`janela/conferir.ts`), as etiquetas de cobrança
+ * do ClickUp (`cobranca/conferir.ts`) e os pedidos de presente de aniversário
+ * (`aniversario/conferir.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -223,6 +225,17 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.acao === "iniciada") logger.info("aviso de cobrança: conferência iniciada");
     } catch (erro) {
       logger.error({ erro }, "aviso de cobrança falhou ao iniciar");
+    }
+
+    // Só consulta o Conexa enquanto houver pedido de presente esperando, e no
+    // máximo a cada 5 min; sem pedido, é uma consulta ao banco.
+    try {
+      const rodada = await conferirPresentes();
+      if (rodada.reservados || rodada.entregues || rodada.falhas) {
+        logger.info(rodada, "presentes de aniversário conferidos");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "presentes de aniversário falharam");
     }
   };
 

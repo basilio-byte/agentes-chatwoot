@@ -330,7 +330,14 @@ export class ConexaClient {
     return this.requisitar<Record<string, unknown>>(`/sale/${id}`);
   }
 
-  listarVendas(filtros: { customerId?: number; status?: string; limit?: number }) {
+  listarVendas(filtros: {
+    customerId?: number;
+    status?: string;
+    /** W3C (`2026-09-22T10:00:00-03:00`): quando a venda foi LANÇADA, não a referência. */
+    createdAtFrom?: string;
+    limit?: number;
+    offset?: number;
+  }) {
     const { customerId, ...resto } = filtros;
     return this.listar<Record<string, unknown>>("/sales", {
       ...resto,

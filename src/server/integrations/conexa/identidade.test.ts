@@ -110,6 +110,12 @@ describe("exigenciaDeIdentidade", () => {
     }
   });
 
+  it("o sistema agindo sozinho não tem cliente a provar; sem origem nem marca, trava", () => {
+    // O vigia reservando o presente de aniversário: a prova foi feita no pedido.
+    expect(exigenciaDeIdentidade({ sistema: "aniversario" }).tipo).toBe("livre");
+    expect(exigenciaDeIdentidade({}).tipo).toBe("provar");
+  });
+
   it("turnos em segundo plano sobre uma conversa não agem em nome do cliente", () => {
     for (const source of [
       RunSource.CONVERSA_ENCERRADA,

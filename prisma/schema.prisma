@@ -505,6 +505,11 @@ enum IntegrationProvider {
   /// clientes manda a mensagem pelo Chatwoot e sai depois do envio. Função do
   /// sistema, sem modelo, FORA do registry como o NPS e a janela.
   COBRANCA
+  /// Presente de aniversário (2 h de sala): o agente registra o pedido do
+  /// cliente que recebeu o e-mail, a equipe lança e fatura o pacote no Conexa,
+  /// e o vigia reserva quando a venda aparece paga. No registry, como os
+  /// Prazos, para ser OPT-IN por agente.
+  ANIVERSARIO
 }
 
 enum IntegrationStatus {
@@ -1073,6 +1078,62 @@ model PesquisaNps {
   @@index([status, venceEm])
   @@index([chatwootConversationId, status])
   @@index([telefone, enviadaEm])
+}
+
+/// Onde o pedido de presente de aniversário está. As transições em
+/// `src/server/aniversario/conferir.ts`.
+enum PresenteStatus {
+  /// Registrado; a equipe foi avisada e o pacote ainda não apareceu pago.
+  AGUARDANDO
+  /// Trava da rodada: reservando ou passando a conversa para uma pessoa.
+  PROCESSANDO
+  /// Reserva feita pelo sistema (ou já feita pela equipe) e confirmada.
+  RESERVADO
+  /// Prazo vencido ou reserva que não deu certo: a conversa foi para a equipe.
+  ENTREGUE
+  /// Substituído por um pedido novo, ou parado (integração desligada).
+  CANCELADO
+  /// Nem a reserva nem a passagem para a equipe deram certo.
+  FALHOU
+}
+
+/// Um pedido do presente de aniversário (2 h de sala). O agente registra; o
+/// vigia confere a venda do pacote no Conexa e reserva. Um só em andamento por
+/// conversa: índice parcial `PresenteDeAniversario_um_em_andamento`.
+model PresenteDeAniversario {
+  id                     String         @id @default(cuid())
+  chatwootConversationId Int
+  /// Agente que registrou o pedido.
+  agentId                String
+  /// Dono do bot pelo qual a conversa entrou: a credencial que fala com o cliente.
+  portaAgentId           String
+  clienteId              Int
+  /// A pessoa que provou a identidade com o próprio CPF, quando foi assim.
+  pessoaId               Int?
+  salaId                 Int
+  /// Como o agente chamou a sala, para o aviso à equipe. A confirmação ao
+  /// cliente usa o nome que o Conexa devolve ao reservar.
+  salaNome               String?
+  /// AAAA-MM-DD e HH:MM, no relógio de São Paulo — o que vai na reserva.
+  data                   String
+  inicio                 String
+  fim                    String
+  /// DD/MM do aniversário que abriu a janela. Só dia e mês.
+  aniversario            String
+  status                 PresenteStatus @default(AGUARDANDO)
+  /// Até quando esperar o pacote pago antes de passar a conversa à equipe.
+  venceEm                DateTime
+  vendaId                Int?
+  reservaId              Int?
+  /// Rastro para a tela: o que foi feito e o que não foi, em ordem.
+  resultado              String?        @db.Text
+  criadoEm               DateTime       @default(now())
+  atualizadoEm           DateTime       @updatedAt
+  finalizadoEm           DateTime?
+
+  @@index([status, venceEm])
+  @@index([clienteId, status])
+  @@index([chatwootConversationId, status])
 }
 
 enum TipoDeAvisoDeSaldo {

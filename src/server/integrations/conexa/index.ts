@@ -82,7 +82,7 @@ function contexto(ctx: ToolContext): {
   return { cliente: new ConexaClient(config, ctx.credential), config };
 }
 
-type Identidade =
+export type Identidade =
   | { ok: true; pessoaId?: number }
   | { ok: false; recusa: { erro: string; comoSeguir: string } };
 
@@ -93,7 +93,7 @@ type Identidade =
  * vinculadas, para quem reserva pela empresa com o próprio CPF. Nas origens sem
  * cliente do outro lado (mesa, gatilho, agendamento) não consulta nada.
  */
-async function conferirIdentidade(
+export async function conferirIdentidade(
   cliente: ConexaClient,
   clienteId: number | undefined,
   ctx: ToolContext,

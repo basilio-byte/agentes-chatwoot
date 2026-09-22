@@ -1465,6 +1465,85 @@ equipe: formatos, capacidades e "se possível foto"). Regras puras e testadas em
   robô, `attachments[]`, nome com acento e travessão, bytes idênticos. ⚠ **Contra
   o Chatwoot real, não** — a primeira foto enviada em produção é quem prova.
 
+### Presente de aniversário: o agente registra, a equipe lança, o sistema reserva
+
+Integração `ANIVERSARIO`, no registry e **opt-in por agente**, com a ferramenta
+`aniversario_pedir_presente`. Pedido do Diego (22/09/2026): a Seahub manda um
+e-mail no aniversário do cliente oferecendo 2 h de sala, e quem respondia no
+WhatsApp caía na automação, que passava a conversa para ele. Regras puras e
+testadas em `aniversario/regras.ts`; o pedido em `aniversario/pedir.ts`; a
+rodada do vigia em `aniversario/conferir.ts`; a tela na aba Aniversário de
+Integrações.
+
+O caminho: o cliente diz que recebeu o e-mail → o agente combina sala, dia e
+horário (até 2 h) → a ferramenta confere CPF/CNPJ, o aniversário no cadastro, a
+agenda, e registra (`PresenteDeAniversario`) → WhatsApp para quem lança o
+pacote (pela caixa 31) e nota interna → a pessoa lança a venda "Pré-Venda Pacote
+de Horas" de R$ 0 e fatura → o vigia vê a venda **paga** e reserva → a reserva
+saiu descontada do pacote: confirmação ao cliente, nota e WhatsApp.
+
+- ⚠ **A API do Conexa NÃO vende pacote de horas.** `POST /sale` só tem produto,
+  quantidade e valor; o pacote "2h - Sala de reunião (Aniversário)" se escolhe
+  na TELA. Por isso uma pessoa lança, e o desenho foi o que o Diego propôs:
+  *"me notificar para eu cadastrar o pacote e a IA fica verificando a cada x
+  minutos para entender se já pode faturar o pacote e gerar a reserva"*. Ele
+  lança **e** fatura; o agente não dá baixa em cobrança.
+- ⚠ **O agente NUNCA oferece o presente** — *"é só para quem receber o
+  e-mail"*. Está na descrição da ferramenta e tem de estar no prompt.
+- **A janela é de 7 dias DEPOIS do aniversário** (`diasDepois`). O Diego:
+  *"7 dias antes (o cliente só pede após a data)"* — o e-mail sai no dia, então
+  vale se o aniversário foi até 7 dias antes do pedido. Recusa por janela nunca
+  conta a data do cadastro ao cliente.
+- **De quem é o aniversário:** o do cliente pessoa física e o das pessoas
+  ativas vinculadas; quem provou a identidade com o PRÓPRIO CPF de pessoa
+  vinculada conta só por si. Sem data de nascimento, manda passar para a equipe.
+- ⚠ **O sinal de "pacote pronto" é a venda PAGA, de um dos produtos (1 na
+  SEAHUB, 3014 na SEATECH), de R$ 0, lançada depois do pedido** (com 30 min de
+  tolerância). Conferido na venda real da conversa 14149 (status `paid`). O R$ 0
+  não é detalhe: o mesmo produto vende pacote PAGO, e sem essa trava as horas
+  que um cliente comprou no mesmo dia seriam usadas como presente. `billed` é a
+  cobrança de R$ 0 ainda aberta: espera.
+- **A reserva é a da ferramenta dos agentes** (`conexa_criar_reserva`, por
+  `conexa/sistema.ts`, o irmão de `clickup/sistema.ts`): conflito de horário,
+  pessoa da reserva e leitura de volta vêm juntos. A pessoa é a que provou, ou o
+  solicitante da venda. `ToolContext.sistema` é o que diz à trava de identidade
+  que quem chama é o sistema — a prova foi feita no pedido; o runner nunca
+  preenche esse campo.
+- ⚠ **Só é confirmada ao cliente se sair `deductedFromQuota`.** Reserva com
+  outra situação vai virar cobrança, e confirmá-la como presente seria prometer
+  de graça o que vai ser cobrado: a conversa vai para a equipe, com o id dela.
+- **A equipe às vezes reserva à mão junto com o pacote** (foi assim na 14149):
+  reserva do próprio cliente no horário pedido, já descontada do pacote, é
+  tratada como a do presente — não reserva de novo e não manda confirmação.
+  ⚠ Se ela NÃO saiu do pacote, foi feita antes dele (o próprio agente, contra a
+  instrução, por exemplo) e vai virar cobrança: a conversa vai para a equipe.
+- **O prazo** (`prazoHoras`, 4 por padrão, e nunca além de 30 min antes da
+  reserva): sem o pacote pago até lá, aviso ao cliente, atribuição a quem assume
+  (`atendente`, "Diego"), `entregarAoHumano`, nota e WhatsApp. Pedido que começa
+  em menos de 1 h, ou com mais de 2 h, é recusado na hora.
+- **Só consulta o Conexa com pedido esperando**, e no máximo a cada 5 min. Sem
+  pedido, a rodada é uma consulta ao banco (o usuário pediu para não processar à
+  toa). Sem o Conexa, o prazo continua valendo.
+- ⚠ **Trava antes de agir** (AGUARDANDO → PROCESSANDO com `updateMany`
+  condicionado), e o índice parcial `PresenteDeAniversario_um_em_andamento`
+  segura um pedido por conversa. PROCESSANDO há mais de 15 min é rodada que caiu
+  no meio: vira FALHOU pedindo para conferir no Conexa — refazer poderia
+  reservar duas vezes.
+- **Nunca fala por cima de uma pessoa**: confirmação e aviso ao cliente só com a
+  conversa do robô, lida ao vivo (`podeAgir`); com gente dona, só a nota.
+- **Um presente por cliente a cada 300 dias**, pelos nossos registros (freio de
+  conveniência; quem decide é quem lança o pacote). Pedir de novo na mesma
+  conversa troca o horário; em outra conversa, recusa.
+- **WhatsApp que não sai para ninguém: o pedido não fica esperando** (FALHOU) e
+  o agente é mandado passar a conversa — ninguém lançaria o pacote.
+- **Telefones só para Administrador**: a tela os mostra só a quem edita, a
+  auditoria grava os nomes, e o MCP omite toda chave `telefone`
+  (`DADO_PESSOAL`, em `mcp/formato.ts`).
+- ⚠ **Faturar a cobrança de R$ 0 dispara o template "fatura disponível" do n8n**
+  (nota "Template enviado: geracao_cobranca_seahub_novo" na 14149): o cliente
+  recebe link de pagamento de um presente. O ajuste é do lado do n8n, e é da
+  equipe — daqui não se mexe em fluxo do n8n.
+
 ### Conexa: armadilhas da API v2
 
 Achadas no primeiro uso real (09/09 a 15/09/2026), depois de semanas de teste

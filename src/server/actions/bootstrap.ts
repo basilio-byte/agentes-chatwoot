@@ -33,6 +33,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.JANELA]: "Janela de 24 h do WhatsApp",
   [IntegrationProvider.MATERIAIS]: "Fotos e materiais prontos",
   [IntegrationProvider.COBRANCA]: "Aviso de cobrança (ClickUp)",
+  [IntegrationProvider.ANIVERSARIO]: "Presente de aniversário",
 };
 
 /**

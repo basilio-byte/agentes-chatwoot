@@ -35,6 +35,18 @@ describe("formato das respostas do MCP", () => {
     });
   });
 
+  it("telefone de pessoa não sai, mas o id de um campo de telefone sai", () => {
+    expect(
+      semSegredos({
+        avisar: [{ nome: "Diego", telefone: "+5584999999999" }],
+        campoTelefone: "3399c6f6",
+      }),
+    ).toEqual({
+      avisar: [{ nome: "Diego", telefone: "[omitido]" }],
+      campoTelefone: "3399c6f6",
+    });
+  });
+
   it("recusa é erro de execução, com contexto quando há", () => {
     expect(recusar("não deu")).toEqual({ erro: true, texto: "não deu" });
     expect(JSON.parse(recusar("não deu", { validas: ["a"] }).texto)).toEqual({

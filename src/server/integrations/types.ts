@@ -84,6 +84,14 @@ export type ToolContext = {
    * `historico` — `montarContexto` separa as mensagens novas do fim.
    */
   mensagem?: string;
+  /**
+   * Chamada feita pelo SISTEMA, sem modelo no meio — o rótulo diz quem chamou
+   * (`conexa/sistema.ts`). Quem chama já conferiu o que a ferramenta
+   * conferiria: o presente de aniversário provou a identidade do cliente quando
+   * o pedido foi registrado, e o vigia só reserva o que foi pedido ali.
+   * O runner nunca preenche.
+   */
+  sistema?: string;
 };
 
 export type ToolDefinition<TInput = unknown> = {
