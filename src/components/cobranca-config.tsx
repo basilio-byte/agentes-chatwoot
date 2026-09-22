@@ -76,24 +76,6 @@ export function CobrancaConfigForm({
           <input
             type="radio"
             name="aposEnviar"
-            value="resolver"
-            checked={depois === "resolver"}
-            onChange={() => setDepois("resolver")}
-            disabled={somenteLeitura}
-            className="mt-0.5 size-4 accent-accent"
-          />
-          <span>
-            Resolver a conversa — a automação cuida sozinha.
-            <span className="block text-xs text-muted">
-              Se o cliente responder, a conversa volta para a fila da caixa. Conversa
-              com dono, ou que já estava aberta antes do envio, não é resolvida.
-            </span>
-          </span>
-        </label>
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="radio"
-            name="aposEnviar"
             value="atribuir"
             checked={depois === "atribuir"}
             onChange={() => setDepois("atribuir")}
@@ -116,6 +98,24 @@ export function CobrancaConfigForm({
           // O nome fica guardado para quando voltarem a atribuir.
           <input type="hidden" name="atribuirA" value={quem} />
         )}
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="radio"
+            name="aposEnviar"
+            value="resolver"
+            checked={depois === "resolver"}
+            onChange={() => setDepois("resolver")}
+            disabled={somenteLeitura}
+            className="mt-0.5 size-4 accent-accent"
+          />
+          <span>
+            Resolver a conversa — a automação cuida sozinha.
+            <span className="block text-xs text-muted">
+              Se o cliente responder, a conversa volta para a fila da caixa. Conversa
+              com dono, ou que já estava aberta antes do envio, não é resolvida.
+            </span>
+          </span>
+        </label>
       </fieldset>
 
       <Field label='Mensagem da etiqueta "cobranca-1"'>

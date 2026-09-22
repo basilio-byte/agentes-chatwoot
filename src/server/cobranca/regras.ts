@@ -57,12 +57,17 @@ export const cobrancaConfigSchema = z.object({
   /** O campo CELULAR (tipo phone) da Base de clientes. */
   campoTelefone: z.string().min(8).default("3399c6f6-c890-40a6-865e-5a4e810fe8c6"),
   /**
-   * O que acontece com a conversa depois do envio. "resolver" (pedido do Régis,
-   * 22/09/2026, testando os envios): a automação cuida sozinha — a conversa sai
-   * da fila, e se o cliente responder o Chatwoot a reabre na caixa. "atribuir":
-   * vai para `atribuirA`, como era até então.
+   * O que acontece com a conversa depois do envio. "atribuir" (o padrão): vai
+   * para `atribuirA` — é assim que o Laercio trabalha as respostas. "resolver":
+   * a automação cuida sozinha — a conversa sai da fila, e se o cliente responder
+   * o Chatwoot a reabre na caixa.
+   *
+   * ⚠ Nasceu de um pedido do Régis (22/09/2026) que era sobre OUTRA coisa — a
+   * fatura que o agente Financeiro manda quando o cliente pede, e não a
+   * cobrança por etiqueta. O padrão chegou a ser "resolver" por uma hora, sem
+   * deploy; voltou a "atribuir" antes de mudar o trabalho de alguém.
    */
-  aposEnviar: z.enum(["resolver", "atribuir"]).default("resolver"),
+  aposEnviar: z.enum(["resolver", "atribuir"]).default("atribuir"),
   /** Com "atribuir": quem recebe a conversa, para a resposta chegar direto nele. */
   atribuirA: z.string().trim().max(80).default("Laercio"),
   mensagens: z

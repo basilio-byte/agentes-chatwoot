@@ -172,8 +172,8 @@ beforeEach(() => {
   falhaNoEnvio = null;
   falhaAoTirarEtiqueta = false;
   esperas = [];
-  // Os testes abaixo são do caminho "atribuir"; o "resolver" tem bloco próprio.
-  configDaCobranca = { aposEnviar: "atribuir" };
+  // O padrão é "atribuir"; o "resolver" tem bloco próprio no fim.
+  configDaCobranca = {};
   contatoComConversaAberta = false;
 });
 
@@ -384,11 +384,21 @@ describe("aviso de cobrança por etiqueta", () => {
   });
 });
 
-describe("depois do envio, a automação resolve (pedido do Régis, 22/09/2026)", () => {
+describe("com a opção \"resolver\", a automação resolve a conversa depois do envio", () => {
   const status = () => chamadas.filter((c) => c.startsWith("chatwoot:status"));
 
-  it("é o padrão: manda, anota, RESOLVE e comenta — sem atribuir a ninguém", async () => {
+  it("config gravada sem a opção continua ATRIBUINDO: nada muda para quem já usa", async () => {
     configDaCobranca = {};
+    tarefas = [tarefa("t1", ["cobranca-1"])];
+
+    await rodar();
+
+    expect(chamadas.some((c) => c.startsWith("chatwoot:atribuir"))).toBe(true);
+    expect(chamadas.some((c) => c.endsWith(":resolved"))).toBe(false);
+  });
+
+  it("manda, anota, RESOLVE e comenta — sem atribuir a ninguém", async () => {
+    configDaCobranca = { aposEnviar: "resolver" };
     tarefas = [tarefa("t1", ["cobranca-1"])];
 
     const r = await rodar();

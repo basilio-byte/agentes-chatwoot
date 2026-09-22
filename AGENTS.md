@@ -1390,9 +1390,9 @@ testadas em `cobranca/regras.ts`; a rodada em `cobranca/conferir.ts`.
 
 Etiqueta `cobranca-1` ou `cobranca-2` numa task da **Base de clientes**
 (lista 900701122530) → a mensagem daquela etiqueta vai ao cliente, no número do
-campo **CELULAR**, pela caixa **31** → nota interna com o link da task → a
-conversa é **resolvida pela automação** (ou atribuída, se a tela mandar) → a
-etiqueta sai e a task ganha um comentário. **A etiqueta é a fila**: o que ainda
+campo **CELULAR**, pela caixa **31** → a conversa é atribuída ao Laercio (ou
+resolvida pela automação, se a tela mandar) e ganha uma nota interna com o link
+da task → a etiqueta sai e a task ganha um comentário. **A etiqueta é a fila**: o que ainda
 a tem não foi enviado.
 
 - **Caixa 31 (WAHA), decisão do usuário.** Pela 29, oficial, fora da janela de
@@ -1418,11 +1418,14 @@ a tem não foi enviado.
   UMA vez e deixa a etiqueta: é ela que mostra o que não saiu. Corrigido o
   número, a chave muda e a task volta a ser tentada. Falha passageira (5xx) não
   comenta e tenta na rodada seguinte.
-- **Depois do envio, a automação resolve** (`aposEnviar: "resolver"`, o padrão
-  desde 22/09/2026, pedido do Régis ao testar: *"a gente podia seguir só com a
-  automação e ela resolver só?"*). Até então a conversa ia para o Laercio; a
-  opção "atribuir" continua na tela. Se o cliente responder, o Chatwoot reabre a
-  conversa na caixa. ⚠ **Só resolve o que ninguém está usando**: conversa com
+- **"Depois do envio" tem duas opções** (`aposEnviar`): **atribuir**, o padrão
+  e o que o Laercio usa, e **resolver**, em que a automação cuida sozinha — se o
+  cliente responder, o Chatwoot reabre a conversa na caixa. ⚠ A opção nasceu de
+  uma leitura errada: o pedido do Régis em 22/09/2026 (*"depois que ele envia a
+  fatura, ele atribui pra Laercio"*) era sobre a fatura que o agente Financeiro
+  manda quando o cliente PEDE (teste na conversa 13222), não sobre esta
+  cobrança, que no mesmo dia estava em uso real pelo Laercio. O padrão chegou a
+  ser "resolver" num commit publicado e voltou a "atribuir" antes do deploy. ⚠ **Só resolve o que ninguém está usando**: conversa com
   dono fica com ele, e conversa que já estava ABERTA antes do envio fica aberta —
   pode ter mensagem do cliente esperando, e resolver a esconderia da fila. A
   resolvida que a caixa 31 devolve continua resolvida, sem reabrir. O comentário

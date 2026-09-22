@@ -88,8 +88,8 @@ describe("configuração", () => {
     });
   });
 
-  it("depois do envio: resolve por padrão; atribuir exige a quem", () => {
-    expect(lerConfigCobranca(undefined).aposEnviar).toBe("resolver");
+  it("depois do envio: atribui por padrão; atribuir exige a quem", () => {
+    expect(lerConfigCobranca(undefined).aposEnviar).toBe("atribuir");
     const atual = lerConfigCobranca(undefined);
     const campos: Record<string, string> = {
       caixaId: "31",
