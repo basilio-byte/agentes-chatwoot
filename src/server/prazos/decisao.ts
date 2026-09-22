@@ -35,7 +35,14 @@ export type AcaoDoPrazo =
   /** CLIENTE: o cliente parou de responder — UMA mensagem de retomada. */
   | { tipo: "mensagem"; texto: string }
   /** CLIENTE: o cliente parou de responder — uma pessoa assume, com aviso. */
-  | { tipo: "atribuir"; atendente: string; aviso: string };
+  | { tipo: "atribuir"; atendente: string; aviso: string }
+  /**
+   * CLIENTE: o cliente parou de responder depois de o agente resolver o pedido
+   * — a conversa é resolvida, sem nada ao cliente. Exceção consciente à regra
+   * de que o robô não resolve conversa (pedido do Régis, 22/09/2026: a 2ª via
+   * que o Financeiro manda não precisa de ninguém depois).
+   */
+  | { tipo: "resolver" };
 
 /** Só os campos da mensagem do Chatwoot que a decisão lê. */
 export type MensagemDaConversa = {

@@ -183,7 +183,7 @@ export const prazosIntegration: IntegrationDefinition = {
       name: "prazo_resposta_do_cliente",
       categoria: "Prazos",
       description:
-        'Registra um prazo para o CLIENTE responder. Use no fim do seu turno, depois de fazer uma pergunta, e só quando as suas instruções mandarem agir se ele não responder em N minutos. Se o cliente escrever antes, o prazo cai sozinho; chamar de novo troca o prazo anterior. Se vencer, o sistema faz UMA coisa: manda a mensagem que você deixou (acao "mensagem") ou entrega a conversa à pessoa indicada, com o aviso (acao "atribuir"). Se uma pessoa da equipe assumir ou escrever na conversa, nada acontece.',
+        'Registra um prazo para o CLIENTE responder. Use no fim do seu turno, e só quando as suas instruções mandarem agir se ele não responder em N minutos. Se o cliente escrever antes, o prazo cai sozinho; chamar de novo troca o prazo anterior. Se vencer, o sistema faz UMA coisa: manda a mensagem que você deixou (acao "mensagem"), entrega a conversa à pessoa indicada, com o aviso (acao "atribuir"), ou resolve a conversa sem mandar nada (acao "resolver", só quando as instruções mandarem). Se uma pessoa da equipe assumir ou escrever na conversa, nada acontece.',
       requiresConfirmation: true,
       inputSchema: z.object({
         minutos: z
@@ -193,12 +193,16 @@ export const prazosIntegration: IntegrationDefinition = {
           .max(1440)
           .describe("Quantos minutos de silêncio do cliente, a partir de agora."),
         acao: z
-          .enum(["mensagem", "atribuir"])
-          .describe('"mensagem": manda o texto ao cliente. "atribuir": entrega a uma pessoa, com o texto como aviso.'),
+          .enum(["mensagem", "atribuir", "resolver"])
+          .describe(
+            '"mensagem": manda o texto ao cliente. "atribuir": entrega a uma pessoa, com o texto como aviso. "resolver": resolve a conversa, sem texto.',
+          ),
         texto: z
           .string()
-          .min(5)
-          .describe("O que o CLIENTE vai ler no vencimento: a mensagem de retomada, ou o aviso da passagem."),
+          .optional()
+          .describe(
+            'Com "mensagem" ou "atribuir": o que o CLIENTE vai ler no vencimento — a mensagem de retomada, ou o aviso da passagem.',
+          ),
         atendente: z
           .string()
           .optional()
@@ -211,14 +215,22 @@ export const prazosIntegration: IntegrationDefinition = {
       async execute(entrada, ctx) {
         const args = entrada as {
           minutos: number;
-          acao: "mensagem" | "atribuir";
-          texto: string;
+          acao: "mensagem" | "atribuir" | "resolver";
+          texto?: string;
           atendente?: string;
           motivo: string;
         };
 
         const fora = foraDoAtendimento(ctx);
         if (fora) return { registrado: false, erro: fora };
+
+        const texto = args.texto?.trim() ?? "";
+        if (args.acao !== "resolver" && texto.length < 5) {
+          return {
+            registrado: false,
+            erro: `Com acao "${args.acao}", escreva em texto o que o cliente vai ler no vencimento.`,
+          };
+        }
 
         if (args.acao === "atribuir" && !args.atendente?.trim()) {
           return {
@@ -282,8 +294,10 @@ export const prazosIntegration: IntegrationDefinition = {
           donoNome: null,
           acao:
             args.acao === "atribuir"
-              ? { tipo: "atribuir", atendente: nomeDestino!, aviso: args.texto }
-              : { tipo: "mensagem", texto: args.texto },
+              ? { tipo: "atribuir", atendente: nomeDestino!, aviso: texto }
+              : args.acao === "resolver"
+                ? { tipo: "resolver" }
+                : { tipo: "mensagem", texto },
           motivo: args.motivo,
         });
 
@@ -293,7 +307,9 @@ export const prazosIntegration: IntegrationDefinition = {
           observacao:
             args.acao === "atribuir"
               ? `Se o cliente não responder até lá, ele recebe o aviso e a conversa passa para ${nomeDestino}. Se responder antes, nada acontece. Termine o seu turno normalmente.`
-              : "Se o cliente não responder até lá, ele recebe a mensagem de retomada, uma vez só. Se responder antes, nada acontece. Termine o seu turno normalmente.",
+              : args.acao === "resolver"
+                ? "Se o cliente não responder até lá, a conversa é resolvida, sem nada para ele. Se responder antes, nada acontece. Termine o seu turno normalmente."
+                : "Se o cliente não responder até lá, ele recebe a mensagem de retomada, uma vez só. Se responder antes, nada acontece. Termine o seu turno normalmente.",
         };
       },
     },

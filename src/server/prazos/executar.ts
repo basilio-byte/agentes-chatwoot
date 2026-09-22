@@ -9,6 +9,7 @@ import { humanidadeDoDono } from "@/server/integrations/chatwoot/regras";
 import {
   devolverAoAgente,
   entregarAoHumano,
+  marcarResolvida,
 } from "@/server/integrations/chatwoot/resolucao";
 import { agendarAtendimento } from "@/server/queue/atendimento";
 import { passarTarefaDoCrm, type AtualizacaoDoCrm } from "./crm";
@@ -41,6 +42,7 @@ const acaoSchema = z.discriminatedUnion("tipo", [
     atendente: z.string().min(1),
     aviso: z.string().min(1),
   }),
+  z.object({ tipo: z.literal("resolver") }),
 ]);
 
 type Prazo = NonNullable<Awaited<ReturnType<typeof db.prazoDeConversa.findFirst>>>;
@@ -372,6 +374,25 @@ async function agir(
         `⏱️ Cliente sem responder há ${prazo.minutos} min: mensagem de retomada enviada. Motivo: ${prazo.motivo}`,
       );
       return { status: PrazoStatus.EXECUTADO, resultado: "mensagem de retomada enviada" };
+    }
+
+    case "resolver": {
+      // Nota antes: quem reabrir a conversa (o cliente escrevendo de novo, ou
+      // alguém da equipe) lê por que ela foi resolvida.
+      await notaInterna(
+        cliente,
+        conversaId,
+        `⏱️ Cliente sem responder há ${prazo.minutos} min: conversa resolvida pelo agente. Motivo: ${prazo.motivo}`,
+      );
+      await cliente.alternarStatus(conversaId, "resolved");
+      // Sem esperar o webhook: o corte do histórico vale a partir de agora, e
+      // quando o cliente voltar o atendimento começa do zero, na porta.
+      try {
+        await marcarResolvida(conversaId);
+      } catch (erro) {
+        logger.warn({ conversa: conversaId, erro }, "prazo: resolvida no Chatwoot, mas não no banco");
+      }
+      return { status: PrazoStatus.EXECUTADO, resultado: "conversa resolvida" };
     }
 
     case "atribuir": {

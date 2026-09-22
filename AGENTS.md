@@ -2298,8 +2298,11 @@ As regras:
   conversa de caixa com Agent Bot, e `pending` não aparece na visualização
   padrão — ficaria invisível para a equipe. O bot **age** em `open` e
   `pending`, mas **termina sempre em `open`** (`precisaAbrir`). E nunca
-  resolve: encerrar é decisão de pessoa. A exceção consciente é a pesquisa de
-  satisfação, que resolve no fim dela — ver "Pesquisa de satisfação".
+  resolve: encerrar é decisão de pessoa. As exceções conscientes são duas: a
+  pesquisa de satisfação, que resolve no fim dela — ver "Pesquisa de
+  satisfação" —, e o prazo do cliente com `acao: "resolver"`, que o agente só
+  registra quando o prompt manda (hoje, o Financeiro depois da 2ª via) — ver
+  "Prazos da conversa".
 - **Resolver corta o histórico** (`Conversation.historicoDesde`). Reabriu, começa
   do zero: o mesmo cliente costuma voltar por outro assunto, e arrastar contexto
   antigo faz o agente responder a pergunta errada.
@@ -2458,6 +2461,16 @@ havia ninguém vendo o tempo passar.
 - **Um pendente por conversa e tipo**, garantido pelo índice parcial
   `PrazoDeConversa_um_pendente`. Registrar de novo substitui o anterior — é
   assim que o prazo "zera a cada resposta".
+- **O prazo do CLIENTE também RESOLVE a conversa** (`acao: "resolver"`,
+  22/09/2026). Pedido do Régis ao testar a 2ª via do Financeiro: *"depois que
+  ele envia a fatura, ele atribui pra Laercio, a gente podia seguir só com a
+  automação e ela resolver só?"*. O Financeiro deixou de entregar a 2ª via ao
+  Laércio (prompt v15) e registra o prazo; se o cliente ficar em silêncio, o
+  vigia deixa nota interna, resolve no Chatwoot e marca no banco
+  (`marcarResolvida`), sem mandar nada ao cliente. As travas são as de todo
+  prazo do cliente: cliente escreveu, alguém da equipe escreveu (nota conta),
+  pessoa dona ou outro agente dono — não resolve. É a segunda exceção ao "o
+  robô nunca resolve", e só existe onde o prompt manda registrar.
 - **Tarde demais, descarta.** Worker fora do ar faz o prazo ser visto atrasado;
   passou do próprio prazo (piso de 10 min) depois do vencimento, não age.
 - **Desligar é botão de parada.** Integração desligada, na tela global ou na do
