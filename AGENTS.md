@@ -1549,8 +1549,9 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
   aqui é gasto na conta de outra pessoa — a reserva desconta do pacote de horas
   DELA.
   ⚠ **O caso que motivou foi do nosso agente** (conversa 13992, 16/09/2026, a
-  primeira venda autônoma): "pode colocar no nome de Aniel Praxedes?", o agente
-  achou o cadastro pelo nome, reservou e faturou em nome de um terceiro.
+  primeira venda autônoma): o contato pediu para pôr a reserva no nome de outra
+  pessoa, o agente achou o cadastro dela pelo nome, reservou e faturou em nome
+  de um terceiro.
   - **Só a fala do cliente prova**: no histórico, `user` é o que entrou pelo
     cliente e `assistant` é robô ou equipe. Digitar basta, com ou sem
     pontuação; foto do documento vale porque a leitura de mídia a vira texto.
