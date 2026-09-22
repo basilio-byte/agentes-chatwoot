@@ -1382,6 +1382,43 @@ padrão) sai uma nota interna para quem atende; ao fechar, a etiqueta é trocada
   pegar ganha as duas notas. A automação 32 do Chatwoot (que troca a etiqueta ao
   ver a nota do n8n) pode ficar: sem o fluxo, ela nunca dispara.
 
+### Materiais prontos: as imagens dos macros do Chatwoot
+
+Integração `MATERIAIS`, no registry e **opt-in por agente**, como os Prazos:
+ferramenta `materiais_enviar`. Pedido do usuário em 22/09/2026 (checklist da
+equipe: formatos, capacidades e "se possível foto"). Regras puras e testadas em
+`materiais/macros.ts`; a ferramenta em `integrations/materiais/`.
+
+- **A fonte é o macro, mantido pela equipe.** Cada sala tem um macro com a
+  "Capa" (nome, capacidade, unidade, comodidades) e as "Fotos". Trocou a
+  imagem lá, o agente passa a mandar a nova, sem deploy. Na conversa 14149 o
+  cliente perguntou "Tem fotos das salas?" e o Diego mandou quatro imagens à
+  mão — é isso que o agente faz.
+- ⚠ **O macro NÃO é executado.** Pela API, a execução sairia em nome da pessoa
+  dona do token — e mensagem de `user` conta como "a equipe respondeu" para
+  prazos, NPS e janela — e rodaria o resto do macro (atribuir, etiquetar,
+  mandar texto). Só os arquivos saem, pelo robô da conversa, um por mensagem,
+  como a execução do macro faz.
+- ⚠ **Os arquivos são os das AÇÕES, não os de `files`.** `files` guarda também
+  versões antigas (o macro da Sala 01 ainda carrega a foto de antes da capa
+  nova); o que o macro manda hoje são os ids em `send_attachment`.
+- **Quais macros viram material:** globais, com arquivo, e com o nome começando
+  por um prefixo da configuração. Padrão `[SR]`, `[SA]`, `[CA]`, `[A]`; linha
+  com `-` exclui, e o padrão já tira `-[SA] Promoção` (promoção de maio/2025
+  que o prefixo levaria junto — achada ao rodar contra os macros reais).
+- ⚠ **Escolha por palavra INTEIRA.** Por trecho, "formato U" casava com todo
+  nome que tivesse a letra u. Mais de um candidato devolve a lista: a foto da
+  sala errada é o cliente chegando na porta esperando outra sala.
+- **Antes de mandar, confere ao vivo** (`podeAgir`): com pessoa dona ou
+  conversa resolvida, nada sai. No playground só simula; fora de conversa,
+  recusa. O mesmo material sai uma vez por turno (`sinais.materiaisEnviados`).
+- **Mandou, marca `avisouCliente`**: a rede de segurança não dispara e o turno
+  não é refeito — refazer reenviaria as imagens.
+- **O upload multipart foi provado contra um servidor HTTP de verdade** (o
+  Chatwoot falso da 4600, com os macros reais e as imagens baixadas): token do
+  robô, `attachments[]`, nome com acento e travessão, bytes idênticos. ⚠ **Contra
+  o Chatwoot real, não** — a primeira foto enviada em produção é quem prova.
+
 ### Conexa: armadilhas da API v2
 
 Achadas no primeiro uso real (09/09 a 15/09/2026), depois de semanas de teste

@@ -32,6 +32,11 @@ export class ChatwootClient {
     return this.config.accountId;
   }
 
+  /** A instância. É a única origem de onde se baixa arquivo de macro. */
+  get baseUrl(): string {
+    return this.config.baseUrl;
+  }
+
   private async requisitar<T>(
     caminho: string,
     init: RequestInit = {},
@@ -343,6 +348,57 @@ export class ChatwootClient {
         }),
       },
     );
+  }
+
+  /**
+   * Manda UM arquivo na conversa, como mensagem de saída de quem é dono do
+   * token — aqui, o robô. Multipart, porque é assim que a API recebe anexo.
+   *
+   * Sem texto de propósito: é o que a execução de um macro faz (uma mensagem por
+   * `send_attachment`), e é o formato que o canal já entrega todo dia.
+   */
+  async enviarArquivo(
+    conversationId: number,
+    arquivo: { nome: string; tipo: string; bytes: Buffer },
+  ): Promise<{ id: number }> {
+    const corpo = new FormData();
+    corpo.append("message_type", "outgoing");
+    corpo.append("private", "false");
+    corpo.append(
+      "attachments[]",
+      new Blob([new Uint8Array(arquivo.bytes)], { type: arquivo.tipo }),
+      arquivo.nome,
+    );
+
+    // Fora do `requisitar`: ele fixa `Content-Type: application/json`, e o
+    // multipart precisa que o fetch escreva o cabeçalho com o boundary.
+    const resposta = await fetch(this.url(`/conversations/${conversationId}/messages`), {
+      method: "POST",
+      headers: { api_access_token: this.token },
+      body: corpo,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!resposta.ok) {
+      const texto = await resposta.text().catch(() => "");
+      throw new ChatwootApiError(resposta.status, texto.slice(0, 300));
+    }
+    return (await resposta.json()) as { id: number };
+  }
+
+  /**
+   * Os macros da conta, com as ações e os arquivos anexados.
+   *
+   * Leitura: token de usuário. ⚠ `files` guarda também versões ANTIGAS dos
+   * anexos (o macro de uma sala trocou a foto e o arquivo velho continuou lá);
+   * o que o macro manda hoje são os ids em `send_attachment`.
+   */
+  async listarMacros(): Promise<MacroChatwoot[]> {
+    const dados = await this.requisitar<{ payload?: MacroChatwoot[] } | MacroChatwoot[]>(
+      "/macros",
+      {},
+      true,
+    );
+    return Array.isArray(dados) ? dados : (dados?.payload ?? []);
   }
 
   /** `open` devolve a conversa para a fila humana; `pending` volta para o bot. */
@@ -709,6 +765,22 @@ export type MensagemChatwoot = {
    * por versão do Chatwoot e por canal (WhatsApp, Instagram, widget).
    */
   attachments?: unknown[] | null;
+};
+
+/** Um macro como `GET /macros` devolve (conferido na 4.16.2, 21/09/2026). */
+export type MacroChatwoot = {
+  id: number;
+  name: string;
+  /** `global` ou `personal`. */
+  visibility?: string | null;
+  actions?: Array<{ action_name: string; action_params?: unknown[] | null }> | null;
+  /** Ausente quando o macro não tem anexo. */
+  files?: Array<{
+    blob_id: number;
+    file_url: string;
+    file_type?: string | null;
+    filename?: string | null;
+  }> | null;
 };
 
 export class ChatwootApiError extends Error {

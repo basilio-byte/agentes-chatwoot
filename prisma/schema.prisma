@@ -496,6 +496,11 @@ enum IntegrationProvider {
   /// quando ela vence. Função do sistema, sem modelo, FORA do registry como o
   /// NPS. `lastCheckedAt`/`status`/`lastError` guardam a última conferência.
   JANELA
+  /// Materiais prontos da equipe: o agente manda ao cliente as imagens de um
+  /// macro do Chatwoot (capa e fotos das salas, formatos do auditório,
+  /// catálogos). Sem credencial — usa o robô da conversa e o token de leitura.
+  /// No registry, como os Prazos, para ser OPT-IN por agente.
+  MATERIAIS
 }
 
 enum IntegrationStatus {

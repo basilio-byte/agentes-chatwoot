@@ -8,6 +8,7 @@ import { googleIntegration } from "./google";
 import { openaiIntegration } from "./openai";
 import { zapsignIntegration } from "./zapsign";
 import { prazosIntegration } from "./prazos";
+import { materiaisIntegration } from "./materiais";
 
 /**
  * Registro central de integrações.
@@ -41,6 +42,9 @@ const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = 
   // Sem credencial e sem terceiro: o agente registra um prazo na conversa e o
   // vigia executa. Provider próprio para ser opt-in por agente.
   [prazosIntegration.provider]: prazosIntegration,
+  // Imagens dos macros do Chatwoot, pelo robô da conversa. Provider próprio,
+  // como os Prazos, para mandar arquivo ao cliente ser opt-in por agente.
+  [materiaisIntegration.provider]: materiaisIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {

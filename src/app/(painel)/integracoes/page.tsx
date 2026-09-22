@@ -24,6 +24,11 @@ import { OpenAIConfigForm } from "@/components/openai-config";
 import { LeiturasDeMidia } from "@/components/leituras-de-midia";
 import { DocumentosConfigForm } from "@/components/documentos-config";
 import { PrazosConfigForm } from "@/components/prazos-config";
+import { MateriaisConfigForm } from "@/components/materiais-config";
+import {
+  configMateriaisSchema,
+  listarMateriais,
+} from "@/server/integrations/materiais";
 import { GoogleConfigForm } from "@/components/google-config";
 import { NpsConfigForm } from "@/components/nps-config";
 import { lerConfigNps } from "@/server/nps/config";
@@ -42,6 +47,7 @@ import {
   FileSignature,
   Hourglass,
   IdCard,
+  Images,
   ListChecks,
   MessagesSquare,
   Star,
@@ -112,6 +118,24 @@ export default async function IntegracoesPage({
   );
   const toolsPrazos =
     obterIntegracao(IntegrationProvider.PRAZOS)?.tools.length ?? 0;
+  const materiais = registros.find(
+    (i) => i.provider === IntegrationProvider.MATERIAIS,
+  );
+  const configMateriais = configMateriaisSchema.parse(materiais?.config ?? {});
+  // A lista de verdade, lida dos macros do Chatwoot (cache de 5 min): é o que
+  // os agentes conseguem mandar agora. Falhar aqui não derruba a página.
+  const materiaisDisponiveis = await listarMateriais(configMateriais.prefixos).then(
+    (lista) => ({ lista, erro: null as string | null }),
+    (erro: unknown) => ({
+      lista: [] as Awaited<ReturnType<typeof listarMateriais>>,
+      erro: erro instanceof Error ? erro.message : String(erro),
+    }),
+  );
+  const agentesComMateriais = materiais
+    ? await db.agentIntegration.count({
+        where: { integrationId: materiais.id, enabled: true },
+      })
+    : 0;
   const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
   const configNps = lerConfigNps(nps?.config);
   // Sem telefone nem nome: a tela é aberta pela equipe inteira.
@@ -541,6 +565,71 @@ export default async function IntegracoesPage({
 
                 <PrazosConfigForm
                   habilitada={prazos?.enabled ?? false}
+                  somenteLeitura={!editavel}
+                />
+              </Card>
+            ),
+          },
+          {
+            id: "materiais",
+            rotulo: "Materiais",
+            icone: <Images size={14} aria-hidden />,
+            contador: materiaisDisponiveis.lista.length,
+            conteudo: (
+              <Card className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="font-medium">Fotos e materiais prontos</h2>
+                  {materiais?.enabled ? (
+                    <Badge tone="success">ligada</Badge>
+                  ) : (
+                    <Badge>desligada</Badge>
+                  )}
+                </div>
+
+                <p className="text-sm text-muted">
+                  O agente manda ao cliente as imagens dos macros do Chatwoot —
+                  capa e fotos das salas, formatos do auditório, catálogos —
+                  quando o cliente pede. A equipe continua mantendo as imagens
+                  nos macros: trocou lá, o agente passa a mandar a nova. Agentes
+                  com a integração ligada: <strong>{agentesComMateriais}</strong>.
+                </p>
+
+                <Aviso>
+                  Só os <strong>arquivos</strong> do macro saem, pelo robô da
+                  conversa — o macro não é executado, então nenhum texto,
+                  atribuição ou etiqueta dele acontece. Antes de mandar, o
+                  sistema confere ao vivo que a conversa ainda é do robô.
+                </Aviso>
+
+                {materiaisDisponiveis.erro ? (
+                  <Aviso tone="danger">
+                    Não consegui ler os macros: {materiaisDisponiveis.erro}
+                  </Aviso>
+                ) : materiaisDisponiveis.lista.length === 0 ? (
+                  <Aviso>
+                    Nenhum macro global com imagem começa pelos prefixos abaixo.
+                  </Aviso>
+                ) : (
+                  <Tabela
+                    cabecalho={
+                      <>
+                        <th>Material (nome do macro)</th>
+                        <th className="text-right">Imagens</th>
+                      </>
+                    }
+                  >
+                    {materiaisDisponiveis.lista.map((m) => (
+                      <tr key={m.id}>
+                        <td>{m.nome}</td>
+                        <td className="text-right tabular-nums">{m.arquivos.length}</td>
+                      </tr>
+                    ))}
+                  </Tabela>
+                )}
+
+                <MateriaisConfigForm
+                  habilitada={materiais?.enabled ?? false}
+                  prefixos={configMateriais.prefixos.join("\n")}
                   somenteLeitura={!editavel}
                 />
               </Card>

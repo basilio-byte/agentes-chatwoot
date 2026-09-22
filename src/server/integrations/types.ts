@@ -38,6 +38,11 @@ export type SinaisDoTurno = {
    * terminou mudo e mandaria a resposta de contorno por cima do aviso.
    */
   avisouCliente?: boolean;
+  /**
+   * Materiais (macros) já enviados ao cliente neste turno. O modelo repete
+   * chamada, e mandar a mesma foto duas vezes é ruído na conversa do cliente.
+   */
+  materiaisEnviados?: number[];
 };
 
 export type ToolContext = {
