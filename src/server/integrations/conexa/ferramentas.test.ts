@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { IntegrationProvider } from "@/generated/prisma/enums";
+import { IntegrationProvider, RunSource } from "@/generated/prisma/enums";
 import type { ToolContext } from "../types";
 import { ConexaApiError } from "./client";
 import { conexaIntegration, TETO_DA_AGENDA } from "./index";
@@ -53,6 +53,9 @@ const ctx = (): ToolContext => ({
   },
   credential: "tok_123",
   agentId: "salas-de-reuniao",
+  // Origem sem cliente do outro lado: estes testes travam a MECÂNICA de cada
+  // tool. A prova de identidade de quem conversa tem bloco próprio, no fim.
+  source: RunSource.TRIGGER,
 });
 
 /** Uma reserva como `GET /room/bookings` devolve. */
@@ -650,5 +653,325 @@ describe("conexa_faturar_reserva", () => {
     conexa({ postStatus: 422 });
 
     await expect(faturar()).rejects.toBeInstanceOf(ConexaApiError);
+  });
+});
+
+// ⚠ Pedido do usuário em 22/09/2026: com o NOME de um cliente cadastrado dava
+// para reservar em nome dele. A prova é o CPF ou o CNPJ do cadastro escrito
+// pelo CLIENTE na conversa — digitado basta (`identidade.ts`).
+describe("prova de identidade de quem conversa", () => {
+  const BASE = "/index.php/api/v2";
+  const CPF = "792.221.104-04";
+  const CNPJ = "00.394.460/0058-87";
+
+  const naConversa = (
+    historico: { role: "user" | "assistant"; content: string }[],
+    mensagem = "pode reservar",
+    source: RunSource = RunSource.CHATWOOT,
+  ): ToolContext => ({ ...ctx(), source, historico, mensagem, chatwootConversationId: 9329 });
+
+  const clienteDaApi = (extra: Record<string, unknown> = {}) => ({
+    customerId: 975,
+    name: "César Guilherme Suassuna",
+    isActive: true,
+    companyId: 3,
+    naturalPerson: { cpf: CPF },
+    emailsMessage: ["cesar@exemplo.com"],
+    phones: ["8499990000"],
+    ...extra,
+  });
+
+  /** Responde como o Conexa, pela rota. */
+  const conexa = (opcoes: { cliente?: Record<string, unknown>; pessoas?: unknown[] } = {}) =>
+    responder(({ url, metodo }) => {
+      const rota = url.pathname.replace(BASE, "");
+      if (rota === "/customer/975") return { corpo: opcoes.cliente ?? clienteDaApi() };
+      if (rota === "/persons") {
+        return {
+          corpo: {
+            data: opcoes.pessoas ?? [{ personId: 777, name: "César", isActive: true }],
+            pagination: { hasNext: false },
+          },
+        };
+      }
+      if (rota === "/room/bookings") return { corpo: { data: [], pagination: { hasNext: false } } };
+      if (metodo === "POST" && rota === "/room/booking") return { corpo: { id: 28400 } };
+      if (rota === "/room/booking/28400") {
+        return { corpo: { ...reserva(28400), saleId: 190001, status: "notBilled", isBilled: false } };
+      }
+      if (rota === "/charges") return { corpo: { data: [], pagination: { hasNext: false } } };
+      return { corpo: {} };
+    });
+
+  const rotas = () => chamadas.map((c) => `${c.metodo} ${c.url.pathname.replace(BASE, "")}`);
+  const gravou = () => chamadas.some((c) => c.metodo !== "GET");
+
+  const pedido = { clienteId: 975, sala: "2107", data: "2026-09-15", inicio: "16:00", fim: "17:00" };
+  const reservar = (c: ToolContext) =>
+    tool("conexa_criar_reserva").execute(pedido, c) as Promise<Record<string, unknown>>;
+
+  it("⚠ só o nome do cliente cadastrado NÃO reserva — e a recusa não conta o documento", async () => {
+    conexa();
+
+    const r = await reservar(
+      naConversa([{ role: "user", content: "Sou o César Guilherme Suassuna, já sou cliente" }]),
+    );
+
+    expect(r.criada).toBe(false);
+    expect(String(r.comoSeguir)).toContain("CPF");
+    expect(gravou()).toBe(false);
+    // Não leu nem a agenda: recusa antes de qualquer outra coisa.
+    expect(rotas()).not.toContain("GET /room/bookings");
+    expect(JSON.stringify(r)).not.toContain("792");
+  });
+
+  it("CPF digitado pelo cliente, com pontuação ou sem, reserva", async () => {
+    for (const digitado of [CPF, "79222110404"]) {
+      conexa();
+      const r = await reservar(naConversa([{ role: "user", content: `meu cpf é ${digitado}` }]));
+      expect(r.criada).toBe(true);
+    }
+  });
+
+  it("o CPF que chegou na mensagem do turno também vale", async () => {
+    conexa();
+    const r = await reservar(naConversa([], `César, ${CPF}`));
+    expect(r.criada).toBe(true);
+  });
+
+  it("CNPJ digitado vale para cliente empresa", async () => {
+    conexa({ cliente: clienteDaApi({ naturalPerson: undefined, legalPerson: { cnpj: CNPJ } }) });
+    const r = await reservar(naConversa([{ role: "user", content: `CNPJ ${CNPJ}` }]));
+    expect(r.criada).toBe(true);
+  });
+
+  it("⚠ o documento escrito pelo ROBÔ não prova — o impostor não pode só confirmar", async () => {
+    conexa();
+
+    const r = await reservar(
+      naConversa(
+        [
+          { role: "user", content: "Sou o César" },
+          { role: "assistant", content: `Achei o cadastro com CPF ${CPF}, é você?` },
+        ],
+        "sim, sou eu",
+      ),
+    );
+
+    expect(r.criada).toBe(false);
+    expect(gravou()).toBe(false);
+  });
+
+  it("quem reserva pela empresa com o PRÓPRIO CPF prova, e é ela quem vai usar a sala", async () => {
+    conexa({
+      cliente: clienteDaApi({ naturalPerson: undefined, legalPerson: { cnpj: CNPJ } }),
+      pessoas: [
+        { personId: 777, name: "Sócio", isActive: true, cpf: "017.316.314-99" },
+        { personId: 778, name: "Funcionária", isActive: true, cpf: CPF },
+      ],
+    });
+
+    const r = await reservar(naConversa([{ role: "user", content: `sou funcionária, cpf ${CPF}` }]));
+
+    expect(r.criada).toBe(true);
+    // Duas pessoas no cadastro, e mesmo assim não perguntou: a prova disse quem é.
+    expect(chamadas.find((c) => c.metodo === "POST")?.corpo).toMatchObject({ personId: 778 });
+  });
+
+  it("CPF de pessoa INATIVA não fala mais pela empresa", async () => {
+    conexa({
+      cliente: clienteDaApi({ naturalPerson: undefined, legalPerson: { cnpj: CNPJ } }),
+      pessoas: [{ personId: 778, name: "Ex-sócio", isActive: false, cpf: CPF }],
+    });
+
+    const r = await reservar(naConversa([{ role: "user", content: CPF }]));
+
+    expect(r.criada).toBe(false);
+    expect(gravou()).toBe(false);
+  });
+
+  it("não conseguir ler o cadastro recusa, em vez de reservar sem conferir", async () => {
+    responder(() => ({ status: 500, corpo: {} }));
+
+    const r = await reservar(naConversa([{ role: "user", content: CPF }]));
+
+    expect(r.criada).toBe(false);
+    expect(gravou()).toBe(false);
+  });
+
+  it("na chamada interna, o documento dentro do PEDIDO não prova", async () => {
+    conexa();
+
+    const r = await reservar(
+      naConversa(
+        [{ role: "user", content: "Sou o César" }],
+        `[Pedido interno de Salas — não é mensagem do cliente]\nReservar para CPF ${CPF}`,
+        RunSource.INTERNO,
+      ),
+    );
+
+    expect(r.criada).toBe(false);
+  });
+
+  it("turno em segundo plano sobre a conversa não reserva, nem com o documento na transcrição", async () => {
+    conexa();
+
+    const r = await reservar(
+      naConversa([], `[transcrição do atendimento]\n${CPF}`, RunSource.CONVERSA_PARADA),
+    );
+
+    expect(r.criada).toBe(false);
+    expect(chamadas).toEqual([]);
+  });
+
+  it("na mesa, quem pede é a equipe: reserva sem ler o cadastro", async () => {
+    conexa();
+
+    const r = await reservar({ ...ctx(), source: RunSource.MESA, mensagem: "reservar para o César" });
+
+    expect(r.criada).toBe(true);
+    expect(rotas()).not.toContain("GET /customer/975");
+  });
+
+  it("faturar sem a prova não lê cobrança nem cria", async () => {
+    conexa();
+
+    const r = (await tool("conexa_faturar_reserva").execute(
+      { reservaId: 28400 },
+      naConversa([{ role: "user", content: "Sou o César" }]),
+    )) as Record<string, unknown>;
+
+    expect(r.faturada).toBe(false);
+    expect(rotas()).not.toContain("GET /charges");
+    expect(gravou()).toBe(false);
+  });
+
+  it("faturar com a prova segue o caminho de sempre", async () => {
+    conexa();
+
+    await tool("conexa_faturar_reserva").execute(
+      { reservaId: 28400 },
+      naConversa([{ role: "user", content: CPF }]),
+    );
+
+    expect(rotas()).toContain("POST /charge");
+  });
+
+  it("cancelar e alterar a reserva também exigem a prova", async () => {
+    conexa();
+    const semProva = naConversa([{ role: "user", content: "Sou o César" }]);
+
+    const c = (await tool("conexa_cancelar_reserva").execute(
+      { reservaId: 28400 },
+      semProva,
+    )) as Record<string, unknown>;
+    const a = (await tool("conexa_alterar_reserva").execute(
+      { reservaId: 28400, inicio: "18:00" },
+      semProva,
+    )) as Record<string, unknown>;
+
+    expect(c.cancelada).toBe(false);
+    expect(a.alterada).toBe(false);
+    expect(gravou()).toBe(false);
+  });
+
+  it("⚠ ver cliente achado só pelo nome esconde documento e contato", async () => {
+    conexa();
+
+    const r = (await tool("conexa_ver_cliente").execute(
+      { clienteId: 975 },
+      naConversa([{ role: "user", content: "Sou o César Guilherme Suassuna" }]),
+    )) as Record<string, unknown>;
+
+    expect(r).toMatchObject({ id: 975, nome: "César Guilherme Suassuna" });
+    expect(r).not.toHaveProperty("cpf");
+    expect(r).not.toHaveProperty("emails");
+    expect(r).not.toHaveProperty("telefones");
+    expect(JSON.stringify(r)).not.toContain("792");
+  });
+
+  describe("cobranças (Financeiro)", () => {
+    /** Cobrança pendente do cliente 975, e a venda dela. */
+    const cobrancas = () =>
+      responder(({ url, metodo }) => {
+        const rota = url.pathname.replace(BASE, "");
+        if (rota === "/customer/975") return { corpo: clienteDaApi() };
+        if (rota === "/persons") return { corpo: { data: [], pagination: { hasNext: false } } };
+        if (rota === "/charges") {
+          return {
+            corpo: {
+              data: [{ chargeId: 7001, customerId: 975, status: "unpaid", billetUrl: "https://b/1" }],
+              pagination: { hasNext: false },
+            },
+          };
+        }
+        if (rota === "/charge/7001") {
+          return { corpo: { chargeId: 7001, customerId: 975, status: "unpaid", billetUrl: "https://b/1" } };
+        }
+        if (rota === "/charge/pix/7001") return { corpo: { copyPasteCode: "000201pix" } };
+        if (rota === "/sale/190001") return { corpo: { saleId: 190001, customerId: 975 } };
+        if (metodo === "POST" && rota === "/charge") return { corpo: { id: 7002 } };
+        return { status: 404, corpo: {} };
+      });
+    const semProva = () => naConversa([{ role: "user", content: "Sou o César, quero a 2ª via" }]);
+    const comProva = () => naConversa([{ role: "user", content: `2ª via, cpf ${CPF}` }]);
+
+    it("⚠ listar cobranças de quem só disse o nome: recusa sem consultar", async () => {
+      cobrancas();
+      const r = (await tool("conexa_listar_cobrancas").execute({ clienteId: 975 }, semProva())) as Record<string, unknown>;
+      expect(r).not.toHaveProperty("cobrancas");
+      expect(String(r.comoSeguir)).toContain("CPF");
+      expect(rotas()).not.toContain("GET /charges");
+    });
+
+    it("listar cobranças depois do documento digitado segue como sempre", async () => {
+      cobrancas();
+      const r = (await tool("conexa_listar_cobrancas").execute({ clienteId: 975 }, comProva())) as Record<string, unknown>;
+      expect(r.total).toBe(1);
+    });
+
+    it("ver a cobrança sem a prova não entrega boleto nem link", async () => {
+      cobrancas();
+      const r = await tool("conexa_ver_cobranca").execute({ cobrancaId: 7001 }, semProva());
+      expect(JSON.stringify(r)).not.toContain("https://b/1");
+    });
+
+    it("Pix sem a prova não chega a ser pedido ao Conexa", async () => {
+      cobrancas();
+      const r = (await tool("conexa_pix_da_cobranca").execute({ cobrancaId: 7001 }, semProva())) as Record<string, unknown>;
+      expect(r).not.toHaveProperty("copiaECola");
+      expect(rotas()).not.toContain("GET /charge/pix/7001");
+    });
+
+    it("Pix com a prova sai", async () => {
+      cobrancas();
+      const r = await tool("conexa_pix_da_cobranca").execute({ cobrancaId: 7001 }, comProva());
+      expect(r).toEqual({ copiaECola: "000201pix" });
+    });
+
+    it("criar cobrança das vendas de um cliente sem a prova não grava", async () => {
+      cobrancas();
+      const r = (await tool("conexa_criar_cobranca").execute({ vendaIds: [190001] }, semProva())) as Record<string, unknown>;
+      expect(r.criada).toBe(false);
+      expect(gravou()).toBe(false);
+    });
+
+    it("gatilho (a cobrança do legba) segue sem ler o cadastro", async () => {
+      cobrancas();
+      const r = (await tool("conexa_listar_cobrancas").execute({ clienteId: 975 }, ctx())) as Record<string, unknown>;
+      expect(r.total).toBe(1);
+      expect(rotas()).not.toContain("GET /customer/975");
+    });
+  });
+
+  it("ver cliente depois que ele digitou o documento mostra tudo", async () => {
+    conexa();
+
+    const r = await tool("conexa_ver_cliente").execute(
+      { clienteId: 975 },
+      naConversa([{ role: "user", content: `cpf ${CPF}` }]),
+    );
+
+    expect(r).toMatchObject({ cpf: CPF, emails: ["cesar@exemplo.com"] });
   });
 });

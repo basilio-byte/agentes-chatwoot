@@ -15,8 +15,9 @@ Plataforma de agentes de I.A. que atendem no Chatwoot da Seahub Coworking.
 
 - **Single-tenant.** Atende só a Seahub. Não existe `tenantId` e não se deve
   adicionar sem pedido explícito.
-- **Chatwoot é self-hosted.** A versão exata ainda não foi confirmada — a API de
-  Agent Bots mudou entre versões, então confira antes de escrever o cliente (Fase 2).
+- **Chatwoot é self-hosted, versão 4.16.2** (`GET /api`, conferido em
+  18/09/2026). A API de Agent Bots mudou entre versões: se a instância for
+  atualizada, confira antes de mexer no cliente.
 - **ERP Conexa:** a documentação chegou em 31/07/2026. A fonte é a coleção
   Postman em `docs/`, e a leitura humana dela está em
   **`docs/02-api-conexa.md`** (83 endpoints, extraídos). Fora do que está ali,
@@ -1459,6 +1460,33 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
 - ⚠ **O vencimento da cobrança é o dia da reserva.** Sem `dueDate`, o Conexa
   vence HOJE, e a reserva feita no sábado para segunda nasceria vencida no
   domingo, com juros antes de o cliente usar a sala.
+- ⚠ **Na conversa, nada sai em nome de um cliente sem o CPF ou o CNPJ do
+  cadastro escrito por ELE** (`conexa/identidade.ts`, pedido do usuário em
+  22/09/2026: *"abre brecha pra qualquer pessoa reservar em nome de
+  terceiros"*). Criar, faturar, alterar e cancelar reserva recusam sem a prova;
+  listar, ver, Pix e criar cobrança também (o Financeiro, no mesmo dia); e
+  `conexa_ver_cliente` esconde documento e contato até ela existir. O prompt
+  já mandava pedir o documento; a trava é do código porque o que o modelo pula
+  aqui é gasto na conta de outra pessoa — a reserva desconta do pacote de horas
+  DELA.
+  ⚠ **O caso que motivou foi do nosso agente** (conversa 13992, 16/09/2026, a
+  primeira venda autônoma): "pode colocar no nome de Aniel Praxedes?", o agente
+  achou o cadastro pelo nome, reservou e faturou em nome de um terceiro.
+  - **Só a fala do cliente prova**: no histórico, `user` é o que entrou pelo
+    cliente e `assistant` é robô ou equipe. Digitar basta, com ou sem
+    pontuação; foto do documento vale porque a leitura de mídia a vira texto.
+  - ⚠ **Esconder a ficha é parte da trava, não enfeite.** Sem isso, achar pelo
+    NOME, ler a ficha e contar o CPF ao impostor bastaria para ele digitá-lo de
+    volta.
+  - **O CPF de uma pessoa ATIVA vinculada ao cliente também prova**, e essa
+    pessoa vira quem usa a sala: quem reserva pela empresa sabe o próprio CPF,
+    não o CNPJ.
+  - **Por origem** (`switch` sem `default`): atendimento e playground exigem;
+    na chamada interna vale o histórico e nunca o PEDIDO, que é texto de outro
+    modelo; mesa, gatilho e agendamento não têm cliente a provar; conversa
+    encerrada, marcada e parada recusam — não agem em nome de ninguém.
+  - O que isto NÃO é: autenticação. CPF não é segredo; a régua passou de
+    "saber o nome" para "saber o documento", que é a que o usuário escolheu.
 - ⚠ **`emailsMessage` e `phones` são substituídos inteiros no PATCH** — quarta
   aparição do campo de terceiro que apaga ao escrever. `atualizar_cliente` lê,
   acrescenta e grava.

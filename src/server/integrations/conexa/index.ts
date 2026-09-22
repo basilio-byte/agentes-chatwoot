@@ -17,6 +17,12 @@ import { conferirHorario, instanteEmSaoPaulo } from "./agenda";
 import { escolherSolicitante, pessoaDaApi } from "./solicitante";
 import { acharCobrancaDaVenda, situacaoDeFaturamento } from "./faturamento";
 import {
+  exigenciaDeIdentidade,
+  provarIdentidade,
+  RECUSA_SEM_CLIENTE,
+  RECUSA_SEM_DOCUMENTO,
+} from "./identidade";
+import {
   acrescentarAnotacao,
   carimboDaAnotacao,
   formatarCliente,
@@ -74,6 +80,122 @@ function contexto(ctx: ToolContext): {
   }
   const config = conexaConfigSchema.parse(ctx.config);
   return { cliente: new ConexaClient(config, ctx.credential), config };
+}
+
+type Identidade =
+  | { ok: true; pessoaId?: number }
+  | { ok: false; recusa: { erro: string; comoSeguir: string } };
+
+/**
+ * Antes de agir na conta de um cliente: quem pede provou ser ele? (`identidade.ts`)
+ *
+ * Primeiro o documento do próprio cadastro; só sem ele lê as pessoas
+ * vinculadas, para quem reserva pela empresa com o próprio CPF. Nas origens sem
+ * cliente do outro lado (mesa, gatilho, agendamento) não consulta nada.
+ */
+async function conferirIdentidade(
+  cliente: ConexaClient,
+  clienteId: number | undefined,
+  ctx: ToolContext,
+): Promise<Identidade> {
+  const exigencia = exigenciaDeIdentidade(ctx);
+  if (exigencia.tipo === "livre") return { ok: true };
+  if (exigencia.tipo === "semCliente") return { ok: false, recusa: RECUSA_SEM_CLIENTE };
+  if (!clienteId) return { ok: false, recusa: RECUSA_SEM_DOCUMENTO };
+
+  const naoConsegui = {
+    ok: false as const,
+    recusa: {
+      erro: "Não consegui ler o cadastro do cliente para conferir o documento, então não fiz nada.",
+      comoSeguir: "Tente de novo em instantes. Se persistir, encaminhe para a equipe.",
+    },
+  };
+
+  let doCliente: Array<string | undefined>;
+  try {
+    const dados = formatarCliente(await cliente.obterCliente(clienteId));
+    doCliente = [dados.cpf, dados.cnpj];
+  } catch {
+    return naoConsegui;
+  }
+  if (provarIdentidade({ doCliente }, exigencia.falasDoCliente).comprovado) {
+    return { ok: true };
+  }
+
+  let pessoas: Awaited<ReturnType<typeof cliente.listarPessoas>>;
+  try {
+    pessoas = await cliente.listarPessoas({ customerId: clienteId, limit: LIMITE });
+  } catch {
+    return naoConsegui;
+  }
+  const prova = provarIdentidade(
+    {
+      doCliente,
+      // Pessoa inativa (ex-sócio, ex-funcionário) não fala mais pela empresa.
+      pessoas: pessoas.itens
+        .filter((p) => pessoaDaApi(p).ativa !== false)
+        .map((p) => ({ id: pessoaDaApi(p).id, cpf: p.cpf == null ? undefined : String(p.cpf) })),
+    },
+    exigencia.falasDoCliente,
+  );
+  return prova.comprovado
+    ? { ok: true, pessoaId: prova.pessoaId }
+    : { ok: false, recusa: RECUSA_SEM_DOCUMENTO };
+}
+
+/** O cliente dono de uma reserva, cobrança ou venda, como a API devolve. */
+function donoDe(bruto: Record<string, unknown>): number | undefined {
+  return typeof bruto.customerId === "number" ? bruto.customerId : undefined;
+}
+
+/**
+ * A mesma conferência, partindo de uma cobrança. Nas origens sem cliente a
+ * provar, nem lê a cobrança — o caminho de antes fica igual.
+ */
+async function conferirIdentidadeDaCobranca(
+  cliente: ConexaClient,
+  cobrancaId: number,
+  ctx: ToolContext,
+): Promise<Identidade> {
+  if (exigenciaDeIdentidade(ctx).tipo === "livre") return { ok: true };
+  let dono: number | undefined;
+  try {
+    dono = donoDe(await cliente.obterCobranca(cobrancaId));
+  } catch {
+    return {
+      ok: false,
+      recusa: {
+        erro: "Não consegui ler a cobrança para conferir de quem ela é, então não mostrei nada.",
+        comoSeguir: "Tente de novo em instantes. Se persistir, encaminhe para a equipe.",
+      },
+    };
+  }
+  return conferirIdentidade(cliente, dono, ctx);
+}
+
+/**
+ * A mesma conferência, partindo de uma reserva: o cliente é o dono dela. Nas
+ * origens sem cliente a provar, nem lê a reserva — o caminho de antes fica igual.
+ */
+async function conferirIdentidadeDaReserva(
+  cliente: ConexaClient,
+  reservaId: number,
+  ctx: ToolContext,
+): Promise<Identidade> {
+  if (exigenciaDeIdentidade(ctx).tipo === "livre") return { ok: true };
+  let dono: number | undefined;
+  try {
+    dono = formatarReserva(await cliente.obterReserva(reservaId)).cliente;
+  } catch {
+    return {
+      ok: false,
+      recusa: {
+        erro: "Não consegui ler a reserva para conferir de quem ela é, então não fiz nada.",
+        comoSeguir: "Tente de novo em instantes. Se persistir, encaminhe para a equipe.",
+      },
+    };
+  }
+  return conferirIdentidade(cliente, dono, ctx);
 }
 
 /**
@@ -163,12 +285,35 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_ver_cliente",
       categoria: "Clientes",
       description:
-        "Dados completos de um cliente pelo id, incluindo documento e contato. Use depois de conexa_buscar_cliente, quando precisar de mais do que a lista mostra.",
+        "Dados completos de um cliente pelo id, incluindo documento e contato — numa conversa, só depois que o cliente informar o CPF ou o CNPJ do cadastro. Use depois de conexa_buscar_cliente, quando precisar de mais do que a lista mostra.",
       inputSchema: z.object({ clienteId: z.number().int().positive() }),
       async execute(entrada, ctx) {
         const { clienteId } = entrada as { clienteId: number };
         const { cliente } = contexto(ctx);
-        return semVazios(formatarCliente(await cliente.obterCliente(clienteId)));
+        const bruto = await cliente.obterCliente(clienteId);
+        const completo = formatarCliente(bruto);
+
+        // ⚠ Com um cliente na conversa, documento e contato só aparecem depois
+        // que ele provou ser do cadastro (`identidade.ts`). Senão, achar pelo
+        // NOME e ler a ficha entregaria ao modelo o CPF que ele poderia contar a
+        // um impostor — que o digitaria de volta e passaria na trava da reserva.
+        const exigencia = exigenciaDeIdentidade(ctx);
+        const podeVer =
+          exigencia.tipo === "livre" ||
+          (exigencia.tipo === "provar" &&
+            (provarIdentidade(
+              { doCliente: [completo.cpf, completo.cnpj] },
+              exigencia.falasDoCliente,
+            ).comprovado ||
+              (await conferirIdentidade(cliente, clienteId, ctx)).ok));
+        if (podeVer) return semVazios(completo);
+
+        return {
+          ...semVazios({ ...formatarClienteResumo(bruto), bloqueado: completo.bloqueado }),
+          ocultos: "documento, e-mails e telefones",
+          aviso:
+            "O cliente ainda não informou nesta conversa o CPF ou o CNPJ deste cadastro, então documento e contato ficam ocultos. Peça o documento a ele. NÃO confirme dados de um cadastro achado só pelo nome.",
+        };
       },
     },
     {
@@ -632,6 +777,11 @@ export const conexaIntegration: IntegrationDefinition = {
         const args = entrada as { clienteId: number; todas?: boolean };
         const { cliente } = contexto(ctx);
 
+        // Boleto, valor e vencimento são do cliente: só para quem provou ser
+        // ele (`identidade.ts`). Pedido do usuário em 22/09/2026.
+        const identidade = await conferirIdentidade(cliente, args.clienteId, ctx);
+        if (!identidade.ok) return identidade.recusa;
+
         const { itens } = await cliente.listarCobrancas({
           customerId: args.clienteId,
           // `unpaid`, não `open`: filtrar pelo nome errado devolve lista vazia
@@ -655,7 +805,10 @@ export const conexaIntegration: IntegrationDefinition = {
       async execute(entrada, ctx) {
         const { cobrancaId } = entrada as { cobrancaId: number };
         const { cliente } = contexto(ctx);
-        return semVazios(formatarCobranca(await cliente.obterCobranca(cobrancaId)));
+        const bruta = await cliente.obterCobranca(cobrancaId);
+        const identidade = await conferirIdentidade(cliente, donoDe(bruta), ctx);
+        if (!identidade.ok) return identidade.recusa;
+        return semVazios(formatarCobranca(bruta));
       },
     },
     {
@@ -667,6 +820,8 @@ export const conexaIntegration: IntegrationDefinition = {
       async execute(entrada, ctx) {
         const { cobrancaId } = entrada as { cobrancaId: number };
         const { cliente } = contexto(ctx);
+        const identidade = await conferirIdentidadeDaCobranca(cliente, cobrancaId, ctx);
+        if (!identidade.ok) return identidade.recusa;
         const pix = await cliente.obterPix(cobrancaId);
         if (!pix.copyPasteCode) {
           return { erro: "Esta cobrança não tem Pix disponível." };
@@ -693,6 +848,26 @@ export const conexaIntegration: IntegrationDefinition = {
           observacoes?: string;
         };
         const { cliente } = contexto(ctx);
+
+        // Cobrança no nome de alguém só para quem provou ser esse alguém. Nas
+        // origens sem cliente a provar, nem lê as vendas.
+        if (exigenciaDeIdentidade(ctx).tipo !== "livre") {
+          for (const vendaId of args.vendaIds) {
+            let dono: number | undefined;
+            try {
+              dono = donoDe(await cliente.obterVenda(vendaId));
+            } catch {
+              return {
+                criada: false,
+                erro: `Não consegui ler a venda ${vendaId} para conferir de quem ela é, então não cobrei.`,
+                comoSeguir: "Tente de novo em instantes. Se persistir, encaminhe para a equipe.",
+              };
+            }
+            const identidade = await conferirIdentidade(cliente, dono, ctx);
+            if (!identidade.ok) return { criada: false, ...identidade.recusa };
+          }
+        }
+
         const { id } = await cliente.criarCobranca({
           salesIds: args.vendaIds,
           dueDate: args.vencimento,
@@ -825,6 +1000,11 @@ export const conexaIntegration: IntegrationDefinition = {
           return { erro: `O fim (${args.fim}) não é depois do início (${args.inicio}).` };
         }
 
+        // ⚠ Quem pede provou ser o cliente? Antes de tudo: a reserva desconta do
+        // pacote de horas dele ou vira cobrança no nome dele (`identidade.ts`).
+        const identidade = await conferirIdentidade(cliente, args.clienteId, ctx);
+        if (!identidade.ok) return { criada: false, ...identidade.recusa };
+
         // ⚠ A conferência de conflito é feita AQUI, e não deixada para o modelo.
         // O Conexa não recusa sobreposição de forma clara, e até 16/09/2026 o
         // único freio era a instrução de consultar a agenda antes — que o modelo
@@ -888,8 +1068,9 @@ export const conexaIntegration: IntegrationDefinition = {
         // ⚠ O Conexa EXIGE a pessoa que vai usar a sala ("Person Id cannot be
         // blank"), apesar de a documentação não marcar o campo como obrigatório.
         // Sem ela informada, uma pessoa ativa só é a escolha; o resto volta para
-        // o agente decidir (`solicitante.ts`).
-        let solicitanteId = args.solicitanteId;
+        // o agente decidir (`solicitante.ts`). Quem provou a identidade com o
+        // PRÓPRIO CPF de pessoa vinculada é quem vai usar a sala.
+        let solicitanteId = args.solicitanteId ?? identidade.pessoaId;
         if (!solicitanteId) {
           let pessoas: Awaited<ReturnType<typeof cliente.listarPessoas>>;
           try {
@@ -983,8 +1164,15 @@ export const conexaIntegration: IntegrationDefinition = {
         const comoMandarOLink =
           "Mande ao cliente o valorAtual e o faturaUrl, que é a página de pagamento; sem faturaUrl, o boletoUrl. Não invente valor nem link.";
 
+        const reserva = await cliente.obterReserva(reservaId);
+
+        // Cobrar, e devolver valor e link de pagamento, só para quem provou ser
+        // o dono da reserva (`identidade.ts`).
+        const identidade = await conferirIdentidade(cliente, formatarReserva(reserva).cliente, ctx);
+        if (!identidade.ok) return { faturada: false, ...identidade.recusa };
+
         // A decisão de SE cobrar é do código (`faturamento.ts`), não do modelo.
-        const situacao = situacaoDeFaturamento(await cliente.obterReserva(reservaId));
+        const situacao = situacaoDeFaturamento(reserva);
 
         if (situacao.tipo === "recusar") {
           return { faturada: false, erro: situacao.motivo, comoSeguir: semCobrar };
@@ -1099,6 +1287,9 @@ export const conexaIntegration: IntegrationDefinition = {
         const sala = salaOuErro(args.sala, config);
         if ("erro" in sala) return sala;
 
+        const identidade = await conferirIdentidadeDaReserva(cliente, args.reservaId, ctx);
+        if (!identidade.ok) return { alterada: false, ...identidade.recusa };
+
         await cliente.alterarReserva(
           args.reservaId,
           semVazios({
@@ -1123,6 +1314,10 @@ export const conexaIntegration: IntegrationDefinition = {
       async execute(entrada, ctx) {
         const args = entrada as { reservaId: number; motivo?: string };
         const { cliente } = contexto(ctx);
+
+        const identidade = await conferirIdentidadeDaReserva(cliente, args.reservaId, ctx);
+        if (!identidade.ok) return { cancelada: false, ...identidade.recusa };
+
         await cliente.cancelarReserva(
           args.reservaId,
           semVazios({ cancellationReason: args.motivo }),
