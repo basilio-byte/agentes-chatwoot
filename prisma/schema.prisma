@@ -501,6 +501,10 @@ enum IntegrationProvider {
   /// catálogos). Sem credencial — usa o robô da conversa e o token de leitura.
   /// No registry, como os Prazos, para ser OPT-IN por agente.
   MATERIAIS
+  /// Aviso de cobrança por etiqueta do ClickUp: a etiqueta na task da Base de
+  /// clientes manda a mensagem pelo Chatwoot e sai depois do envio. Função do
+  /// sistema, sem modelo, FORA do registry como o NPS e a janela.
+  COBRANCA
 }
 
 enum IntegrationStatus {

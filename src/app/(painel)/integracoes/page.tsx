@@ -25,6 +25,8 @@ import { LeiturasDeMidia } from "@/components/leituras-de-midia";
 import { DocumentosConfigForm } from "@/components/documentos-config";
 import { PrazosConfigForm } from "@/components/prazos-config";
 import { MateriaisConfigForm } from "@/components/materiais-config";
+import { CobrancaConfigForm } from "@/components/cobranca-config";
+import { lerConfigCobranca, PROVIDER_DA_COBRANCA } from "@/server/cobranca/regras";
 import {
   configMateriaisSchema,
   listarMateriais,
@@ -50,6 +52,7 @@ import {
   Images,
   ListChecks,
   MessagesSquare,
+  Receipt,
   Star,
   Table2,
   Timer,
@@ -136,6 +139,15 @@ export default async function IntegracoesPage({
         where: { integrationId: materiais.id, enabled: true },
       })
     : 0;
+  const cobranca = registros.find((i) => i.provider === IntegrationProvider.COBRANCA);
+  const configCobranca = lerConfigCobranca(cobranca?.config);
+  // "reservado" é envio a caminho (ou que caiu no meio e vira "incerto"): não é rastro.
+  const avisosDeCobranca = await db.webhookEvent.findMany({
+    where: { provider: PROVIDER_DA_COBRANCA, resultado: { not: "reservado" } },
+    orderBy: { createdAt: "desc" },
+    take: 15,
+    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true, payload: true },
+  });
   const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
   const configNps = lerConfigNps(nps?.config);
   // Sem telefone nem nome: a tela é aberta pela equipe inteira.
@@ -900,6 +912,132 @@ export default async function IntegracoesPage({
                             <td className="whitespace-nowrap text-muted">
                               {formatarData(a.createdAt)}
                             </td>
+                          </tr>
+                        );
+                      })}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            id: "cobranca",
+            rotulo: "Cobrança",
+            icone: <Receipt size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Aviso de cobrança (ClickUp)</h2>
+                    {cobranca?.enabled ? (
+                      <Badge tone="success">ligado</Badge>
+                    ) : (
+                      <Badge>desligado</Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    Ponha a etiqueta <strong>cobranca-1</strong> ou{" "}
+                    <strong>cobranca-2</strong> numa task da{" "}
+                    <strong>Base de clientes</strong> no ClickUp, e o cliente
+                    recebe a mensagem da etiqueta pelo WhatsApp, no número do campo{" "}
+                    <strong>CELULAR</strong>. Depois do envio a etiqueta sai e a
+                    task ganha um comentário. Sem modelo: as mensagens são as de
+                    baixo, letra por letra.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+                    <li>
+                      Confere a cada <strong>30 minutos</strong>, de segunda a
+                      sexta, das 8h às 18h. Etiqueta posta fora disso espera.
+                    </li>
+                    <li>
+                      Um envio a cada {configCobranca.intervaloSegundos} segundos, no
+                      máximo {configCobranca.tetoPorHora} por hora: a caixa{" "}
+                      {configCobranca.caixaId} é conexão não oficial do WhatsApp, e
+                      lote disparado de uma vez é como o número é bloqueado.
+                    </li>
+                    <li>
+                      Sem CELULAR válido, ou número recusado, nada sai: a etiqueta{" "}
+                      <strong>fica</strong> e a task ganha um comentário dizendo
+                      por quê, uma vez só.
+                    </li>
+                    <li>
+                      A mensagem aparece no Chatwoot em nome da pessoa dona do
+                      token de Integrações → Chatwoot, com uma nota interna
+                      dizendo de qual task veio.
+                    </li>
+                  </ul>
+
+                  {cobranca?.lastCheckedAt ? (
+                    <p className="text-xs text-muted">
+                      Última conferência: {formatarData(cobranca.lastCheckedAt)}
+                      {cobranca.lastError ? ` — ${cobranca.lastError}` : ""}
+                    </p>
+                  ) : null}
+
+                  <CobrancaConfigForm
+                    habilitada={cobranca?.enabled ?? false}
+                    caixaId={String(configCobranca.caixaId)}
+                    atribuirA={configCobranca.atribuirA}
+                    mensagem1={configCobranca.mensagens["cobranca-1"]}
+                    mensagem2={configCobranca.mensagens["cobranca-2"]}
+                    somenteLeitura={!editavel}
+                  />
+                </Card>
+
+                <Card className="space-y-3">
+                  <h3 className="font-medium">Últimos envios</h3>
+                  {avisosDeCobranca.length === 0 ? (
+                    <p className="text-sm text-muted">Nenhum envio ainda.</p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>Task</th>
+                          <th>Aviso</th>
+                          <th>O que aconteceu</th>
+                          <th>Conversa</th>
+                          <th>Quando</th>
+                        </>
+                      }
+                    >
+                      {avisosDeCobranca.map((a) => {
+                        const p = (a.payload ?? {}) as {
+                          taskUrl?: string | null;
+                          taskId?: string;
+                          conversaId?: number;
+                        };
+                        const link = p.conversaId ? linkDaConversa(p.conversaId) : null;
+                        return (
+                          <tr key={a.id}>
+                            <td className="whitespace-nowrap">
+                              {p.taskUrl ? (
+                                <a href={p.taskUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                                  {p.taskId ?? "task"}
+                                </a>
+                              ) : (
+                                (p.taskId ?? "—")
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap">{a.eventType}</td>
+                            <td>
+                              <Badge tone={a.resultado === "enviado" ? "success" : a.resultado === "falhou" ? "danger" : "neutral"}>
+                                {a.resultado ?? "—"}
+                              </Badge>
+                              {a.detalhe ? <span className="ml-2 text-xs text-muted">{a.detalhe}</span> : null}
+                            </td>
+                            <td className="whitespace-nowrap">
+                              {link ? (
+                                <a href={link} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                                  #{p.conversaId}
+                                </a>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap tabular-nums">{formatarData(a.createdAt)}</td>
                           </tr>
                         );
                       })}

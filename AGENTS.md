@@ -1382,6 +1382,44 @@ padrão) sai uma nota interna para quem atende; ao fechar, a etiqueta é trocada
   pegar ganha as duas notas. A automação 32 do Chatwoot (que troca a etiqueta ao
   ver a nota do n8n) pode ficar: sem o fluxo, ela nunca dispara.
 
+### Aviso de cobrança: a etiqueta do ClickUp manda a mensagem
+
+Integração `COBRANCA`, fora do registry como o NPS e a janela: sem modelo, sem
+ferramenta. Pedido do Laercio (22/09/2026, prioridade alta). Regras puras e
+testadas em `cobranca/regras.ts`; a rodada em `cobranca/conferir.ts`.
+
+Etiqueta `cobranca-1` ou `cobranca-2` numa task da **Base de clientes**
+(lista 900701122530) → a mensagem daquela etiqueta vai ao cliente, no número do
+campo **CELULAR**, pela caixa **31** → a conversa é atribuída ao Laercio, ganha
+uma nota interna com o link da task → a etiqueta sai e a task ganha um
+comentário. **A etiqueta é a fila**: o que ainda a tem não foi enviado.
+
+- **Caixa 31 (WAHA), decisão do usuário.** Pela 29, oficial, fora da janela de
+  24 h só template aprovado pela Meta — e o Chatwoot não manda template na
+  NotificaMe. Talvez migre para template depois. O envio é o caminho provado do
+  alerta de saldo (`conversaParaAviso`), com o token de Integrações → Chatwoot:
+  aparece em nome da pessoa dona do token.
+- **A cada 30 minutos, em horário comercial** (seg–sex, 8h–18h, São Paulo),
+  por decisão do usuário: menos processamento à toa. Um envio a cada 30 s, no
+  máximo 60 por hora — conexão não oficial disparando lote é como o número é
+  bloqueado.
+- ⚠ **A rodada não prende o vigia.** Com o espaçamento ela leva minutos; o
+  vigia só a inicia (`conferirCobrancas` devolve "iniciada") e segue escalando.
+  A trava `rodando`, em memória, impede duas ao mesmo tempo.
+- ⚠ **Reserva antes de enviar.** A linha em `WebhookEvent` (provider
+  `COBRANCA`) nasce "reservado" e vira "enviado"; se o processo cair no meio, a
+  reserva abandonada vira "incerto", a etiqueta sai e a task ganha um comentário
+  pedindo para conferir — nunca um reenvio.
+- ⚠ **Etiqueta que não saiu não reenvia.** Envio nas últimas
+  `HORAS_SEM_REENVIO` (72 h) para a mesma task e etiqueta: a rodada só tenta
+  tirar a etiqueta de novo.
+- **Falha que não se resolve sozinha** (sem CELULAR, 4xx do Chatwoot) comenta
+  UMA vez e deixa a etiqueta: é ela que mostra o que não saiu. Corrigido o
+  número, a chave muda e a task volta a ser tentada. Falha passageira (5xx) não
+  comenta e tenta na rodada seguinte.
+- **Nunca tira a conversa de quem está com ela**: só atribui ao Laercio se não
+  houver dono; o comentário diz com quem ficou.
+
 ### Materiais prontos: as imagens dos macros do Chatwoot
 
 Integração `MATERIAIS`, no registry e **opt-in por agente**, como os Prazos:

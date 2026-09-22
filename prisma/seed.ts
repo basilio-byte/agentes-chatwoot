@@ -32,6 +32,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.NPS]: "Pesquisa de satisfação (NPS)",
   [IntegrationProvider.JANELA]: "Janela de 24 h do WhatsApp",
   [IntegrationProvider.MATERIAIS]: "Fotos e materiais prontos",
+  [IntegrationProvider.COBRANCA]: "Aviso de cobrança (ClickUp)",
 };
 
 async function main() {

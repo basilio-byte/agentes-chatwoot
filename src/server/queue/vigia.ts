@@ -9,6 +9,7 @@ import { executarPesquisasVencidas } from "@/server/nps/executar";
 import { conferirSaldoEAvisar } from "@/server/alerta-de-saldo/alerta";
 import { encerrarOrfas } from "@/server/execucoes/orfas";
 import { conferirJanelas } from "@/server/janela/conferir";
+import { conferirCobrancas } from "@/server/cobranca/conferir";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -25,8 +26,9 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  * prazos que os agentes registraram (`prazos/executar.ts`), as etapas vencidas
  * da pesquisa de satisfação (`nps/executar.ts`), encerra as execuções que um
  * reinício deixou marcadas como rodando (`execucoes/orfas.ts`), confere o saldo
- * da OpenRouter para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`) e a
- * janela de 24 h do WhatsApp (`janela/conferir.ts`).
+ * da OpenRouter para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`), a
+ * janela de 24 h do WhatsApp (`janela/conferir.ts`) e as etiquetas de cobrança
+ * do ClickUp (`cobranca/conferir.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -211,6 +213,16 @@ export function iniciarVigia(): NodeJS.Timeout {
       }
     } catch (erro) {
       logger.error({ erro }, "conferência da janela do WhatsApp falhou");
+    }
+
+    // Só INICIA a rodada, sem esperar: com 30 s entre envios ela leva minutos,
+    // e prender o vigia atrasaria a escalada. Confere a cada 30 min, em horário
+    // comercial, e não se sobrepõe a si mesma.
+    try {
+      const rodada = await conferirCobrancas();
+      if (rodada.acao === "iniciada") logger.info("aviso de cobrança: conferência iniciada");
+    } catch (erro) {
+      logger.error({ erro }, "aviso de cobrança falhou ao iniciar");
     }
   };
 

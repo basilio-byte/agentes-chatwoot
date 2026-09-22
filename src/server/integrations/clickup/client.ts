@@ -32,6 +32,8 @@ export type OpcoesBusca = {
   vencimentoAntesDe?: number;
   vencimentoDepoisDe?: number;
   page?: number;
+  /** Tasks com QUALQUER uma destas etiquetas (a API faz OU entre elas). */
+  tags?: string[];
   /**
    * Filtro por valor de campo personalizado. A API compara o valor EXATO — é
    * por isso que a busca por telefone testa as variações de formato.
@@ -153,6 +155,7 @@ export class ClickUpClient {
     if (opcoes.incluirFechadas) q.set("include_closed", "true");
     opcoes.statuses?.forEach((s) => q.append("statuses[]", s));
     opcoes.assignees?.forEach((a) => q.append("assignees[]", String(a)));
+    opcoes.tags?.forEach((t) => q.append("tags[]", t));
 
     return this.requisitar<{ tasks: ClickUpTarefa[] }>(
       `/list/${listId}/task?${q}`,
