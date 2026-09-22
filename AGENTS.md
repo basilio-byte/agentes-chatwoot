@@ -1419,6 +1419,14 @@ comentário. **A etiqueta é a fila**: o que ainda a tem não foi enviado.
   comenta e tenta na rodada seguinte.
 - **Nunca tira a conversa de quem está com ela**: só atribui ao Laercio se não
   houver dono; o comentário diz com quem ficou.
+- ⚠ **A caixa 31 tem `lock_to_single_conversation`: pedir conversa nova
+  devolve a ÚLTIMA do contato, mesmo resolvida**, e a mensagem entra nela sem
+  reabrir. No teste real de 22/09/2026 (conversa 14029) a mensagem chegou ao
+  WhatsApp, mas a conversa ficou resolvida — fora da fila — e a atribuição ao
+  Laercio foi desfeita no mesmo segundo pela automação que tira o dono de
+  conversa resolvida. Por isso a conversa resolvida é **reaberta antes de
+  atribuir**, e a atribuição é **conferida 3 s depois**: o comentário na task só
+  diz "atribuída" se ela ficou.
 
 ### Materiais prontos: as imagens dos macros do Chatwoot
 

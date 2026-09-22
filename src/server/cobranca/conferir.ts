@@ -53,6 +53,8 @@ const PAGINAS_MAXIMAS = 10;
 const POR_PAGINA = 100;
 /** Reserva mais velha que isto não é de uma rodada viva: o processo caiu no meio. */
 const RESERVA_ABANDONADA_MS = 10 * 60_000;
+/** Tempo para as automações do Chatwoot rodarem antes de conferir a atribuição. */
+const ESPERA_PARA_CONFERIR_MS = 3_000;
 
 let ultimaConferencia = 0;
 let rodando = false;
@@ -176,6 +178,7 @@ async function rodar(
           return (await enviadosNaUltimaHora(new Date())) < config.tetoPorHora;
         },
         atendentes: async () => (atendentes ??= await chatwoot.listarAtendentes()),
+        esperar: dormir,
       });
       if (desfecho === "enviado") {
         enviouAlgum = true;
@@ -219,6 +222,7 @@ async function tratar(args: {
   chatwoot: ChatwootClient;
   antesDeEnviar: () => Promise<boolean>;
   atendentes: () => Promise<Awaited<ReturnType<ChatwootClient["listarAtendentes"]>>>;
+  esperar: (ms: number) => Promise<void>;
 }): Promise<Desfecho> {
   const { tarefa, etiqueta, config, clickup, chatwoot } = args;
   const urlDaTarefa = tarefa.url ?? null;
@@ -318,11 +322,34 @@ async function tratar(args: {
   let atribuidoA: string | null = null;
   try {
     const aoVivo = await chatwoot.obterConversa(conversaId);
+
+    // ⚠ A caixa 31 tem "uma conversa só por contato" (`lock_to_single_conversation`):
+    // pedir conversa nova devolve a ÚLTIMA, mesmo resolvida, e a mensagem entra
+    // nela sem reabrir. Resolvida, some da fila da equipe — e a automação do
+    // Chatwoot que tira o dono de conversa resolvida desfaz a atribuição no
+    // mesmo segundo. Visto no teste real de 22/09/2026 (conversa 14029).
+    // Reabre ANTES de atribuir.
+    if (aoVivo.status === "resolved") {
+      await chatwoot.alternarStatus(conversaId, "open");
+    }
+
     if (aoVivo.assigneeId == null && config.atribuirA) {
       const destino = resolverAtendente(config.atribuirA, await args.atendentes());
       if (destino.tipo === "achado") {
         await chatwoot.atribuir(conversaId, { assigneeId: destino.atendente.id });
-        atribuidoA = destino.atendente.name?.trim() || config.atribuirA;
+        // As automações do Chatwoot rodam logo depois da atribuição, fora da
+        // nossa vista. O comentário só diz "atribuída" se ela continuou.
+        await args.esperar(ESPERA_PARA_CONFERIR_MS);
+        const depois = await chatwoot.obterConversa(conversaId);
+        if (depois.assigneeId === destino.atendente.id) {
+          atribuidoA = destino.atendente.name?.trim() || config.atribuirA;
+        } else {
+          problemas.push(
+            `atribuí a conversa a ${destino.atendente.name?.trim() || config.atribuirA}, mas ela ficou ${
+              depois.assigneeNome ? `com ${depois.assigneeNome}` : "sem dono"
+            } — provavelmente uma automação do Chatwoot desfez.`,
+          );
+        }
       } else {
         problemas.push(`não achei "${config.atribuirA}" no Chatwoot para atribuir a conversa.`);
       }

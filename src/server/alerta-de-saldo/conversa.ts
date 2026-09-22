@@ -52,6 +52,12 @@ export function escolherContato(
  *
  * Conversa resolvida não é reaproveitada: alguém a encerrou, e reabrir o
  * assunto dela com um alerta seria misturar as duas coisas.
+ *
+ * ⚠ Mas na caixa 31 o Chatwoot faz isso por conta própria: ela tem
+ * `lock_to_single_conversation`, e `criarConversa` devolve a ÚLTIMA conversa do
+ * contato, mesmo resolvida — a mensagem entra nela e ela continua resolvida
+ * (visto em 22/09/2026, conversa 14029). Quem precisa da conversa na fila reabre
+ * depois (o aviso de cobrança faz isso).
  */
 export async function conversaParaAviso(
   cliente: ClienteDeAviso,

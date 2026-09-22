@@ -26,6 +26,8 @@ let ligada = true;
 let chamadas: string[] = [];
 let tarefas: Array<Record<string, unknown>> = [];
 let donoDaConversa: { id: number | null; nome: string | null } = { id: null, nome: null };
+let statusDaConversa = "open";
+let automacaoDesatribuiResolvida = true;
 let falhaNoEnvio: Error | null = null;
 let falhaAoTirarEtiqueta = false;
 let esperas: number[] = [];
@@ -109,10 +111,22 @@ vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
       chamadas.push(`chatwoot:${opcoes?.privado ? "nota" : "mensagem"}:${id}:${texto.slice(0, 30)}`);
       return { id: 1 };
     },
-    obterConversa: async () => ({ assigneeId: donoDaConversa.id, assigneeNome: donoDaConversa.nome }),
+    obterConversa: async () => ({
+      status: statusDaConversa,
+      assigneeId: donoDaConversa.id,
+      assigneeNome: donoDaConversa.nome,
+    }),
     listarAtendentes: async () => [{ id: 44, name: "Laercio Melo", email: "laercio@x.test" }],
     atribuir: async (id: number, d: { assigneeId: number }) => {
       chamadas.push(`chatwoot:atribuir:${id}:${d.assigneeId}`);
+      // A automação do Chatwoot que tira o dono de conversa resolvida.
+      if (!(automacaoDesatribuiResolvida && statusDaConversa === "resolved")) {
+        donoDaConversa = { id: d.assigneeId, nome: "Laercio Melo" };
+      }
+    },
+    alternarStatus: async (id: number, status: string) => {
+      chamadas.push(`chatwoot:status:${id}:${status}`);
+      statusDaConversa = status;
     },
   }),
 }));
@@ -147,6 +161,8 @@ beforeEach(() => {
   chamadas = [];
   tarefas = [];
   donoDaConversa = { id: null, nome: null };
+  statusDaConversa = "open";
+  automacaoDesatribuiResolvida = true;
   falhaNoEnvio = null;
   falhaAoTirarEtiqueta = false;
   esperas = [];
@@ -192,7 +208,8 @@ describe("aviso de cobrança por etiqueta", () => {
     const r = await rodar();
 
     expect(r.enviados).toBe(2);
-    expect(esperas).toEqual([30_000]);
+    // 3 s para conferir cada atribuição; 30 s entre um envio e o próximo.
+    expect(esperas.filter((ms) => ms === 30_000)).toEqual([30_000]);
     // Quem espera há mais tempo vai primeiro.
     expect(chamadas.filter((c) => c.startsWith("clickup:tirar"))).toEqual([
       "clickup:tirar:t1:cobranca-1",
@@ -302,6 +319,39 @@ describe("aviso de cobrança por etiqueta", () => {
 
     expect(chamadas.some((c) => c.startsWith("chatwoot:atribuir"))).toBe(false);
     expect(eventos[0].detalhe).toContain("já estava com Wellen Kelly");
+  });
+
+  it("⚠ conversa resolvida (a caixa 31 devolve a última): reabre ANTES de atribuir, e a atribuição fica", async () => {
+    // Teste real de 22/09/2026: a mensagem entrou na conversa resolvida 14029, a
+    // atribuição ao Laercio foi desfeita pela automação no mesmo segundo, e a
+    // conversa ficou fora da fila.
+    tarefas = [tarefa("t1", ["cobranca-1"])];
+    statusDaConversa = "resolved";
+
+    await rodar();
+
+    const i = (prefixo: string) => chamadas.findIndex((c) => c.startsWith(prefixo));
+    expect(chamadas).toContain("chatwoot:status:900:open");
+    expect(i("chatwoot:status")).toBeLessThan(i("chatwoot:atribuir"));
+    expect(donoDaConversa.id).toBe(44);
+    expect(comentarios()[0]).toContain("Conversa atribuída a Laercio Melo.");
+  });
+
+  it("atribuição desfeita logo depois (outra automação): o comentário NÃO diz que atribuiu", async () => {
+    tarefas = [tarefa("t1", ["cobranca-1"])];
+
+    const r = await conferirCobrancas(AGORA, {
+      esperar: true,
+      forcar: true,
+      // Alguma automação tira o dono enquanto o sistema espera para conferir.
+      dormir: async () => {
+        donoDaConversa = { id: null, nome: null };
+      },
+    });
+
+    expect(r.enviados).toBe(1);
+    expect(comentarios()[0]).not.toContain("Conversa atribuída a");
+    expect(comentarios()[0]).toContain("desfez");
   });
 
   it("desligada ou fora do horário: nem lê o ClickUp", async () => {
