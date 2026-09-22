@@ -278,12 +278,16 @@ async function tratar(args: {
   });
 
   let conversaId: number;
+  // Achada ABERTA na caixa antes do envio: pode ter alguém conversando, ou
+  // mensagem do cliente esperando resposta.
+  let jaEstavaAberta = false;
   try {
     const conversa = await conversaParaAviso(chatwoot, config.caixaId, {
       nome: tarefa.name?.trim() || "Cliente",
       telefone,
     });
     conversaId = conversa.conversaId;
+    jaEstavaAberta = !conversa.nova;
     await chatwoot.enviarMensagem(conversaId, config.mensagens[etiqueta]);
   } catch (erro) {
     const mensagem = erro instanceof Error ? erro.message : String(erro);
@@ -317,9 +321,109 @@ async function tratar(args: {
     },
   });
 
-  // A conversa vai para quem cuida da cobrança — mas nunca é tirada de quem
-  // já está falando com o cliente.
-  let atribuidoA: string | null = null;
+  // Depois do envio: resolver (a automação cuida sozinha) ou atribuir.
+  const depois = { chatwoot, conversaId, urlDaTarefa, etiqueta, problemas, esperar: args.esperar };
+  const destino =
+    config.aposEnviar === "resolver"
+      ? await resolverDepoisDoEnvio({ ...depois, jaEstavaAberta })
+      : await atribuirDepoisDoEnvio({ ...depois, config, atendentes: args.atendentes });
+
+  const { data, hora } = agoraEmSaoPaulo(new Date());
+  await tentar(
+    () => clickup.removerTag(tarefa.id, etiqueta),
+    () =>
+      problemas.push(
+        `não consegui tirar a etiqueta "${etiqueta}"; ela sai na próxima conferência, sem reenviar a mensagem.`,
+      ),
+  );
+  await tentar(() =>
+    clickup.comentarTarefa(
+      tarefa.id,
+      comentarioDeEnvio({ etiqueta, quando: `${data} às ${hora}`, linkDaConversa, destino, problemas }),
+    ),
+  );
+
+  if (problemas.length) {
+    await db.webhookEvent.update({
+      where: { id: reserva.id },
+      data: { detalhe: `mensagem aceita pelo Chatwoot · ${problemas.join(" · ")}`.slice(0, 500) },
+    });
+  }
+  return "enviado";
+}
+
+type DepoisDoEnvio = {
+  chatwoot: ChatwootClient;
+  conversaId: number;
+  urlDaTarefa: string | null;
+  etiqueta: Etiqueta;
+  /** Onde vão as falhas, para o comentário na task e o rastro da tela. */
+  problemas: string[];
+  esperar: (ms: number) => Promise<void>;
+};
+
+/**
+ * "resolver" (pedido do Régis, 22/09/2026): a automação cuida sozinha. Nota
+ * interna primeiro — quem abrir a conversa depois sabe de onde veio a mensagem
+ * — e então a conversa sai da fila. Se o cliente responder, o Chatwoot a reabre
+ * na caixa.
+ *
+ * ⚠ Nunca resolve o que alguém está usando: conversa com dono fica com ele, e
+ * conversa que já estava ABERTA antes do envio fica aberta — pode ter mensagem
+ * do cliente esperando resposta, e resolver a esconderia da fila. Só resolve a
+ * conversa nova, ou a resolvida que a caixa 31 devolve (`lock_to_single_conversation`)
+ * — nessa, a mensagem entra sem reabrir e ela continua resolvida.
+ *
+ * O Olho de Tudo não avalia essa resolução como atendimento: a mensagem sai com
+ * o token do Basílio, que o gatilho de conversa encerrada trata como conta de
+ * automação.
+ */
+async function resolverDepoisDoEnvio(
+  args: DepoisDoEnvio & { jaEstavaAberta: boolean },
+): Promise<string | null> {
+  const { chatwoot, conversaId, problemas } = args;
+  await tentar(
+    () =>
+      chatwoot.enviarMensagem(conversaId, notaDaConversa(args.etiqueta, args.urlDaTarefa), {
+        privado: true,
+      }),
+    () => problemas.push("não consegui deixar a nota interna na conversa."),
+  );
+
+  try {
+    const aoVivo = await chatwoot.obterConversa(conversaId);
+    if (aoVivo.assigneeId != null) {
+      return `A conversa estava com ${aoVivo.assigneeNome ?? "outra pessoa"} e continua com ela, sem ser resolvida.`;
+    }
+    if (aoVivo.status === "resolved") return "Conversa resolvida pela automação.";
+    if (args.jaEstavaAberta) {
+      return "A conversa já estava aberta na caixa antes do envio e continua aberta, sem dono.";
+    }
+    await chatwoot.alternarStatus(conversaId, "resolved");
+    // Mesma lição da atribuição: o comentário só diz o que ficou.
+    await args.esperar(ESPERA_PARA_CONFERIR_MS);
+    const depois = await chatwoot.obterConversa(conversaId);
+    if (depois.status === "resolved") return "Conversa resolvida pela automação.";
+    problemas.push(`resolvi a conversa, mas ela ficou "${depois.status ?? "sem status"}".`);
+    return null;
+  } catch (erro) {
+    problemas.push(`não consegui resolver a conversa (${mensagemDe(erro)}).`);
+    return null;
+  }
+}
+
+/**
+ * "atribuir": a conversa vai para quem cuida da cobrança — mas nunca é tirada
+ * de quem já está falando com o cliente.
+ */
+async function atribuirDepoisDoEnvio(
+  args: DepoisDoEnvio & {
+    config: CobrancaConfig;
+    atendentes: () => Promise<Awaited<ReturnType<ChatwootClient["listarAtendentes"]>>>;
+  },
+): Promise<string | null> {
+  const { chatwoot, conversaId, config, problemas } = args;
+  let destino: string | null = null;
   try {
     const aoVivo = await chatwoot.obterConversa(conversaId);
 
@@ -334,18 +438,18 @@ async function tratar(args: {
     }
 
     if (aoVivo.assigneeId == null && config.atribuirA) {
-      const destino = resolverAtendente(config.atribuirA, await args.atendentes());
-      if (destino.tipo === "achado") {
-        await chatwoot.atribuir(conversaId, { assigneeId: destino.atendente.id });
+      const alvo = resolverAtendente(config.atribuirA, await args.atendentes());
+      if (alvo.tipo === "achado") {
+        await chatwoot.atribuir(conversaId, { assigneeId: alvo.atendente.id });
         // As automações do Chatwoot rodam logo depois da atribuição, fora da
         // nossa vista. O comentário só diz "atribuída" se ela continuou.
         await args.esperar(ESPERA_PARA_CONFERIR_MS);
         const depois = await chatwoot.obterConversa(conversaId);
-        if (depois.assigneeId === destino.atendente.id) {
-          atribuidoA = destino.atendente.name?.trim() || config.atribuirA;
+        if (depois.assigneeId === alvo.atendente.id) {
+          destino = `Conversa atribuída a ${alvo.atendente.name?.trim() || config.atribuirA}.`;
         } else {
           problemas.push(
-            `atribuí a conversa a ${destino.atendente.name?.trim() || config.atribuirA}, mas ela ficou ${
+            `atribuí a conversa a ${alvo.atendente.name?.trim() || config.atribuirA}, mas ela ficou ${
               depois.assigneeNome ? `com ${depois.assigneeNome}` : "sem dono"
             } — provavelmente uma automação do Chatwoot desfez.`,
           );
@@ -363,32 +467,13 @@ async function tratar(args: {
   }
 
   await tentar(
-    () => chatwoot.enviarMensagem(conversaId, notaDaConversa(etiqueta, urlDaTarefa), { privado: true }),
+    () =>
+      chatwoot.enviarMensagem(conversaId, notaDaConversa(args.etiqueta, args.urlDaTarefa), {
+        privado: true,
+      }),
     () => problemas.push("não consegui deixar a nota interna na conversa."),
   );
-
-  const { data, hora } = agoraEmSaoPaulo(new Date());
-  await tentar(
-    () => clickup.removerTag(tarefa.id, etiqueta),
-    () =>
-      problemas.push(
-        `não consegui tirar a etiqueta "${etiqueta}"; ela sai na próxima conferência, sem reenviar a mensagem.`,
-      ),
-  );
-  await tentar(() =>
-    clickup.comentarTarefa(
-      tarefa.id,
-      comentarioDeEnvio({ etiqueta, quando: `${data} às ${hora}`, linkDaConversa, atribuidoA, problemas }),
-    ),
-  );
-
-  if (problemas.length) {
-    await db.webhookEvent.update({
-      where: { id: reserva.id },
-      data: { detalhe: `mensagem aceita pelo Chatwoot · ${problemas.join(" · ")}`.slice(0, 500) },
-    });
-  }
-  return "enviado";
+  return destino;
 }
 
 /**

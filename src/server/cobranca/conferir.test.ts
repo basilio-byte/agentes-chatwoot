@@ -31,11 +31,13 @@ let automacaoDesatribuiResolvida = true;
 let falhaNoEnvio: Error | null = null;
 let falhaAoTirarEtiqueta = false;
 let esperas: number[] = [];
+let configDaCobranca: Record<string, unknown> = {};
+let contatoComConversaAberta = false;
 
 vi.mock("@/lib/db", () => ({
   db: {
     integration: {
-      findUnique: async () => ({ enabled: ligada, config: {} }),
+      findUnique: async () => ({ enabled: ligada, config: configDaCobranca }),
       update: async () => ({}),
     },
     webhookEvent: {
@@ -98,10 +100,14 @@ vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
   clienteComTokenDeUsuario: async () => ({
     baseUrl: "https://chatwoot.test",
     contaId: 1,
-    buscarContatos: async () => [],
+    buscarContatos: async () =>
+      contatoComConversaAberta
+        ? [{ id: 70, nome: "Cliente", telefone: "+5584998765432", identificador: null, caixas: [{ caixaId: 31, sourceId: "src-70" }] }]
+        : [],
     criarContato: async () => ({ id: 70, sourceId: "src-70" }),
     vincularContatoACaixa: async () => "src-70",
-    conversasDoContato: async () => [],
+    conversasDoContato: async () =>
+      contatoComConversaAberta ? [{ id: 800, caixaId: 31, status: "open" }] : [],
     criarConversa: async (d: { caixaId: number }) => {
       chamadas.push(`chatwoot:conversa-nova:caixa-${d.caixaId}`);
       return 900;
@@ -166,6 +172,9 @@ beforeEach(() => {
   falhaNoEnvio = null;
   falhaAoTirarEtiqueta = false;
   esperas = [];
+  // Os testes abaixo são do caminho "atribuir"; o "resolver" tem bloco próprio.
+  configDaCobranca = { aposEnviar: "atribuir" };
+  contatoComConversaAberta = false;
 });
 
 describe("aviso de cobrança por etiqueta", () => {
@@ -374,3 +383,78 @@ describe("aviso de cobrança por etiqueta", () => {
     expect(depois.acao).toBe("conferido");
   });
 });
+
+describe("depois do envio, a automação resolve (pedido do Régis, 22/09/2026)", () => {
+  const status = () => chamadas.filter((c) => c.startsWith("chatwoot:status"));
+
+  it("é o padrão: manda, anota, RESOLVE e comenta — sem atribuir a ninguém", async () => {
+    configDaCobranca = {};
+    tarefas = [tarefa("t1", ["cobranca-1"])];
+
+    const r = await rodar();
+
+    expect(r.enviados).toBe(1);
+    expect(chamadas.some((c) => c.startsWith("chatwoot:atribuir"))).toBe(false);
+    const nota = chamadas.findIndex((c) => c.startsWith("chatwoot:nota:900"));
+    const resolver = chamadas.indexOf("chatwoot:status:900:resolved");
+    expect(nota).toBeGreaterThan(-1);
+    expect(resolver).toBeGreaterThan(nota);
+    expect(comentarios()[0]).toContain("Conversa resolvida pela automação.");
+    expect(comentarios()[0]).not.toContain("atribuída");
+    expect(tarefas[0].tags).toEqual([]);
+  });
+
+  it("a conversa resolvida que a caixa 31 devolve continua resolvida, sem reabrir", async () => {
+    configDaCobranca = { aposEnviar: "resolver" };
+    statusDaConversa = "resolved";
+    tarefas = [tarefa("t1", ["cobranca-2"])];
+
+    await rodar();
+
+    expect(status()).toEqual([]);
+    expect(comentarios()[0]).toContain("Conversa resolvida pela automação.");
+  });
+
+  it("⚠ conversa com dono fica com ele: não resolve o atendimento de ninguém", async () => {
+    configDaCobranca = { aposEnviar: "resolver" };
+    donoDaConversa = { id: 7, nome: "Wellen Kelly" };
+    tarefas = [tarefa("t1", ["cobranca-1"])];
+
+    await rodar();
+
+    expect(status()).toEqual([]);
+    expect(comentarios()[0]).toContain("estava com Wellen Kelly e continua com ela");
+  });
+
+  it("⚠ conversa que já estava ABERTA antes do envio fica aberta: pode ter cliente esperando", async () => {
+    configDaCobranca = { aposEnviar: "resolver" };
+    contatoComConversaAberta = true;
+    tarefas = [tarefa("t1", ["cobranca-1"])];
+
+    await rodar();
+
+    expect(mensagensAoCliente()[0]).toMatch(/^chatwoot:mensagem:800:/);
+    expect(status()).toEqual([]);
+    expect(comentarios()[0]).toContain("já estava aberta");
+  });
+
+  it("resolver falhou: o comentário não diz que resolveu, e a etiqueta sai do mesmo jeito", async () => {
+    configDaCobranca = { aposEnviar: "resolver" };
+    tarefas = [tarefa("t1", ["cobranca-1"])];
+
+    const r = await conferirCobrancas(AGORA, {
+      esperar: true,
+      forcar: true,
+      // Uma automação do Chatwoot reabre a conversa logo depois.
+      dormir: async () => {
+        statusDaConversa = "open";
+      },
+    });
+
+    expect(r.enviados).toBe(1);
+    expect(comentarios()[0]).not.toContain("resolvida pela automação");
+    expect(comentarios()[0]).toContain('ficou "open"');
+    expect(tarefas[0].tags).toEqual([]);
+  });
+});
+

@@ -12,6 +12,7 @@ import { Aviso, Button, Field, Input, Textarea } from "@/components/ui";
 export function CobrancaConfigForm({
   habilitada,
   caixaId,
+  aposEnviar,
   atribuirA,
   mensagem1,
   mensagem2,
@@ -19,6 +20,7 @@ export function CobrancaConfigForm({
 }: {
   habilitada: boolean;
   caixaId: string;
+  aposEnviar: "resolver" | "atribuir";
   atribuirA: string;
   mensagem1: string;
   mensagem2: string;
@@ -31,6 +33,7 @@ export function CobrancaConfigForm({
 
   const [ligada, setLigada] = useState(habilitada);
   const [caixa, setCaixa] = useState(caixaId);
+  const [depois, setDepois] = useState(aposEnviar);
   const [quem, setQuem] = useState(atribuirA);
   const [texto1, setTexto1] = useState(mensagem1);
   const [texto2, setTexto2] = useState(mensagem2);
@@ -65,15 +68,55 @@ export function CobrancaConfigForm({
             disabled={somenteLeitura}
           />
         </Field>
-        <Field label="Atribuir a conversa a" hint="Só se ninguém estiver com ela. Em branco, não atribui.">
+      </div>
+
+      <fieldset className="space-y-2">
+        <legend className="text-[13px] font-medium">Depois do envio</legend>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="radio"
+            name="aposEnviar"
+            value="resolver"
+            checked={depois === "resolver"}
+            onChange={() => setDepois("resolver")}
+            disabled={somenteLeitura}
+            className="mt-0.5 size-4 accent-accent"
+          />
+          <span>
+            Resolver a conversa — a automação cuida sozinha.
+            <span className="block text-xs text-muted">
+              Se o cliente responder, a conversa volta para a fila da caixa. Conversa
+              com dono, ou que já estava aberta antes do envio, não é resolvida.
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="radio"
+            name="aposEnviar"
+            value="atribuir"
+            checked={depois === "atribuir"}
+            onChange={() => setDepois("atribuir")}
+            disabled={somenteLeitura}
+            className="mt-0.5 size-4 accent-accent"
+          />
+          <span>Atribuir a conversa a uma pessoa (só se ninguém estiver com ela)</span>
+        </label>
+        {depois === "atribuir" ? (
           <Input
             name="atribuirA"
+            aria-label="Atribuir a conversa a"
+            placeholder="Nome como está no Chatwoot"
             value={quem}
             onChange={(e) => setQuem(e.target.value)}
             disabled={somenteLeitura}
+            className="ml-6 block w-auto sm:w-72"
           />
-        </Field>
-      </div>
+        ) : (
+          // O nome fica guardado para quando voltarem a atribuir.
+          <input type="hidden" name="atribuirA" value={quem} />
+        )}
+      </fieldset>
 
       <Field label='Mensagem da etiqueta "cobranca-1"'>
         <Textarea

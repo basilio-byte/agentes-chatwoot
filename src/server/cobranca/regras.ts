@@ -56,7 +56,14 @@ export const cobrancaConfigSchema = z.object({
   listaId: z.string().regex(/^\d+$/).default("900701122530"),
   /** O campo CELULAR (tipo phone) da Base de clientes. */
   campoTelefone: z.string().min(8).default("3399c6f6-c890-40a6-865e-5a4e810fe8c6"),
-  /** Quem recebe a conversa, para a resposta do cliente chegar direto nele. */
+  /**
+   * O que acontece com a conversa depois do envio. "resolver" (pedido do Régis,
+   * 22/09/2026, testando os envios): a automação cuida sozinha — a conversa sai
+   * da fila, e se o cliente responder o Chatwoot a reabre na caixa. "atribuir":
+   * vai para `atribuirA`, como era até então.
+   */
+  aposEnviar: z.enum(["resolver", "atribuir"]).default("resolver"),
+  /** Com "atribuir": quem recebe a conversa, para a resposta chegar direto nele. */
   atribuirA: z.string().trim().max(80).default("Laercio"),
   mensagens: z
     .object({
@@ -137,13 +144,14 @@ export function comentarioDeEnvio(args: {
   etiqueta: Etiqueta;
   quando: string;
   linkDaConversa: string | null;
-  atribuidoA: string | null;
+  /** O que ficou da conversa, numa frase: atribuída, resolvida, com quem ficou. */
+  destino: string | null;
   problemas: string[];
 }): string {
   return [
     `✅ ${rotuloDoAviso(args.etiqueta)} enviado pelo WhatsApp em ${args.quando}.`,
     args.linkDaConversa ? `Conversa no Chatwoot: ${args.linkDaConversa}` : null,
-    args.atribuidoA ? `Conversa atribuída a ${args.atribuidoA}.` : null,
+    args.destino,
     ...args.problemas.map((p) => `⚠ ${p}`),
   ]
     .filter(Boolean)
@@ -167,6 +175,7 @@ export function notaDaConversa(etiqueta: Etiqueta, urlDaTarefa: string | null): 
 
 const ROTULOS: Record<string, string> = {
   caixaId: "Caixa",
+  aposEnviar: "Depois do envio",
   atribuirA: "Atribuir a",
   mensagens: "Mensagens (de 10 a 1000 caracteres)",
 };
@@ -184,6 +193,7 @@ export function configDoFormulario(
   const lido = cobrancaConfigSchema.safeParse({
     ...atual,
     caixaId: caixa === "" ? Number.NaN : Number(caixa),
+    aposEnviar: valor("aposEnviar") || atual.aposEnviar,
     atribuirA: valor("atribuirA"),
     mensagens: {
       "cobranca-1": valor("mensagem1"),
@@ -193,6 +203,9 @@ export function configDoFormulario(
   if (!lido.success) {
     const chave = String(lido.error.issues[0]?.path?.[0] ?? "");
     return { erro: `${ROTULOS[chave] ?? chave}: valor inválido ou em branco.` };
+  }
+  if (lido.data.aposEnviar === "atribuir" && !lido.data.atribuirA) {
+    return { erro: "Atribuir a: diga quem recebe a conversa depois do envio." };
   }
   return { config: lido.data };
 }

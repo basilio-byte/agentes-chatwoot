@@ -1163,6 +1163,7 @@ export default async function IntegracoesPage({
                   <CobrancaConfigForm
                     habilitada={cobranca?.enabled ?? false}
                     caixaId={String(configCobranca.caixaId)}
+                    aposEnviar={configCobranca.aposEnviar}
                     atribuirA={configCobranca.atribuirA}
                     mensagem1={configCobranca.mensagens["cobranca-1"]}
                     mensagem2={configCobranca.mensagens["cobranca-2"]}

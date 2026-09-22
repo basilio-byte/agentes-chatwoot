@@ -88,6 +88,24 @@ describe("configuração", () => {
     });
   });
 
+  it("depois do envio: resolve por padrão; atribuir exige a quem", () => {
+    expect(lerConfigCobranca(undefined).aposEnviar).toBe("resolver");
+    const atual = lerConfigCobranca(undefined);
+    const campos: Record<string, string> = {
+      caixaId: "31",
+      aposEnviar: "atribuir",
+      atribuirA: "",
+      mensagem1: "Texto um, longo o bastante.",
+      mensagem2: "Texto dois, longo o bastante.",
+    };
+    expect(configDoFormulario((c) => campos[c] ?? null, atual)).toEqual({
+      erro: "Atribuir a: diga quem recebe a conversa depois do envio.",
+    });
+    campos.aposEnviar = "resolver";
+    const r = configDoFormulario((c) => campos[c] ?? null, atual);
+    expect("config" in r && r.config.aposEnviar).toBe("resolver");
+  });
+
   it("mensagem em branco é recusa, não texto vazio", () => {
     const r = configDoFormulario(
       (campo) => ({ caixaId: "31", mensagem1: "", mensagem2: "Texto dois, longo o bastante." })[campo] ?? null,
@@ -103,7 +121,7 @@ describe("textos", () => {
       etiqueta: "cobranca-2",
       quando: "22/09/2026 às 14:10",
       linkDaConversa: "https://chatwoot.test/app/accounts/1/conversations/9",
-      atribuidoA: "Laercio Melo",
+      destino: "Conversa atribuída a Laercio Melo.",
       problemas: ["não consegui deixar a nota interna na conversa."],
     });
     expect(t).toContain("2º aviso de cobrança enviado pelo WhatsApp em 22/09/2026 às 14:10");

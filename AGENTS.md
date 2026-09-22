@@ -1390,9 +1390,10 @@ testadas em `cobranca/regras.ts`; a rodada em `cobranca/conferir.ts`.
 
 Etiqueta `cobranca-1` ou `cobranca-2` numa task da **Base de clientes**
 (lista 900701122530) → a mensagem daquela etiqueta vai ao cliente, no número do
-campo **CELULAR**, pela caixa **31** → a conversa é atribuída ao Laercio, ganha
-uma nota interna com o link da task → a etiqueta sai e a task ganha um
-comentário. **A etiqueta é a fila**: o que ainda a tem não foi enviado.
+campo **CELULAR**, pela caixa **31** → nota interna com o link da task → a
+conversa é **resolvida pela automação** (ou atribuída, se a tela mandar) → a
+etiqueta sai e a task ganha um comentário. **A etiqueta é a fila**: o que ainda
+a tem não foi enviado.
 
 - **Caixa 31 (WAHA), decisão do usuário.** Pela 29, oficial, fora da janela de
   24 h só template aprovado pela Meta — e o Chatwoot não manda template na
@@ -1417,16 +1418,27 @@ comentário. **A etiqueta é a fila**: o que ainda a tem não foi enviado.
   UMA vez e deixa a etiqueta: é ela que mostra o que não saiu. Corrigido o
   número, a chave muda e a task volta a ser tentada. Falha passageira (5xx) não
   comenta e tenta na rodada seguinte.
-- **Nunca tira a conversa de quem está com ela**: só atribui ao Laercio se não
-  houver dono; o comentário diz com quem ficou.
+- **Depois do envio, a automação resolve** (`aposEnviar: "resolver"`, o padrão
+  desde 22/09/2026, pedido do Régis ao testar: *"a gente podia seguir só com a
+  automação e ela resolver só?"*). Até então a conversa ia para o Laercio; a
+  opção "atribuir" continua na tela. Se o cliente responder, o Chatwoot reabre a
+  conversa na caixa. ⚠ **Só resolve o que ninguém está usando**: conversa com
+  dono fica com ele, e conversa que já estava ABERTA antes do envio fica aberta —
+  pode ter mensagem do cliente esperando, e resolver a esconderia da fila. A
+  resolvida que a caixa 31 devolve continua resolvida, sem reabrir. O comentário
+  na task só diz "resolvida" se ela ficou. O Olho de Tudo não avalia essa
+  resolução: a mensagem sai com o token do Basílio, que o gatilho de conversa
+  encerrada trata como conta de automação.
+- **Nunca tira a conversa de quem está com ela**: com "atribuir", só atribui se
+  não houver dono; o comentário diz com quem ficou.
 - ⚠ **A caixa 31 tem `lock_to_single_conversation`: pedir conversa nova
   devolve a ÚLTIMA do contato, mesmo resolvida**, e a mensagem entra nela sem
   reabrir. No teste real de 22/09/2026 (conversa 14029) a mensagem chegou ao
   WhatsApp, mas a conversa ficou resolvida — fora da fila — e a atribuição ao
   Laercio foi desfeita no mesmo segundo pela automação que tira o dono de
-  conversa resolvida. Por isso a conversa resolvida é **reaberta antes de
-  atribuir**, e a atribuição é **conferida 3 s depois**: o comentário na task só
-  diz "atribuída" se ela ficou.
+  conversa resolvida. Por isso, com "atribuir", a conversa resolvida é
+  **reaberta antes de atribuir**, e a atribuição é **conferida 3 s depois**: o
+  comentário na task só diz "atribuída" se ela ficou.
 
 ### Materiais prontos: as imagens dos macros do Chatwoot
 

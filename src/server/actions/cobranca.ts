@@ -49,7 +49,12 @@ export async function salvarConfigCobranca(
       action: "integration.cobranca.updated",
       entity: "Integration",
       entityId: IntegrationProvider.COBRANCA,
-      diff: { enabled: ligada, caixaId: lido.config.caixaId, atribuirA: lido.config.atribuirA },
+      diff: {
+        enabled: ligada,
+        caixaId: lido.config.caixaId,
+        aposEnviar: lido.config.aposEnviar,
+        atribuirA: lido.config.atribuirA,
+      },
     },
   });
 
