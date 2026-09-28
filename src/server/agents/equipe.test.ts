@@ -264,6 +264,54 @@ describe("mensagemDeBastao", () => {
     expect(m).toContain("menu inicial");
     expect(m).toContain("repetir pergunta já respondida");
   });
+
+  // ⚠ Até 28/09/2026 o bastão EXIGIA apresentação e não dizia com que nome.
+  // Quem não tinha nome próprio inventava um, e o mais à mão era o da pessoa
+  // da equipe citada no próprio prompt — para quem ele deveria ENCAMINHAR.
+  // Quatro vezes em produção desde 18/08, em três agentes, todas com o primeiro
+  // nome de uma vendedora de verdade. O cliente lia uma pessoa só.
+  describe("com que nome quem assume se apresenta", () => {
+    it("sem persona, manda a identidade institucional — e nenhum nome de pessoa", () => {
+      const m = mensagemDeBastao({ deNome: "Recepção", resumo: "quer sala" })!;
+
+      expect(m).toContain("agente de atendimento da Seahub");
+      expect(m).toContain("não tem nome de pessoa");
+    });
+
+    it("com persona, manda o nome dela", () => {
+      const m = mensagemDeBastao({
+        deNome: "Recepção",
+        resumo: "quer sala",
+        persona: "Pedro",
+      })!;
+
+      expect(m).toContain("Apresente-se como Pedro.");
+      expect(m).not.toContain("agente de atendimento da Seahub");
+    });
+
+    it("persona só com espaços conta como sem persona", () => {
+      const m = mensagemDeBastao({ deNome: "Recepção", resumo: "x", persona: "   " })!;
+
+      expect(m).toContain("agente de atendimento da Seahub");
+    });
+
+    // ⚠ A proibição vale TAMBÉM para quem tem persona: num dos quatro casos o
+    // agente tinha a persona escrita no prompt e ainda assim abriu com o nome
+    // da vendedora. Ter nome ajuda e não basta — o nome real compete ali.
+    it.each([undefined, "Everton"])(
+      "proíbe usar nome de colega, com persona %s",
+      (persona) => {
+        const m = mensagemDeBastao({ deNome: "Recepção", resumo: "x", persona })!;
+
+        expect(m).toContain("Nunca se apresente com o nome de alguém da equipe");
+        expect(m).toContain("nenhum deles é você");
+      },
+    );
+
+    it("sem bastão continua sem mensagem — a identidade não cria uma do nada", () => {
+      expect(mensagemDeBastao({ persona: "Pedro" })).toBeNull();
+    });
+  });
 });
 
 describe("mensagemDeRetomada", () => {

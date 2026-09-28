@@ -2337,6 +2337,29 @@ pensa, e toda resposta sai pela porta — o cliente vê uma identidade só.
 - **O roster vai no system prompt; o bastão vai como mensagem.** O roster é
   estável (só muda quando alguém mexe na equipe), então cacheia. O bastão muda
   por conversa — no prefixo, destruiria o cache a cada mensagem.
+- ⚠⚠ **O bastão manda se apresentar, e por isso é ELE quem diz com que nome**
+  (`Agent.persona`, 28/09/2026). Até então mandava "abra se apresentando" e não
+  dizia o nome: o agente sem nome próprio inventava um, e o mais à mão era o da
+  **pessoa da equipe citada no próprio prompt dele** — justamente para quem ele
+  deveria ENCAMINHAR. Quatro vezes em produção desde 18/08, em três agentes
+  diferentes, todas com nome de vendedora de verdade. O cliente lia uma pessoa
+  só do começo ao fim, e o que o robô prometeu entrava na conta dela — numa
+  conversa que o agente ia, em seguida, atribuir a essa mesma pessoa.
+  - **Nulo é o padrão e é a identidade institucional** ("agente de atendimento
+    da Seahub"). Nome nenhum não se confunde com ninguém. Persona é opt-in, para
+    quem tem uma de propósito.
+  - ⚠ **A proibição de usar nome de colega vai junto mesmo COM persona.** Um dos
+    quatro casos foi de um agente que tinha persona escrita no prompt e ainda
+    assim usou o nome da vendedora: ter nome ajuda e não basta, porque o nome
+    real continua competindo dentro do mesmo prompt.
+  - ⚠ **No segundo ponto de montagem, a persona é a do `destino`, não a do
+    `ativo`** — ali `ativo` ainda é quem entrega, e a troca só acontece na linha
+    seguinte. Quem se apresenta é quem chega.
+  - **Vale no turno da transferência**, que é onde os quatro casos nasceram.
+    Pergunta do cliente três mensagens depois não é alcançada; cobrir isso
+    exigiria a identidade no prompt de sistema, ao lado do roster.
+  - Mudar a persona **não cria `AgentVersion`** (o versionamento só cobre
+    prompt, modelo e effort). Fica na auditoria.
 - **A transferência acontece no mesmo ciclo.** O colega assume e responde no
   mesmo turno. Se fosse assíncrono, o cliente ficaria mudo até escrever de novo.
 - **A tool só registra a intenção; quem envia é o worker.** Todo envio ao cliente

@@ -222,6 +222,8 @@ const verAgente = ferramenta({
         maxToolIterations: agente.maxToolIterations,
       },
       descricaoDeRoteamento: agente.routingDescription,
+      // Nulo aqui quer dizer identidade institucional, nao "faltou configurar".
+      persona: agente.persona ?? "(agente de atendimento da Seahub)",
       prompt: {
         versao: detalhes.versions[0]?.version ?? null,
         baseHash: carimbo(agente.systemPrompt),

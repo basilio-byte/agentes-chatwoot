@@ -73,6 +73,7 @@ function dadosAtuais(agente: {
   maxTokens: number;
   maxToolIterations: number;
   routingDescription: string | null;
+  persona: string | null;
 }): DadosDoAgente {
   return {
     name: agente.name,
@@ -83,6 +84,7 @@ function dadosAtuais(agente: {
     maxTokens: agente.maxTokens,
     maxToolIterations: agente.maxToolIterations,
     routingDescription: agente.routingDescription ?? "",
+    persona: agente.persona ?? "",
   };
 }
 
@@ -129,6 +131,9 @@ const criarAgenteMcp = ferramenta({
         maxTokens: args.maxTokens ?? 16384,
         maxToolIterations: args.maxToolIterations ?? 12,
         routingDescription: args.descricaoDeRoteamento ?? "",
+        // Agente novo nasce sem nome de pessoa: identidade institucional nao
+        // se confunde com ninguem da equipe. Persona e escolha consciente.
+        persona: "",
       },
       autorDoMcp(ctx),
     );
@@ -154,7 +159,7 @@ const atualizarAgenteMcp = ferramenta({
   name: "atualizar_agente",
   title: "Atualizar agente",
   description:
-    "Altera nome, descrição, modelo, effort, limites ou a descrição de roteamento de um agente. NÃO altera o prompt (para isso, propor_alteracao_de_prompt). Campo omitido fica como está; texto vazio esvazia descricao ou descricaoDeRoteamento. Mudar modelo ou effort cria uma versão no histórico. Vale a partir da próxima mensagem.",
+    "Altera nome, descrição, modelo, effort, limites, a descrição de roteamento ou a persona de um agente. NÃO altera o prompt (para isso, propor_alteracao_de_prompt). Campo omitido fica como está; texto vazio esvazia descricao, descricaoDeRoteamento ou persona. Mudar modelo ou effort cria uma versão no histórico. Vale a partir da próxima mensagem.",
   papel: UserRole.ADMIN,
   anotacoes: ALTERA,
   entrada: z
@@ -167,6 +172,14 @@ const atualizarAgenteMcp = ferramenta({
       maxTokens: z.number().int().min(256).max(200_000).optional(),
       maxToolIterations: z.number().int().min(1).max(20).optional(),
       descricaoDeRoteamento: z.string().trim().max(400).optional(),
+      persona: z
+        .string()
+        .trim()
+        .max(40)
+        .optional()
+        .describe(
+          'Nome com que o agente se apresenta ao ASSUMIR uma conversa transferida. Vazio = identidade institucional ("agente de atendimento da Seahub"), que é o padrão. Só use nome de persona; nunca o nome de uma pessoa real da equipe.',
+        ),
     })
     .refine(temCampoAlemDoAgente, {
       message: "Informe pelo menos um campo para alterar.",
@@ -188,6 +201,7 @@ const atualizarAgenteMcp = ferramenta({
       ...(args.descricaoDeRoteamento !== undefined
         ? { routingDescription: args.descricaoDeRoteamento }
         : {}),
+      ...(args.persona !== undefined ? { persona: args.persona } : {}),
     };
 
     // O prompt vai junto na escrita (o formulário é um só); a trava garante

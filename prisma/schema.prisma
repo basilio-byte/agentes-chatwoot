@@ -91,6 +91,20 @@ model Agent {
   /// este texto fala com os outros.
   routingDescription String? @db.Text
 
+  /// Com que nome este agente se apresenta ao ASSUMIR uma conversa transferida.
+  ///
+  /// ⚠ Existe porque o bastão de passagem manda se apresentar e, até 28/09/2026,
+  /// não dizia com que nome. Agente sem nome próprio inventava um — e o primeiro
+  /// nome à mão era o da pessoa da equipe citada no próprio prompt dele, para
+  /// quem ele deveria ENCAMINHAR. Quatro casos em produção desde 18/08, em três
+  /// agentes, todos com o primeiro nome de uma vendedora de verdade. O cliente
+  /// via uma pessoa só, e falas do robô entravam na conta dela.
+  ///
+  /// Nulo = identidade institucional ("agente de atendimento da Seahub"), que é
+  /// o padrão consciente: nome nenhum não confunde com ninguém. Preencher é
+  /// para quem tem persona de propósito (hoje "Pedro" e "Everton").
+  persona String?
+
   /// O agente de entrada recebe a primeira mensagem e distribui. Só um pode
   /// estar ligado — sem isso, quem responde primeiro seria arbitrário.
   isEntry Boolean @default(false)

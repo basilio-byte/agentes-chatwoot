@@ -38,6 +38,7 @@ function lerFormulario(formData: FormData): DadosDoAgente {
     maxTokens: formData.get("maxTokens"),
     maxToolIterations: formData.get("maxToolIterations"),
     routingDescription: formData.get("routingDescription"),
+    persona: formData.get("persona"),
   };
 }
 

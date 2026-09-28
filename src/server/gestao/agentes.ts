@@ -26,6 +26,9 @@ export const agenteSchema = z.object({
   maxToolIterations: z.coerce.number().int().min(1).max(20),
   /// Vazio esconde o agente do roster dos colegas — ninguém transfere para ele.
   routingDescription: z.string().max(400).optional().or(z.literal("")),
+  /// Nome com que se apresenta ao assumir uma conversa. Vazio = identidade
+  /// institucional ("agente de atendimento da Seahub"), que é o padrão.
+  persona: z.string().trim().max(40).optional().or(z.literal("")),
 });
 
 /**
@@ -104,6 +107,7 @@ export async function criarAgente(
       key: slugUnico(parsed.data.name, usadas),
       description: parsed.data.description || null,
       routingDescription: parsed.data.routingDescription || null,
+      persona: parsed.data.persona?.trim() || null,
       ownerId: autor.userId,
       updatedById: autor.userId,
       versions: {
@@ -200,6 +204,7 @@ export async function atualizarAgente(
     ...parsed.data,
     description: parsed.data.description || null,
     routingDescription: parsed.data.routingDescription || null,
+    persona: parsed.data.persona?.trim() || null,
     updatedById: autor.userId,
   };
 

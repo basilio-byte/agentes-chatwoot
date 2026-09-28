@@ -181,6 +181,7 @@ export default async function AgentePage({
       key: true,
       name: true,
       routingDescription: true,
+      persona: true,
       active: true,
       isEntry: true,
     },
@@ -348,6 +349,7 @@ export default async function AgentePage({
                     maxTokens: agente.maxTokens,
                     maxToolIterations: agente.maxToolIterations,
                     routingDescription: agente.routingDescription ?? "",
+                    persona: agente.persona ?? "",
                   }}
                 />
               </div>

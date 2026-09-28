@@ -12,6 +12,8 @@ export type MembroDaEquipe = {
   key: string;
   name: string;
   routingDescription?: string | null;
+  /** Nome com que se apresenta ao assumir. Nulo = identidade institucional. */
+  persona?: string | null;
 };
 
 export type AgenteRoteavel = MembroDaEquipe & {
@@ -193,6 +195,8 @@ export function mensagemDeBastao(bastao: {
   deNome?: string | null;
   motivo?: string | null;
   resumo?: string | null;
+  /** Persona de QUEM ASSUME. Nulo = identidade institucional. */
+  persona?: string | null;
 }): string | null {
   const partes = [
     bastao.deNome ? `Você assumiu este atendimento, que veio de ${bastao.deNome}.` : null,
@@ -213,9 +217,42 @@ export function mensagemDeBastao(bastao: {
     "apresentando em uma linha, no seu tom, e emende direto no assunto — como",
     "alguém que assume um atendimento em andamento, não como quem atende do zero.",
     "",
+    ...linhasDeIdentidade(bastao.persona),
+    "",
     "Não recomece: nada de menu inicial, de repetir pergunta já respondida, nem",
     "de pedir de novo o que o cliente já informou. Use o resumo acima.",
   ].join("\n");
+}
+
+/** Identidade institucional de quem não tem persona. */
+export const IDENTIDADE_INSTITUCIONAL = "agente de atendimento da Seahub";
+
+/**
+ * Com que nome quem assume deve se apresentar.
+ *
+ * ⚠ Sem isto, o bastão EXIGIA uma apresentação e não dizia com que nome. Agente
+ * sem nome próprio inventava um, e o nome mais à mão era o da pessoa da equipe
+ * citada no prompt dele — justamente para quem ele deveria encaminhar. Quatro
+ * vezes em produção entre 18/08 e 28/09/2026, em três agentes, todas com o
+ * primeiro nome de uma vendedora de verdade. O cliente lia uma pessoa só do
+ * começo ao fim, e o que o robô prometeu entrava na conta dela.
+ *
+ * ⚠ A proibição vai JUNTO com o nome, e não só para quem está sem persona: um
+ * dos quatro casos foi de um agente que TEM persona escrita no prompt e ainda
+ * assim usou o nome da vendedora. Ter nome ajuda e não basta — o nome da pessoa
+ * real continua competindo dentro do mesmo prompt.
+ */
+function linhasDeIdentidade(persona?: string | null): string[] {
+  const nome = persona?.trim();
+
+  return [
+    nome
+      ? `Apresente-se como ${nome}.`
+      : `Você não tem nome de pessoa: apresente-se como ${IDENTIDADE_INSTITUCIONAL}.`,
+    "Nunca se apresente com o nome de alguém da equipe. Os nomes de pessoas que",
+    "aparecem nas suas instruções são colegas de verdade, para quem você encaminha",
+    "o atendimento — nenhum deles é você.",
+  ];
 }
 
 /**

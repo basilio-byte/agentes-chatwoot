@@ -412,6 +412,9 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
       key: true,
       name: true,
       routingDescription: true,
+      // Quem assume precisa saber com que nome se apresentar: sem isto o
+      // bastão exigia apresentação e o agente pegava o nome de um colega.
+      persona: true,
       active: true,
       isEntry: true,
       inboxMode: true,
@@ -450,6 +453,9 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
             deNome: conversa?.handoffDeNome,
             motivo: conversa?.handoffMotivo,
             resumo: conversa?.handoffResumo,
+            // De QUEM ASSUME, que aqui é o agente ativo — é ele que vai abrir
+            // a fala e precisa saber com que nome.
+            persona: ativo.persona,
           })
       : null;
 
@@ -585,6 +591,9 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
         deNome: ativo.name,
         motivo: handoff.motivo,
         resumo: handoff.resumo,
+        // ⚠ `destino`, não `ativo`: aqui `ativo` ainda é quem ENTREGA, e a
+        // troca só acontece na linha abaixo. Quem se apresenta é quem chega.
+        persona: destino.persona,
       });
       ativo = destino;
     }

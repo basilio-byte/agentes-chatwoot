@@ -36,6 +36,8 @@ export type ValoresAgente = {
   maxTokens: number;
   maxToolIterations: number;
   routingDescription: string;
+  /** Vazio = identidade institucional. */
+  persona: string;
 };
 
 /**
@@ -221,6 +223,9 @@ const PADRAO: ValoresAgente = {
   maxTokens: 16384,
   maxToolIterations: 12,
   routingDescription: "",
+  // Nasce sem nome de pessoa: identidade institucional nao confunde com
+  // ninguem da equipe. Persona e escolha consciente, agente a agente.
+  persona: "",
 };
 
 export function AgenteForm({
@@ -318,6 +323,20 @@ export function AgenteForm({
             />
           </Field>
         </div>
+
+        <Field
+          label="Como se apresenta ao assumir (opcional)"
+          hint="O nome que este agente usa ao abrir a fala numa conversa transferida para ele. Em branco, ele se apresenta como agente de atendimento da Seahub, sem nome de pessoa — que é o recomendado. Só preencha com um nome de PERSONA (Pedro, Everton); nunca com o nome de alguém da equipe, senão o cliente confunde o robô com a pessoa."
+          erro={erroDe("persona")}
+        >
+          <Input
+            name="persona"
+            defaultValue={valores.persona}
+            maxLength={40}
+            disabled={somenteLeitura}
+            placeholder="Em branco = agente de atendimento da Seahub"
+          />
+        </Field>
 
         <Field
           label="Quando me transferir uma conversa"
