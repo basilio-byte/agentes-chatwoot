@@ -21,6 +21,23 @@ import { Buffer } from "node:buffer";
  */
 
 export const VERSOES_MODERNAS = ["2026-07-28"] as const;
+
+/**
+ * Dica de cache que a revisão moderna EXIGE em `server/discover` e `tools/list`
+ * (especificação, "Caching": servers MUST include caching hints).
+ *
+ * ⚠ Sem ela o Claude Code rejeitava a lista inteira ("Invalid result for
+ * tools/list": `ttlMs` e `cacheScope`) e o conector sumia da sessão sem erro
+ * visível — achado em 28/09/2026, depois de dias contornando por HTTP. A
+ * validação ficou rígida numa versão do cliente posterior a este servidor.
+ *
+ * `private` porque a lista muda com o PAPEL de quem chama (Leitura vê 12
+ * ferramentas, Administrador 27): num cache compartilhado, o token de Leitura
+ * herdaria a lista do Administrador. Cinco minutos basta — a lista só muda com
+ * deploy ou troca de papel, e cada `tools/call` reconfere o papel de qualquer
+ * jeito.
+ */
+export const DICA_DE_CACHE = { ttlMs: 300_000, cacheScope: "private" } as const;
 export const VERSOES_LEGADAS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
 export const VERSOES_SUPORTADAS: readonly string[] = [
   ...VERSOES_MODERNAS,
@@ -278,6 +295,7 @@ async function moderno(
         capabilities: { tools: {} },
         _meta: metaDaResposta,
         instructions: INSTRUCOES,
+        ...DICA_DE_CACHE,
       });
 
     case "tools/list":
@@ -285,6 +303,7 @@ async function moderno(
         resultType: "complete",
         tools: executor.listar(),
         _meta: metaDaResposta,
+        ...DICA_DE_CACHE,
       });
 
     case "tools/call": {

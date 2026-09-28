@@ -86,6 +86,31 @@ describe("era moderna (2026-07-28): sem aperto de mão, metadados em toda requis
     expect(result.tools).toHaveLength(1);
   });
 
+  // ⚠ Sem estes dois campos o Claude Code rejeitava a lista inteira e o
+  // conector sumia da sessão (28/09/2026). A lista varia pelo papel de quem
+  // chama, então o escopo é privado.
+  it.each(["tools/list", "server/discover"])(
+    "%s traz a dica de cache exigida (ttlMs inteiro >= 0, cacheScope privado)",
+    async (metodo) => {
+      const r = await tratarMensagem(pedidoModerno(metodo), cabecalhosModernos(metodo), executor);
+      const result = (r.corpo as { result: Record<string, unknown> }).result;
+      expect(Number.isInteger(result.ttlMs)).toBe(true);
+      expect(result.ttlMs as number).toBeGreaterThanOrEqual(0);
+      expect(result.cacheScope).toBe("private");
+    },
+  );
+
+  it("o legado não ganha os campos novos", async () => {
+    const r = await tratarMensagem(
+      { jsonrpc: "2.0", id: 9, method: "tools/list", params: {} },
+      { versao: "2025-06-18", metodo: null, nome: null },
+      executor,
+    );
+    const result = (r.corpo as { result: Record<string, unknown> }).result;
+    expect(result).not.toHaveProperty("ttlMs");
+    expect(result).not.toHaveProperty("cacheScope");
+  });
+
   it("tools/call devolve texto e estrutura", async () => {
     const r = await tratarMensagem(
       pedidoModerno("tools/call", { name: "listar_agentes", arguments: {} }),
