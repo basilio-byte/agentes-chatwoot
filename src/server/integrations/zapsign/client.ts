@@ -25,6 +25,12 @@ export type Signatario = {
 export type DocumentoCriado = {
   token: string;
   status: string;
+  /**
+   * ⚠ Excluir na ZapSign manda o documento para a lixeira e NÃO muda o
+   * `status`: ele continua `pending`. Quem diz que foi excluído é este campo.
+   */
+  deleted?: boolean;
+  deleted_at?: string | null;
   name: string;
   original_file?: string | null;
   signed_file?: string | null;

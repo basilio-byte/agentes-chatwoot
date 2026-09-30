@@ -79,6 +79,19 @@ function marcaDeAmbiente(config: ZapSignConfig) {
 }
 
 /**
+ * A situação que o agente deve enxergar.
+ *
+ * ⚠ Excluir um documento na ZapSign o manda para a lixeira com `deleted: true`
+ * e deixa o `status` como estava — `pending` continua `pending`. Repassar só o
+ * `status` fez o agente de contratos recusar três vezes gerar o contrato certo
+ * da SEVEN (30/09/2026), porque "via" pendente um contrato que a equipe já
+ * tinha excluído justamente para liberar a geração. Excluído vence o status.
+ */
+export function situacaoDoDocumento(doc: Pick<DocumentoCriado, "status" | "deleted">): string {
+  return doc.deleted ? "excluido" : doc.status;
+}
+
+/**
  * O que o cliente precisa receber: o link de cada signatário.
  *
  * `original_file` e `signed_file` ficam de fora de propósito — expiram em 60
@@ -90,7 +103,8 @@ function formatarDocumento(doc: DocumentoCriado, config: ZapSignConfig) {
     ...marcaDeAmbiente(config),
     documentoId: doc.token,
     nome: doc.name,
-    status: doc.status,
+    status: situacaoDoDocumento(doc),
+    ...(doc.deleted && doc.deleted_at ? { excluidoEm: doc.deleted_at } : {}),
     signatarios: (doc.signers ?? []).map((s) => ({
       signatarioId: s.token,
       nome: s.name,
@@ -252,7 +266,7 @@ export const zapsignIntegration: IntegrationDefinition = {
       name: "zapsign_ver_documento",
       categoria: "Documentos",
       description:
-        "Situação de um documento: quem já assinou, quem falta e o link de cada um. Use para responder 'já assinaram?' e para reenviar um link.",
+        "Situação de um documento: quem já assinou, quem falta e o link de cada um. Use para responder 'já assinaram?' e para reenviar um link. status \"excluido\" = a equipe excluiu o documento: não vale como contrato existente.",
       inputSchema: z.object({ documentoId: z.string().min(10) }),
       async execute(entrada, ctx) {
         const { documentoId } = entrada as { documentoId: string };
@@ -264,7 +278,7 @@ export const zapsignIntegration: IntegrationDefinition = {
       name: "zapsign_listar_documentos",
       categoria: "Documentos",
       description:
-        "Lista documentos da conta, opcionalmente por situação. Atenção: a ZapSign cacheia esta rota por 60 segundos, então documento recém-criado pode não aparecer — para esse caso use zapsign_ver_documento.",
+        "Lista documentos da conta, opcionalmente por situação. Atenção: a ZapSign cacheia esta rota por 60 segundos, então documento recém-criado pode não aparecer — para esse caso use zapsign_ver_documento. status \"excluido\" = a equipe excluiu o documento: não vale como contrato existente.",
       inputSchema: z.object({
         situacao: z.enum(["pending", "signed", "refused"]).optional(),
         emailDoSignatario: z.string().optional(),
@@ -288,7 +302,7 @@ export const zapsignIntegration: IntegrationDefinition = {
           documentos: results.map((d) => ({
             documentoId: d.token,
             nome: d.name,
-            status: d.status,
+            status: situacaoDoDocumento(d),
           })),
         };
       },

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IntegrationProvider } from "@/generated/prisma/enums";
-import { zapsignIntegration } from "./index";
+import { situacaoDoDocumento, zapsignIntegration } from "./index";
 
 const tools = zapsignIntegration.tools;
 const nomes = tools.map((t) => t.name);
@@ -129,5 +129,71 @@ describe("marca de ambiente nas respostas", () => {
 
     expect(r.ambiente).toBe("producao");
     expect(r.avisoImportante).toBeUndefined();
+  });
+});
+
+describe("documento excluído na ZapSign", () => {
+  /**
+   * Excluir na ZapSign manda para a lixeira com `deleted: true` e deixa o
+   * `status` como estava. Repassando só o status, o agente de contratos via
+   * "pendente" um contrato que a equipe tinha excluído para liberar a geração
+   * do certo, e recusava gerar (30/09/2026).
+   */
+  const ctx = {
+    provider: IntegrationProvider.ZAPSIGN,
+    config: { ambiente: "producao", modelos: [] },
+    credential: "tok",
+    agentId: "a1",
+  };
+
+  function responder(corpo: unknown) {
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      json: async () => corpo,
+      text: async () => "",
+    }));
+  }
+
+  const excluido = {
+    token: "doc-1",
+    name: "EV LITORAL PJ",
+    status: "pending",
+    deleted: true,
+    deleted_at: "2026-09-30T19:19:33Z",
+    signers: [],
+  };
+
+  it("situacaoDoDocumento: excluído vence o status", () => {
+    expect(situacaoDoDocumento({ status: "pending", deleted: true })).toBe("excluido");
+    expect(situacaoDoDocumento({ status: "signed", deleted: true })).toBe("excluido");
+    expect(situacaoDoDocumento({ status: "pending", deleted: false })).toBe("pending");
+    expect(situacaoDoDocumento({ status: "signed" })).toBe("signed");
+  });
+
+  it("ver_documento devolve 'excluido' e quando foi, nunca 'pending'", async () => {
+    responder(excluido);
+    const ver = tools.find((t) => t.name === "zapsign_ver_documento")!;
+    const r = (await ver.execute({ documentoId: "doc-1234567890" }, ctx)) as Record<string, unknown>;
+
+    expect(r.status).toBe("excluido");
+    expect(r.excluidoEm).toBe("2026-09-30T19:19:33Z");
+  });
+
+  it("listar_documentos marca o excluído", async () => {
+    responder({ count: 2, next: null, results: [excluido, { ...excluido, token: "doc-2", deleted: false }] });
+    const listar = tools.find((t) => t.name === "zapsign_listar_documentos")!;
+    const r = (await listar.execute({}, ctx)) as { documentos: { documentoId: string; status: string }[] };
+
+    expect(r.documentos).toEqual([
+      { documentoId: "doc-1", nome: "EV LITORAL PJ", status: "excluido" },
+      { documentoId: "doc-2", nome: "EV LITORAL PJ", status: "pending" },
+    ]);
+  });
+
+  it("as duas descrições dizem ao modelo o que 'excluido' significa", () => {
+    for (const n of ["zapsign_ver_documento", "zapsign_listar_documentos"]) {
+      expect(tools.find((t) => t.name === n)!.description).toContain('"excluido"');
+    }
   });
 });
