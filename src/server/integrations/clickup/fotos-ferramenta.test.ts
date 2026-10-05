@@ -24,6 +24,21 @@ let downloads: Array<{ url: string; token: string | null }>;
 /** Status que o servidor de anexo responde SEM token. */
 let statusSemToken = 200;
 
+/** Chamadas anteriores da ferramenta, e o filtro com que foram procuradas. */
+let leiturasAnteriores: { input: unknown; output: unknown; createdAt: Date }[] = [];
+let filtroDaConsulta: Record<string, unknown> | null = null;
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    toolCall: {
+      findMany: async (args: Record<string, unknown>) => {
+        filtroDaConsulta = args;
+        return leiturasAnteriores;
+      },
+    },
+  },
+}));
+
 vi.mock("@/server/integrations/openai/credenciais", () => ({
   capacidadeDeMidia: async () => capacidade,
 }));
@@ -94,6 +109,8 @@ beforeEach(() => {
   downloads = [];
   statusSemToken = 200;
   anexosDaTarefa = anexos();
+  leiturasAnteriores = [];
+  filtroDaConsulta = null;
 
   vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
     const texto = String(url);
@@ -257,6 +274,45 @@ describe("clickup_ler_fotos_da_tarefa", () => {
     const vazio = await executar();
     expect(vazio.fotos).toEqual([]);
     expect(String(vazio.aviso)).toMatch(/Nenhuma foto/);
+  });
+
+  it("⚠ na rotina diária, lê só o que chegou depois da última leitura concluída", async () => {
+    // A leitura anterior aconteceu entre a foto a1 (há 1 h) e a a2 (há 30 min).
+    leiturasAnteriores = [
+      {
+        input: { tarefaId: "t1" },
+        output: { lido: true, lidoAteMs: AGORA - 2_700_000 },
+        createdAt: new Date(AGORA - 2_680_000),
+      },
+    ];
+
+    const r = await executar({ desdeAUltimaLeitura: true });
+
+    const fotos = r.fotos as Array<Record<string, unknown>>;
+    expect(fotos.map((f) => f.arquivo)).toEqual(["image.png"]);
+    expect(String(r.periodo)).toMatch(/desde a última leitura/);
+    expect(typeof r.lidoAteMs).toBe("number");
+    // Teste do playground não "consome" as fotos da rodada agendada.
+    const where = (filtroDaConsulta as { where: { run: Record<string, unknown> } }).where;
+    expect(where.run).toMatchObject({ agentId: "agente-jardim", source: { not: "PLAYGROUND" } });
+  });
+
+  it("sem foto nova, devolve quando foi a última foto da tarefa", async () => {
+    leiturasAnteriores = [
+      { input: { tarefaId: "t1" }, output: { lido: true, lidoAteMs: AGORA }, createdAt: new Date(AGORA) },
+    ];
+
+    const r = await executar({ desdeAUltimaLeitura: true });
+
+    expect(r.fotos).toEqual([]);
+    expect(String(r.ultimaFotoDaTarefa)).toMatch(/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/);
+    expect(downloads).toHaveLength(0);
+  });
+
+  it("sem pedir a rotina diária, nem consulta as leituras anteriores", async () => {
+    await executar();
+
+    expect(filtroDaConsulta).toBeNull();
   });
 
   it("não é marcada como escrita: só lê", () => {

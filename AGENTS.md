@@ -1885,7 +1885,22 @@ tarefa "Manutenção Jardim (fotos semanais)", e o agente avalia contra o
   de um 401/403, e só para `*.clickup-attachments.com` ou
   `attachments.clickup.com`.
 - **Sem foto no período, o retorno diz que não há o que avaliar**, para o
-  modelo não descrever foto que não recebeu.
+  modelo não descrever foto que não recebeu, e traz `ultimaFotoDaTarefa` —
+  quando chegou a foto mais recente da tarefa inteira —, para o agente saber
+  se a equipe deixou de fotografar.
+- ⚠ **Rotina diária: `desdeAUltimaLeitura`** (pedido do usuário em 05/10/2026,
+  rodar todo dia ao meio-dia). A janela começa onde a última leitura CONCLUÍDA
+  deste agente nesta tarefa parou (no máximo `ultimosDias` para trás). Janela
+  fixa de 24 h perderia as fotos do dia em que a rodada falhasse; janela de 7
+  dias avaliaria a mesma foto sete dias seguidos, com um comentário e um
+  WhatsApp por dia. Três cuidados, todos testados:
+  - vale o instante em que os anexos foram LIDOS (`lidoAteMs`), não o da
+    gravação da chamada — a foto que chegasse nos ~20 s da leitura ficaria
+    fora das duas janelas;
+  - só conta leitura com `lido: true`, de turno com sucesso e fora do
+    playground — o teste de alguém não pode "consumir" as fotos da rodada;
+  - sem o histórico (banco fora do ar), a janela volta a `ultimosDias`: o pior
+    caso é reavaliar, nunca perder.
 - ⚠ **As fotos do "Padrão Ouro" que estão na task foram ajustadas por IA.** Servem
   de ilustração para gente; o agente compara contra o TEXTO do critério, não
   contra elas.

@@ -91,19 +91,18 @@ export type SelecaoDeFotos = {
  */
 export function selecionarFotos(
   anexos: ClickUpAnexo[],
-  agoraMs: number,
-  dias: number,
+  desdeMs: number,
   teto = MAX_FOTOS_POR_LEITURA,
 ): SelecaoDeFotos {
-  const desde = agoraMs - dias * DIA_MS;
-
   const doPeriodo = anexos.filter((a) => {
     if (a.deleted || a.hidden || !a.url) return false;
     const quando = instante(a.date);
-    return quando !== null && quando >= desde;
+    // Estritamente depois: a foto que chegou no instante exato da leitura
+    // anterior já foi lida por ela.
+    return quando !== null && quando > desdeMs;
   });
 
-  const imagens = doPeriodo.filter((a) => EXTENSOES_DE_IMAGEM.includes(extensaoDoAnexo(a)));
+  const imagens = doPeriodo.filter(ehFoto);
 
   const vistas = new Set<string>();
   const unicas: ClickUpAnexo[] = [];
@@ -122,6 +121,77 @@ export function selecionarFotos(
     repetidas: imagens.length - unicas.length,
     semSerFoto: doPeriodo.length - imagens.length,
   };
+}
+
+/** Imagem viva, com endereço, num formato que a visão lê. */
+function ehFoto(a: ClickUpAnexo): boolean {
+  return (
+    !a.deleted &&
+    !a.hidden &&
+    Boolean(a.url) &&
+    EXTENSOES_DE_IMAGEM.includes(extensaoDoAnexo(a))
+  );
+}
+
+/**
+ * Quando a foto mais recente da tarefa chegou, olhando a tarefa INTEIRA — não
+ * só a janela. É o que permite dizer "nenhuma foto há 9 dias" num dia em que a
+ * janela veio vazia.
+ */
+export function fotoMaisRecente(anexos: ClickUpAnexo[]): number | null {
+  let maior: number | null = null;
+  for (const a of anexos) {
+    const quando = instante(a.date);
+    if (quando !== null && ehFoto(a) && (maior === null || quando > maior)) maior = quando;
+  }
+  return maior;
+}
+
+/**
+ * Até quando este agente já leu DESTA tarefa, pelas chamadas gravadas — ou
+ * `null`.
+ *
+ * ⚠ Vale o instante em que a lista de anexos foi LIDA (`lidoAteMs`), não o da
+ * gravação da chamada: entre um e outro passam os ~20 s da leitura das fotos,
+ * e a foto que chegasse nesse meio ficaria fora das duas janelas, para sempre.
+ * Chamada sem o campo conta pela gravação.
+ *
+ * Só conta a leitura que leu de verdade (`lido: true`): a que parou por leitura
+ * de mídia desligada, ou em que todas as fotos falharam, não pode empurrar a
+ * janela para frente, senão as fotos dela nunca seriam avaliadas.
+ */
+export function ultimaLeituraDaTarefa(
+  chamadas: { input: unknown; output: unknown; createdAt: Date }[],
+  tarefaId: string,
+): Date | null {
+  let ultima: Date | null = null;
+  for (const c of chamadas) {
+    const entrada = c.input as Record<string, unknown> | null;
+    const saida = c.output as Record<string, unknown> | null;
+    if (entrada?.tarefaId !== tarefaId || saida?.lido !== true) continue;
+    const ate = typeof saida.lidoAteMs === "number" ? new Date(saida.lidoAteMs) : c.createdAt;
+    if (!ultima || ate > ultima) ultima = ate;
+  }
+  return ultima;
+}
+
+/**
+ * Onde a janela começa: na última leitura concluída, sem passar de `dias` para
+ * trás — que é também a janela da primeira leitura de todas.
+ *
+ * ⚠ É isto que deixa o agente rodar todo dia sem buraco nem repetição. Janela
+ * fixa de 24 h perderia as fotos de um dia em que a rodada falhou, e uma janela
+ * maior avaliaria a mesma foto em dias seguidos — um comentário e um WhatsApp
+ * repetidos por dia.
+ */
+export function inicioDaJanela(args: {
+  agoraMs: number;
+  dias: number;
+  ultimaLeitura: Date | null;
+}): number {
+  const limite = args.agoraMs - args.dias * DIA_MS;
+  const ultima = args.ultimaLeitura?.getTime() ?? null;
+  return ultima !== null && ultima > limite ? ultima : limite;
 }
 
 function porData(a: ClickUpAnexo, b: ClickUpAnexo): number {

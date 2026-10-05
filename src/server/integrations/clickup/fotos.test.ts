@@ -4,10 +4,13 @@ import {
   anotacaoDaFoto,
   chaveDaLeitura,
   cortarDescricao,
+  fotoMaisRecente,
   hostDeAnexoPermitido,
+  inicioDaJanela,
   instrucaoDaFoto,
   nomeDoAnexo,
   selecionarFotos,
+  ultimaLeituraDaTarefa,
 } from "./fotos";
 import type { ClickUpAnexo, ClickUpComentario } from "./tipos";
 
@@ -49,8 +52,7 @@ describe("quais fotos entram na leitura", () => {
         anexo({ id: "nova", date: String(AGORA - 2 * DIA) }),
         anexo({ id: "velha", date: String(AGORA - 8 * DIA) }),
       ],
-      AGORA,
-      7,
+      AGORA - 7 * DIA,
     );
 
     expect(s.fotos.map((f) => f.id)).toEqual(["nova"]);
@@ -64,8 +66,7 @@ describe("quais fotos entram na leitura", () => {
         anexo({ id: "sem-url", url: null }),
         anexo({ id: "viva" }),
       ],
-      AGORA,
-      7,
+      AGORA - 7 * DIA,
     );
 
     expect(s.fotos.map((f) => f.id)).toEqual(["viva"]);
@@ -78,8 +79,7 @@ describe("quais fotos entram na leitura", () => {
         anexo({ id: "iphone", title: "IMG_1.HEIC", extension: "heic" }),
         anexo({ id: "foto" }),
       ],
-      AGORA,
-      7,
+      AGORA - 7 * DIA,
     );
 
     expect(s.fotos.map((f) => f.id)).toEqual(["foto"]);
@@ -89,8 +89,7 @@ describe("quais fotos entram na leitura", () => {
   it("a extensão sai do nome quando a API não a manda", () => {
     const s = selecionarFotos(
       [anexo({ id: "x", title: "canteiro.PNG", extension: null })],
-      AGORA,
-      7,
+      AGORA - 7 * DIA,
     );
 
     expect(s.fotos).toHaveLength(1);
@@ -102,8 +101,7 @@ describe("quais fotos entram na leitura", () => {
         anexo({ id: "segunda", title: "WhatsApp Image 09.30.19.jpeg", size: 199609, date: String(AGORA - DIA) }),
         anexo({ id: "primeira", title: "WhatsApp Image 09.30.19.jpeg", size: 199609, date: String(AGORA - DIA - 60_000) }),
       ],
-      AGORA,
-      7,
+      AGORA - 7 * DIA,
     );
 
     expect(s.fotos.map((f) => f.id)).toEqual(["primeira"]);
@@ -116,8 +114,7 @@ describe("quais fotos entram na leitura", () => {
         anexo({ id: "a", title: "image.png", extension: "png", size: 2077117 }),
         anexo({ id: "b", title: "image.png", extension: "png", size: 2200543 }),
       ],
-      AGORA,
-      7,
+      AGORA - 7 * DIA,
     );
 
     expect(s.fotos).toHaveLength(2);
@@ -129,7 +126,7 @@ describe("quais fotos entram na leitura", () => {
       anexo({ id: `f${i}`, size: i, date: String(AGORA - DIA + i * 1000) }),
     );
 
-    const s = selecionarFotos(anexos, AGORA, 7);
+    const s = selecionarFotos(anexos, AGORA - 7 * DIA);
 
     expect(s.fotos).toHaveLength(MAX_FOTOS_POR_LEITURA);
     expect(s.fotos[0].id).toBe("f3");
@@ -240,5 +237,67 @@ describe("a instrução e o cache", () => {
   it("descrição longa é cortada e diz que foi", () => {
     expect(cortarDescricao("curta")).toBe("curta");
     expect(cortarDescricao("x".repeat(20), 10)).toBe("xxxxxxxxxx … [descrição cortada]");
+  });
+});
+
+describe("a janela da rotina diária", () => {
+  it("sem leitura anterior, olha os últimos dias pedidos", () => {
+    expect(inicioDaJanela({ agoraMs: AGORA, dias: 7, ultimaLeitura: null })).toBe(AGORA - 7 * DIA);
+  });
+
+  it("⚠ com leitura anterior, começa nela — sem buraco nem repetição", () => {
+    const ontem = new Date(AGORA - DIA);
+    expect(inicioDaJanela({ agoraMs: AGORA, dias: 7, ultimaLeitura: ontem })).toBe(AGORA - DIA);
+  });
+
+  it("leitura anterior mais velha que o limite não alarga a janela", () => {
+    const antiga = new Date(AGORA - 30 * DIA);
+    expect(inicioDaJanela({ agoraMs: AGORA, dias: 7, ultimaLeitura: antiga })).toBe(AGORA - 7 * DIA);
+  });
+
+  it("a foto do instante exato da leitura anterior já foi lida por ela", () => {
+    const s = selecionarFotos(
+      [anexo({ id: "na-borda", date: String(AGORA - DIA) }), anexo({ id: "depois", date: String(AGORA - DIA + 1) })],
+      AGORA - DIA,
+    );
+    expect(s.fotos.map((f) => f.id)).toEqual(["depois"]);
+  });
+
+  it("⚠ vale o instante em que os anexos foram lidos, não o da gravação", () => {
+    const leitura = AGORA - DIA;
+    const r = ultimaLeituraDaTarefa(
+      [
+        {
+          input: { tarefaId: "t1" },
+          output: { lido: true, lidoAteMs: leitura },
+          createdAt: new Date(leitura + 20_000),
+        },
+      ],
+      "t1",
+    );
+    expect(r?.getTime()).toBe(leitura);
+  });
+
+  it("leitura que não leu, de outra tarefa, não empurra a janela", () => {
+    const r = ultimaLeituraDaTarefa(
+      [
+        { input: { tarefaId: "t1" }, output: { lido: false, erro: "desligada" }, createdAt: new Date(AGORA) },
+        { input: { tarefaId: "outra" }, output: { lido: true, lidoAteMs: AGORA }, createdAt: new Date(AGORA) },
+        { input: { tarefaId: "t1" }, output: { lido: true, lidoAteMs: AGORA - 3 * DIA }, createdAt: new Date(AGORA - 3 * DIA) },
+      ],
+      "t1",
+    );
+    expect(r?.getTime()).toBe(AGORA - 3 * DIA);
+  });
+
+  it("a foto mais recente olha a tarefa inteira e ignora o que não é foto", () => {
+    expect(
+      fotoMaisRecente([
+        anexo({ id: "a", date: String(AGORA - 9 * DIA) }),
+        anexo({ id: "pdf", title: "x.pdf", extension: "pdf", date: String(AGORA) }),
+        anexo({ id: "apagada", deleted: true, date: String(AGORA) }),
+      ]),
+    ).toBe(AGORA - 9 * DIA);
+    expect(fotoMaisRecente([])).toBeNull();
   });
 });

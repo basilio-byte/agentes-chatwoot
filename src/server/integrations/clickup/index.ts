@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IntegrationProvider, MediaKind } from "@/generated/prisma/enums";
+import { IntegrationProvider, MediaKind, RunSource, RunStatus } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
 import { agoraEmSaoPaulo } from "@/lib/tempo";
 import { tipoLigado } from "@/server/integrations/openai/classificar";
@@ -15,10 +15,13 @@ import {
   anotacaoDaFoto,
   chaveDaLeitura,
   cortarDescricao,
+  fotoMaisRecente,
+  inicioDaJanela,
   instante,
   instrucaoDaFoto,
   nomeDoAnexo,
   selecionarFotos,
+  ultimaLeituraDaTarefa,
 } from "./fotos";
 import {
   deTimestamp,
@@ -446,6 +449,13 @@ export const clickupIntegration: IntegrationDefinition = {
           .optional()
           .default(DIAS_PADRAO)
           .describe("Quantos dias para trás olhar, contados de agora. Padrão: 7."),
+        desdeAUltimaLeitura: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "Verdadeiro: só as fotos que chegaram depois da última leitura que você concluiu desta tarefa (no máximo `ultimosDias` para trás). Use em rotina diária, para não avaliar a mesma foto duas vezes.",
+          ),
         foco: z
           .string()
           .min(10)
@@ -455,9 +465,10 @@ export const clickupIntegration: IntegrationDefinition = {
           ),
       }),
       async execute(entrada, ctx) {
-        const { tarefaId, ultimosDias, foco } = entrada as {
+        const { tarefaId, ultimosDias, desdeAUltimaLeitura, foco } = entrada as {
           tarefaId: string;
           ultimosDias?: number;
+          desdeAUltimaLeitura?: boolean;
           foco: string;
         };
         const dias = ultimosDias ?? DIAS_PADRAO;
@@ -480,18 +491,57 @@ export const clickupIntegration: IntegrationDefinition = {
           };
         }
 
+        // ⚠ Só leituras concluídas de turnos de verdade empurram a janela: o
+        // teste do playground não pode "consumir" as fotos da rodada agendada.
+        let ultimaLeitura: Date | null = null;
+        if (desdeAUltimaLeitura) {
+          const chamadas = await db.toolCall
+            .findMany({
+              where: {
+                toolName: "clickup_ler_fotos_da_tarefa",
+                isError: false,
+                createdAt: { gte: new Date(Date.now() - dias * 86_400_000) },
+                run: {
+                  agentId: ctx.agentId,
+                  status: RunStatus.SUCCESS,
+                  source: { not: RunSource.PLAYGROUND },
+                },
+              },
+              orderBy: { createdAt: "desc" },
+              take: 30,
+              select: { input: true, output: true, createdAt: true },
+            })
+            // Sem o histórico, a janela volta a `ultimosDias`: o pior caso é
+            // reavaliar foto, nunca perder uma.
+            .catch(() => []);
+          ultimaLeitura = ultimaLeituraDaTarefa(chamadas, tarefaId);
+        }
+
+        const lidoAteMs = Date.now();
         const tarefa = await cliente.obterTarefa(tarefaId);
-        const selecao = selecionarFotos(tarefa.attachments ?? [], Date.now(), dias);
-        const periodo = `últimos ${dias} dias`;
+        const desde = inicioDaJanela({ agoraMs: lidoAteMs, dias, ultimaLeitura });
+        const selecao = selecionarFotos(tarefa.attachments ?? [], desde);
+        const inicio = agoraEmSaoPaulo(new Date(desde));
+        const periodo =
+          ultimaLeitura && ultimaLeitura.getTime() === desde
+            ? `desde a última leitura, em ${inicio.data} às ${inicio.hora}`
+            : `últimos ${dias} dias`;
+        const maisRecente = fotoMaisRecente(tarefa.attachments ?? []);
+        const momentoMaisRecente = maisRecente ? agoraEmSaoPaulo(new Date(maisRecente)) : null;
+        const ultimaFotoDaTarefa = momentoMaisRecente
+          ? `${momentoMaisRecente.data} ${momentoMaisRecente.hora}`
+          : null;
 
         if (selecao.fotos.length === 0) {
           return {
             lido: true,
+            lidoAteMs,
             tarefa: tarefa.name,
             link: tarefa.url ?? null,
             periodo,
             fotos: [],
-            aviso: `Nenhuma foto foi publicada nesta tarefa nos ${periodo}. Não há o que avaliar — não descreva fotos que você não recebeu.`,
+            ultimaFotoDaTarefa,
+            aviso: `Nenhuma foto nova nesta tarefa (${periodo}). Não há o que avaliar — não descreva fotos que você não recebeu.`,
           };
         }
 
@@ -552,9 +602,11 @@ export const clickupIntegration: IntegrationDefinition = {
         const lidas = fotos.filter((f) => f.lida).length;
         return {
           lido: lidas > 0,
+          lidoAteMs,
           tarefa: tarefa.name,
           link: tarefa.url ?? null,
           periodo,
+          ultimaFotoDaTarefa,
           lidas,
           naoLidas: fotos.length - lidas,
           ...(selecao.foraDoTeto > 0
