@@ -51,6 +51,8 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Ver a contagem de prazos perdidos por pessoa",
       // Vê, no cartão do saldo, SE o alerta está ligado — nunca os telefones.
       "Ver ou mudar quem recebe o alerta de saldo por WhatsApp",
+      // A aba do aviso à equipe mostra só QUANTAS pessoas recebem.
+      "Ver ou mudar quem recebe o aviso à equipe por WhatsApp",
     ],
   },
 
@@ -64,6 +66,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Configurar e ligar a leitura de mídia (áudio, imagem, documento)",
       "Ligar e desligar o gatilho HTTP de um agente",
       "Configurar o alerta de saldo por WhatsApp — limite e telefones — e mandar a mensagem de teste",
+      "Cadastrar quem recebe o aviso à equipe por WhatsApp, que os agentes mandam",
       "Trocar o motor dos agentes entre OpenRouter e Claude MAX, na chave geral ou agente por agente",
       "Testar no playground",
       "Operar os agentes por um assistente de I.A. (MCP), com os limites deste papel",

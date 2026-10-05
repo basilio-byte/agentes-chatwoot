@@ -524,6 +524,11 @@ enum IntegrationProvider {
   /// e o vigia reserva quando a venda aparece paga. No registry, como os
   /// Prazos, para ser OPT-IN por agente.
   ANIVERSARIO
+  /// Aviso à equipe por WhatsApp: o agente manda um recado curto a pessoas da
+  /// equipe CADASTRADAS na tela (nome = telefone), pela caixa 31. O agente
+  /// escolhe entre os nomes; número que não está no cadastro não recebe nada.
+  /// No registry, como os Prazos, para ser OPT-IN por agente.
+  AVISOS
 }
 
 enum IntegrationStatus {

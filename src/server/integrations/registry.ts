@@ -10,6 +10,7 @@ import { zapsignIntegration } from "./zapsign";
 import { prazosIntegration } from "./prazos";
 import { materiaisIntegration } from "./materiais";
 import { aniversarioIntegration } from "./aniversario";
+import { avisosIntegration } from "./avisos";
 
 /**
  * Registro central de integrações.
@@ -49,6 +50,9 @@ const definicoes: Partial<Record<IntegrationProvider, IntegrationDefinition>> = 
   // O agente registra o pedido do presente e o vigia reserva quando o pacote
   // aparece pago. Provider próprio para ser opt-in por agente.
   [aniversarioIntegration.provider]: aniversarioIntegration,
+  // Recado por WhatsApp a pessoas da equipe cadastradas no painel. Provider
+  // próprio para mandar mensagem ao celular de alguém ser opt-in por agente.
+  [avisosIntegration.provider]: avisosIntegration,
 };
 
 export function listarIntegracoes(): IntegrationDefinition[] {

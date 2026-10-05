@@ -28,6 +28,8 @@ import { PrazosConfigForm } from "@/components/prazos-config";
 import { MateriaisConfigForm } from "@/components/materiais-config";
 import { CobrancaConfigForm } from "@/components/cobranca-config";
 import { AniversarioConfigForm } from "@/components/aniversario-config";
+import { AvisosConfigForm } from "@/components/avisos-config";
+import { lerConfigAvisos } from "@/server/avisos/regras";
 import { lerConfigAniversario } from "@/server/aniversario/regras";
 import { formatarTelefone } from "@/server/alerta-de-saldo/regras";
 import { lerConfigCobranca, PROVIDER_DA_COBRANCA } from "@/server/cobranca/regras";
@@ -48,6 +50,7 @@ import {
   textoDaNota,
 } from "@/server/janela/regras";
 import {
+  BellRing,
   Building2,
   Cake,
   Ear,
@@ -167,6 +170,13 @@ export default async function IntegracoesPage({
   const agentesComAniversario = aniversario
     ? await db.agentIntegration.count({
         where: { integrationId: aniversario.id, enabled: true },
+      })
+    : 0;
+  const avisos = registros.find((i) => i.provider === IntegrationProvider.AVISOS);
+  const configAvisos = lerConfigAvisos(avisos?.config);
+  const agentesComAvisos = avisos
+    ? await db.agentIntegration.count({
+        where: { integrationId: avisos.id, enabled: true },
       })
     : 0;
   // Sem nome nem telefone do cliente: a tela é aberta pela equipe inteira.
@@ -828,6 +838,64 @@ export default async function IntegracoesPage({
                   )}
                 </Card>
               </div>
+            ),
+          },
+          {
+            id: "avisos",
+            rotulo: "Aviso à equipe",
+            icone: <BellRing size={14} aria-hidden />,
+            conteudo: (
+              <Card className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="font-medium">Aviso à equipe por WhatsApp</h2>
+                  {avisos?.enabled ? (
+                    <Badge tone="success">ligada</Badge>
+                  ) : (
+                    <Badge>desligada</Badge>
+                  )}
+                </div>
+
+                <p className="text-sm text-muted">
+                  O agente manda um recado curto por WhatsApp a quem está
+                  cadastrado abaixo, pela caixa {configAvisos.caixaId} — por
+                  exemplo, o resultado da avaliação semanal do jardim. Agentes
+                  com a integração ligada: <strong>{agentesComAvisos}</strong>.
+                </p>
+
+                <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+                  <li>
+                    O agente <strong>escolhe entre os nomes</strong> do cadastro:
+                    número que não está aqui não recebe nada, e nome que casa com
+                    duas pessoas é recusado.
+                  </li>
+                  <li>
+                    O recado sai com a marca &ldquo;🤖 Aviso automático&rdquo; e o
+                    nome do agente, em nome de quem é dono do token de
+                    Integrações → Chatwoot.
+                  </li>
+                  <li>
+                    O mesmo recado não sai duas vezes para a mesma pessoa em 12
+                    h. No playground, o envio é só simulado.
+                  </li>
+                </ul>
+
+                {editavel ? (
+                  <AvisosConfigForm
+                    habilitada={avisos?.enabled ?? false}
+                    destinatarios={configAvisos.destinatarios.map((d) => ({
+                      nome: d.nome,
+                      telefone: formatarTelefone(d.telefone),
+                    }))}
+                    caixaId={String(configAvisos.caixaId)}
+                  />
+                ) : (
+                  <p className="text-sm text-muted">
+                    {configAvisos.destinatarios.length
+                      ? `Pode avisar ${configAvisos.destinatarios.length} pessoa(s) por WhatsApp.`
+                      : "Ninguém cadastrado para receber o aviso."}
+                  </p>
+                )}
+              </Card>
             ),
           },
           {

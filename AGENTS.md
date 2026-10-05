@@ -1566,6 +1566,39 @@ saiu descontada do pacote: confirmação ao cliente, nota e WhatsApp.
   recebe link de pagamento de um presente. O ajuste é do lado do n8n, e é da
   equipe — daqui não se mexe em fluxo do n8n.
 
+### Aviso à equipe por WhatsApp: o agente escolhe o nome, nunca o número
+
+Integração `AVISOS`, no registry e **opt-in por agente**, com a ferramenta
+`avisar_equipe_whatsapp`. Pedido do Fúlvio (05/10/2026) para o agente de
+jardim: o resultado da avaliação semanal — positivo ou negativo — no celular
+de quem cuida do jardim e de quem executa, e quem executa não está no ClickUp.
+Regras puras e testadas em `avisos/regras.ts`; a tela na aba "Aviso à equipe"
+de Integrações.
+
+- **O envio não é novo**: caixa 31, token de usuário e `entregarAviso`, o
+  caminho provado do alerta de saldo, da cobrança e do presente de aniversário.
+  O que é novo é um AGENTE escolher quem recebe.
+- ⚠ **O agente só escolhe entre NOMES cadastrados no painel.** Número de fora
+  não recebe nada; nome que casa com duas pessoas é recusado; e um nome de fora
+  recusa o envio INTEIRO — mandar só a uma parte e dizer que "avisou a equipe"
+  seria afirmar o que não aconteceu.
+- **O carimbo é do sistema** (`🤖 Aviso automático · <agente>`): quem recebe
+  precisa saber que o recado é automático antes de agir sobre ele.
+- ⚠ **O mesmo recado não sai duas vezes para a mesma pessoa em 12 h**, lido
+  das `ToolCall` (assinatura do texto + entrega aceita). O modelo repete
+  chamada, o proxy duplica pedido de ferramenta e a fila reexecuta turno: cada
+  um seria o celular de alguém tocando de novo. Falha de envio e simulação não
+  contam, senão a nova tentativa seria barrada.
+- **No playground não sai nada**: devolve o que sairia. É onde se testa o
+  agente, e cada teste tocaria o celular de alguém.
+- **Telefone só para Administrador**, como no alerta de saldo: a tela mostra a
+  quem só lê QUANTAS pessoas recebem, a auditoria grava os nomes, o MCP omite a
+  chave `telefone`, e o detalhe de falha que volta ao modelo passa por
+  `semNumeros` — o Chatwoot repete o número em erro de cadastro.
+- ⚠ **Sai em nome de quem é dono do token de Integrações → Chatwoot**, como os
+  outros avisos da caixa 31. "Enviado" quer dizer que o Chatwoot aceitou, não
+  que chegou: quem leva ao WhatsApp é a WAHA.
+
 ### Conexa: armadilhas da API v2
 
 Achadas no primeiro uso real (09/09 a 15/09/2026), depois de semanas de teste
