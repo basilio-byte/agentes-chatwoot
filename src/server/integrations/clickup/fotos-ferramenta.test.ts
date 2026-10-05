@@ -306,6 +306,8 @@ describe("clickup_ler_fotos_da_tarefa", () => {
 
     expect(r.fotos).toEqual([]);
     expect(String(r.ultimaFotoDaTarefa)).toMatch(/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/);
+    // As fotos do teste são de menos de 1 h: zero dias inteiros.
+    expect(r.diasDesdeAUltimaFoto).toBe(0);
     expect(downloads).toHaveLength(0);
   });
 

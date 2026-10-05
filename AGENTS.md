@@ -1886,8 +1886,9 @@ tarefa "Manutenção Jardim (fotos semanais)", e o agente avalia contra o
   `attachments.clickup.com`.
 - **Sem foto no período, o retorno diz que não há o que avaliar**, para o
   modelo não descrever foto que não recebeu, e traz `ultimaFotoDaTarefa` —
-  quando chegou a foto mais recente da tarefa inteira —, para o agente saber
-  se a equipe deixou de fotografar.
+  quando chegou a foto mais recente da tarefa inteira — e
+  `diasDesdeAUltimaFoto`, para o agente saber se a equipe deixou de fotografar
+  sem fazer conta de data.
 - ⚠ **Rotina diária: `desdeAUltimaLeitura`** (pedido do usuário em 05/10/2026,
   rodar todo dia ao meio-dia). A janela começa onde a última leitura CONCLUÍDA
   deste agente nesta tarefa parou (no máximo `ultimosDias` para trás). Janela

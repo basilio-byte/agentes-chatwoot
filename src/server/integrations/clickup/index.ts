@@ -541,6 +541,11 @@ export const clickupIntegration: IntegrationDefinition = {
             periodo,
             fotos: [],
             ultimaFotoDaTarefa,
+            // A conta é do sistema, não do modelo: é por ela que o agente decide
+            // se a equipe deixou de fotografar.
+            diasDesdeAUltimaFoto: maisRecente
+              ? Math.floor((lidoAteMs - maisRecente) / 86_400_000)
+              : null,
             aviso: `Nenhuma foto nova nesta tarefa (${periodo}). Não há o que avaliar — não descreva fotos que você não recebeu.`,
           };
         }
