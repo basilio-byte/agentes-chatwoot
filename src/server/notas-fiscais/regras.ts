@@ -1,5 +1,5 @@
 import { somarDias } from "@/lib/tempo";
-import { regraDoCliente, type NotasFiscaisConfig } from "./config";
+import { regraDoCliente, regraDoProduto, type NotasFiscaisConfig } from "./config";
 
 /**
  * Notas fiscais de serviço a partir das cobranças do Conexa — as regras puras.
@@ -192,6 +192,34 @@ export function codigoDoItem(
   return null;
 }
 
+export type Destino =
+  | { tipo: "codigo"; codigo: string }
+  | { tipo: "fora" }
+  | { tipo: "conferir" };
+
+/**
+ * O que acontece com um item cobrado: a exceção do PRODUTO vence a categoria
+ * (a categoria 5 mistura taxa de reserva, bebida e multa), e depois vale a
+ * tabela da categoria. `null` = ninguém definiu: a cobrança fica aguardando.
+ *
+ * ⚠ A exceção só vale para item que existe no cadastro de produtos. O "produto"
+ * de uma reserva de sala é o id da SALA, e um id de sala pode coincidir com um
+ * id de produto — a regra do produto 2880 não pode pegar a sala 2880.
+ */
+export function destinoDoItem(
+  item: Pick<ItemClassificado, "origem" | "categoriaId" | "produtoId">,
+  config: Pick<NotasFiscaisConfig, "codigos" | "codigoReservaDeSala" | "produtos">,
+): Destino | null {
+  if (item.origem === "categoria") {
+    const regra = regraDoProduto(config, item.produtoId);
+    if (regra === "sem nota") return { tipo: "fora" };
+    if (regra === "conferir") return { tipo: "conferir" };
+    if (regra) return { tipo: "codigo", codigo: regra };
+  }
+  const codigo = codigoDoItem(item, config);
+  return codigo ? { tipo: "codigo", codigo } : null;
+}
+
 function porQueSemCodigo(item: ItemClassificado): string {
   if (item.origem === "categoria") return `"${item.nome}" (categoria ${item.categoriaId} sem código)`;
   if (item.origem === "reserva de sala") return `"${item.nome}" (reserva de sala, sem código configurado)`;
@@ -262,7 +290,7 @@ export function montarNotas(
 
 type ConfigDaDecisao = Pick<
   NotasFiscaisConfig,
-  "codigos" | "codigoReservaDeSala" | "clientes" | "inicio"
+  "codigos" | "codigoReservaDeSala" | "clientes" | "inicio" | "produtos"
 >;
 
 /**
@@ -344,7 +372,8 @@ export function decidir(
     };
   }
 
-  const semCodigo = cobrados.filter((i) => codigoDoItem(i, config) === null);
+  const destinos = cobrados.map((item) => ({ item, destino: destinoDoItem(item, config) }));
+  const semCodigo = destinos.filter((d) => d.destino === null).map((d) => d.item);
   if (semCodigo.length) {
     return {
       situacao: "AGUARDANDO_CLASSIFICACAO",
@@ -354,16 +383,40 @@ export function decidir(
     };
   }
 
-  const notas = montarNotas(
-    cobranca.id,
-    cobrados.map((i) => ({ ...i, codigo: codigoDoItem(i, config)! })),
+  const comCodigo = destinos.flatMap((d) =>
+    d.destino?.tipo === "codigo" ? [{ ...d.item, codigo: d.destino.codigo }] : [],
   );
+  const foraDaNota = destinos.filter((d) => d.destino?.tipo === "fora").map((d) => d.item);
+  const aConferir = destinos.filter((d) => d.destino?.tipo === "conferir").map((d) => d.item);
+  const notas = montarNotas(cobranca.id, comCodigo);
 
-  const soma = notas.reduce((s, n) => s + n.valorCentavos, 0);
+  for (const item of foraDaNota) {
+    observacoes.push(`fora da nota (sem CNAE): ${item.nome}, ${formatarReais(item.valorCentavos)}`);
+  }
+  if (!notas.length && !aConferir.length) {
+    return {
+      situacao: "FORA_DA_REGRA",
+      motivo: "todos os itens cobrados ficam fora da nota de serviço (sem CNAE)",
+      notas,
+      observacoes,
+    };
+  }
+
+  // O que ficou fora da nota continua sendo cobrado: a soma confere com ele.
+  const soma = [...notas.map((n) => n.valorCentavos), ...[...foraDaNota, ...aConferir].map((i) => i.valorCentavos)]
+    .reduce((s, v) => s + v, 0);
   if (soma !== cobranca.valorCentavos) {
     return {
       situacao: "CONFERIR",
       motivo: `as vendas somam ${formatarReais(soma)} e a cobrança é de ${formatarReais(cobranca.valorCentavos)}`,
+      notas,
+      observacoes,
+    };
+  }
+  if (aConferir.length) {
+    return {
+      situacao: "CONFERIR",
+      motivo: `item para decidir à mão: ${aConferir.map((i) => `${i.nome}, ${formatarReais(i.valorCentavos)}`).join("; ")}`,
       notas,
       observacoes,
     };

@@ -286,6 +286,66 @@ describe("decisão", () => {
   });
 });
 
+describe("exceções por produto (a categoria 5 mistura taxa, bebida e multa)", () => {
+  const produtos = [
+    { produtoId: 2805, regra: "03.03.02" as const, observacao: "" },
+    { produtoId: 2799, regra: "sem nota" as const, observacao: "" },
+    { produtoId: 2802, regra: "conferir" as const, observacao: "" },
+  ];
+  const cfg = () => config({ codigos: { "10": "03.03.02" }, produtos });
+  const outros = (id: number, nome: string, valorCentavos: number) =>
+    item({ id, produtoId: id, nome, categoriaId: 5, valorCentavos });
+
+  it("a exceção do produto vence a categoria, que nem precisa ter código", () => {
+    const d = decidir(cobranca({ amount: 65 }), [outros(2805, "Taxa Reserva noite e Sábado", 6500)], cfg(), "quitada");
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas[0]).toMatchObject({ codigo: "03.03.02", valorCentavos: 6500 });
+  });
+
+  it("⚠ produto da mesma categoria SEM exceção continua aguardando — não herda o código do vizinho", () => {
+    const d = decidir(cobranca({ amount: 4 }), [outros(2800, "Refrigerante", 400)], cfg(), "quitada");
+    expect(d.situacao).toBe("AGUARDANDO_CLASSIFICACAO");
+  });
+
+  it("bebida fica fora da nota e a soma ainda confere com a cobrança", () => {
+    const d = decidir(
+      cobranca({ amount: 159 }),
+      [item({}), outros(2799, "Red Bull", 1000)],
+      cfg(),
+      "quitada",
+    );
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas).toEqual([expect.objectContaining({ codigo: "03.03.02", valorCentavos: 14900 })]);
+    expect(d.observacoes).toContainEqual(expect.stringMatching(/^fora da nota \(sem CNAE\): Red Bull, R\$\s10,00$/));
+  });
+
+  it("cobrança só de itens sem CNAE não tem nota", () => {
+    const d = decidir(cobranca({ amount: 10 }), [outros(2799, "Red Bull", 1000)], cfg(), "quitada");
+    expect(d).toMatchObject({ situacao: "FORA_DA_REGRA", notas: [] });
+    expect(d.motivo).toMatch(/sem CNAE/);
+  });
+
+  it("multa vai para conferência, com as notas dos outros itens já montadas", () => {
+    const d = decidir(cobranca({ amount: 209 }), [item({}), outros(2802, "Multa", 6000)], cfg(), "quitada");
+    expect(d.situacao).toBe("CONFERIR");
+    expect(d.motivo).toMatch(/^item para decidir à mão: Multa, R\$\s60,00$/);
+    expect(d.notas).toHaveLength(1);
+  });
+
+  it("⚠ a regra de produto não pega reserva de sala com o mesmo id", () => {
+    const sala = item({ id: 9, produtoId: 2799, nome: "[SEAWAY] - SALA", categoriaId: null, origem: "reserva de sala", valorCentavos: 1000 });
+    const d = decidir(cobranca({ amount: 10 }), [sala], cfg(), "quitada");
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas[0].codigo).toBe("03.03.02");
+  });
+
+  it("a soma considera o que ficou fora: divergência continua indo para conferência", () => {
+    const d = decidir(cobranca({ amount: 200 }), [item({}), outros(2799, "Red Bull", 1000)], cfg(), "quitada");
+    expect(d.situacao).toBe("CONFERIR");
+    expect(d.motivo).toMatch(/somam R\$\s?159,00 e a cobrança é de R\$\s?200,00/);
+  });
+});
+
 describe("nota", () => {
   it("a chave é estável e cabe nos 36 caracteres da Spedy", () => {
     expect(chaveDaNota(31062, "03.03.02")).toBe("conexa-31062-030302");

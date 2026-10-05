@@ -1634,6 +1634,16 @@ a tela na aba "Notas fiscais" de Integrações.
   ("aguardando código"); retenção de ISS e vendas que não somam a cobrança vão
   para "conferir". Item de R$ 0 (descontado do pacote) fica fora da nota e não
   segura nada.
+- **Regras POR PRODUTO vencem a categoria** (resposta do Financeiro em
+  05/10/2026: bebida e afins não têm CNAE e não entram na nota de serviço; a
+  multa segue o contrato). A categoria do Conexa não separa o que a Seahub
+  separa: bebida, Frigobar, Multa e Taxa de reserva estão todos em "Outros
+  Serviços". Cada produto pode ser "sem nota", "conferir" ou ter um código
+  próprio. ⚠ Produto da mesma categoria SEM regra continua aguardando: não herda
+  o código do vizinho. O item fora da nota continua cobrado, então a soma da
+  cobrança conta com ele. ⚠ A regra só vale para item que existe no cadastro de
+  produtos: o "produto" da reserva de sala é o id da SALA, e id de sala pode
+  coincidir com id de produto.
 - **Uma nota por código**: uma NFS-e carrega um código só. A chave da nota
   (`conexa-<cobrança>-<código>`) será o `integrationId` da Spedy, idempotente.
 - **Regras por cliente na tela**: "antes" (nota na GERAÇÃO da cobrança) e

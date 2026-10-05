@@ -4,8 +4,11 @@ import {
   configDoFormulario,
   lerClientes,
   lerConfigNotasFiscais,
+  lerProdutos,
   normalizarCodigo,
+  produtosEmTexto,
   regraDoCliente,
+  regraDoProduto,
 } from "./config";
 
 const padrao = lerConfigNotasFiscais({});
@@ -50,6 +53,39 @@ describe("regras por cliente", () => {
     expect(clientesEmTexto(config)).toBe("1 nunca retém ISS");
     expect(regraDoCliente(config, 1)).toBe("nunca");
     expect(regraDoCliente(config, 2)).toBeNull();
+  });
+});
+
+describe("regras por produto", () => {
+  it("lê 'sem nota', 'conferir' e código, com ou sem pontos, e observação", () => {
+    expect(lerProdutos("2799 sem nota Red Bull\n2802 CONFERIR multa\n\n2805 030302 taxa\n2806 10.05.01")).toEqual({
+      produtos: [
+        { produtoId: 2799, regra: "sem nota", observacao: "Red Bull" },
+        { produtoId: 2802, regra: "conferir", observacao: "multa" },
+        { produtoId: 2805, regra: "03.03.02", observacao: "taxa" },
+        { produtoId: 2806, regra: "10.05.01", observacao: "" },
+      ],
+    });
+  });
+
+  it("⚠ linha inválida recusa tudo, dizendo qual — e repetição também", () => {
+    expect(lerProdutos("2799 sem nota\nRed Bull nada")).toEqual({ erro: expect.stringContaining("linha 2") });
+    expect(lerProdutos("2799 03.03")).toEqual({ erro: expect.stringContaining("linha 1") });
+    expect(lerProdutos("1 conferir\n1 sem nota")).toEqual({ erro: expect.stringContaining("mais de uma vez") });
+  });
+
+  it("volta para a tela no mesmo formato e acha a regra pelo id", () => {
+    const config = lerConfigNotasFiscais({ produtos: [{ produtoId: 2799, regra: "sem nota", observacao: "Red Bull" }] });
+    expect(produtosEmTexto(config)).toBe("2799 sem nota Red Bull");
+    expect(regraDoProduto(config, 2799)).toBe("sem nota");
+    expect(regraDoProduto(config, 1)).toBeNull();
+    expect(regraDoProduto(config, null)).toBeNull();
+  });
+
+  it("o formulário grava as regras por produto", () => {
+    const lido = configDoFormulario({ produtos: "2799 sem nota" }, padrao);
+    expect("config" in lido && lido.config.produtos).toEqual([{ produtoId: 2799, regra: "sem nota", observacao: "" }]);
+    expect(configDoFormulario({ produtos: "abc" }, padrao)).toEqual({ erro: expect.stringContaining("Regras por produto") });
   });
 });
 

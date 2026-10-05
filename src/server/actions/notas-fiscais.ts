@@ -62,6 +62,7 @@ export async function salvarConfigNotasFiscais(
         codigos: lido.config.codigos,
         codigoReservaDeSala: lido.config.codigoReservaDeSala,
         regrasPorCliente: lido.config.clientes.length,
+        regrasPorProduto: lido.config.produtos,
       },
     },
   });

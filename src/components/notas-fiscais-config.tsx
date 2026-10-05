@@ -29,6 +29,7 @@ export function NotasFiscaisConfigForm({
   categorias,
   codigoReservaDeSala,
   clientes,
+  produtos,
   somenteLeitura,
 }: {
   habilitada: boolean;
@@ -36,6 +37,7 @@ export function NotasFiscaisConfigForm({
   categorias: LinhaDeCategoria[];
   codigoReservaDeSala: string;
   clientes: string;
+  produtos: string;
   somenteLeitura: boolean;
 }) {
   const [estado, salvar, salvando] = useActionState<EstadoNotasFiscais, FormData>(
@@ -50,6 +52,7 @@ export function NotasFiscaisConfigForm({
   );
   const [sala, setSala] = useState(codigoReservaDeSala);
   const [regras, setRegras] = useState(clientes);
+  const [produtosTexto, setProdutosTexto] = useState(produtos);
 
   const enviar = (evento: React.FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
@@ -133,6 +136,28 @@ export function NotasFiscaisConfigForm({
           </div>
         )}
       </fieldset>
+
+      <Field
+        label="Regras por produto"
+        hint={
+          <>
+            Vencem a categoria. Uma por linha: id do produto no Conexa, espaço, e{" "}
+            <strong>sem nota</strong> (não leva nota de serviço), <strong>conferir</strong> (uma
+            pessoa decide) ou um código como <code>03.03.02</code>, e uma observação opcional. Ex.:{" "}
+            <code>2799 sem nota Red Bull</code>. Só vale para produto do cadastro — não para
+            reserva de sala.
+          </>
+        }
+      >
+        <Textarea
+          name="produtos"
+          rows={6}
+          value={produtosTexto}
+          onChange={(e) => setProdutosTexto(e.target.value)}
+          disabled={somenteLeitura}
+          className="font-mono text-[13px]"
+        />
+      </Field>
 
       <Field
         label="Regras por cliente"

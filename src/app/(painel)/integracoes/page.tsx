@@ -22,7 +22,11 @@ import {
   NotasFiscaisConfigForm,
   type LinhaDeCategoria,
 } from "@/components/notas-fiscais-config";
-import { clientesEmTexto, lerConfigNotasFiscais } from "@/server/notas-fiscais/config";
+import {
+  clientesEmTexto,
+  lerConfigNotasFiscais,
+  produtosEmTexto,
+} from "@/server/notas-fiscais/config";
 import { categoriasDoConexa } from "@/server/notas-fiscais/categorias";
 import { resumoDasCobrancas } from "@/server/notas-fiscais/resumo";
 import { formatarReais, type NotaPlanejada } from "@/server/notas-fiscais/regras";
@@ -1439,6 +1443,7 @@ export default async function IntegracoesPage({
                     categorias={linhasDeCategoria}
                     codigoReservaDeSala={configNotas.codigoReservaDeSala}
                     clientes={clientesEmTexto(configNotas)}
+                    produtos={produtosEmTexto(configNotas)}
                     somenteLeitura={!editavel}
                   />
                 </Card>

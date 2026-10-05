@@ -64,6 +64,23 @@ export const notasFiscaisConfigSchema = z.object({
     )
     .max(300)
     .default([]),
+  /**
+   * Exceções POR PRODUTO, que vencem a categoria. Existem porque a categoria do
+   * Conexa não separa o que a Seahub separa: bebida, Frigobar, Multa e Taxa de
+   * reserva estão todos em "Outros Serviços". "sem nota": o item não leva nota
+   * de serviço (não há CNAE para ele). "conferir": uma pessoa decide (a multa
+   * segue o código do contrato). Ou um código, para esse produto só.
+   */
+  produtos: z
+    .array(
+      z.object({
+        produtoId: z.number().int().positive(),
+        regra: z.union([z.literal("sem nota"), z.literal("conferir"), codigo]),
+        observacao: z.string().trim().max(120).default(""),
+      }),
+    )
+    .max(300)
+    .default([]),
 });
 
 export type NotasFiscaisConfig = z.infer<typeof notasFiscaisConfigSchema>;
@@ -126,6 +143,54 @@ export function lerClientes(
   return { clientes };
 }
 
+export type RegraDeProduto = NotasFiscaisConfig["produtos"][number]["regra"];
+
+/** A exceção do produto, ou `null` quando vale a categoria. */
+export function regraDoProduto(
+  config: Pick<NotasFiscaisConfig, "produtos">,
+  produtoId: number | null,
+): RegraDeProduto | null {
+  if (produtoId === null) return null;
+  return config.produtos.find((p) => p.produtoId === produtoId)?.regra ?? null;
+}
+
+/** As exceções por produto como a tela mostra: uma por linha, `2799 sem nota Red Bull`. */
+export function produtosEmTexto(config: Pick<NotasFiscaisConfig, "produtos">): string {
+  return config.produtos
+    .map((p) => [p.produtoId, p.regra, p.observacao].filter(Boolean).join(" "))
+    .join("\n");
+}
+
+/**
+ * Lê as exceções por produto do texto da tela. Mesma doutrina das regras por
+ * cliente: uma linha inválida recusa tudo, dizendo qual.
+ */
+export function lerProdutos(
+  texto: string,
+): { produtos: NotasFiscaisConfig["produtos"] } | { erro: string } {
+  const produtos: NotasFiscaisConfig["produtos"] = [];
+  const vistos = new Set<number>();
+  for (const [i, bruta] of texto.split(/\r?\n/).entries()) {
+    const linha = bruta.trim();
+    if (!linha) continue;
+    const m = /^(\d+)\s+(sem\s+nota|conferir|\d{2}\.\d{2}\.\d{2}|\d{6})(?=\s|$)\s*(.*)$/i.exec(linha);
+    if (!m) {
+      return {
+        erro: `Regras por produto, linha ${i + 1} ("${linha.slice(0, 40)}"): use "id do produto no Conexa", espaço, "sem nota", "conferir" ou um código como 03.03.02.`,
+      };
+    }
+    const produtoId = Number(m[1]);
+    if (vistos.has(produtoId)) {
+      return { erro: `Regras por produto: o produto ${produtoId} aparece mais de uma vez.` };
+    }
+    vistos.add(produtoId);
+    const palavra = m[2].toLowerCase().replace(/\s+/g, " ");
+    const regra = palavra === "sem nota" || palavra === "conferir" ? palavra : normalizarCodigo(palavra)!;
+    produtos.push({ produtoId, regra, observacao: m[3].trim().slice(0, 120) });
+  }
+  return { produtos };
+}
+
 /**
  * O formulário vira config, ou a primeira recusa em texto para quem preencheu.
  *
@@ -158,12 +223,16 @@ export function configDoFormulario(
   const clientes = lerClientes(campos.clientes ?? "");
   if ("erro" in clientes) return clientes;
 
+  const produtos = lerProdutos(campos.produtos ?? "");
+  if ("erro" in produtos) return produtos;
+
   const lido = notasFiscaisConfigSchema.safeParse({
     ...atual,
     inicio: valor("inicio") || null,
     codigos,
     codigoReservaDeSala: codigoDaSala,
     clientes: clientes.clientes,
+    produtos: produtos.produtos,
   });
   if (!lido.success) {
     const chave = String(lido.error.issues[0]?.path?.[0] ?? "");
