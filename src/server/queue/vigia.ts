@@ -11,6 +11,7 @@ import { encerrarOrfas } from "@/server/execucoes/orfas";
 import { conferirJanelas } from "@/server/janela/conferir";
 import { conferirCobrancas } from "@/server/cobranca/conferir";
 import { conferirPresentes } from "@/server/aniversario/conferir";
+import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -225,6 +226,15 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.acao === "iniciada") logger.info("aviso de cobrança: conferência iniciada");
     } catch (erro) {
       logger.error({ erro }, "aviso de cobrança falhou ao iniciar");
+    }
+
+    // Notas fiscais em modo sombra: lê o Conexa a cada 30 min e grava só no
+    // nosso banco. Só INICIA a rodada — com o Conexa lento ela leva minutos.
+    try {
+      const rodada = await conferirNotasFiscais();
+      if (rodada.acao === "iniciada") logger.info("notas fiscais: conferência iniciada");
+    } catch (erro) {
+      logger.error({ erro }, "notas fiscais falharam ao iniciar");
     }
 
     // Só consulta o Conexa enquanto houver pedido de presente esperando, e no

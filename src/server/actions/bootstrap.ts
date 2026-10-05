@@ -35,6 +35,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.COBRANCA]: "Aviso de cobrança (ClickUp)",
   [IntegrationProvider.ANIVERSARIO]: "Presente de aniversário",
   [IntegrationProvider.AVISOS]: "Aviso à equipe (WhatsApp)",
+  [IntegrationProvider.NOTAS_FISCAIS]: "Notas fiscais (Spedy)",
 };
 
 /**

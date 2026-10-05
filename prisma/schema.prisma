@@ -529,6 +529,11 @@ enum IntegrationProvider {
   /// escolhe entre os nomes; número que não está no cadastro não recebe nada.
   /// No registry, como os Prazos, para ser OPT-IN por agente.
   AVISOS
+  /// Notas fiscais de serviço (Spedy) a partir das cobranças do Conexa, no
+  /// lugar dos dois fluxos de emissão do n8n. Função do sistema, sem modelo,
+  /// FORA do registry como o NPS e a cobrança. Nasce em modo SOMBRA: lê as
+  /// cobranças pagas e registra a nota que emitiria, sem chamar a Spedy.
+  NOTAS_FISCAIS
 }
 
 enum IntegrationStatus {
@@ -1153,6 +1158,60 @@ model PresenteDeAniversario {
   @@index([status, venceEm])
   @@index([clienteId, status])
   @@index([chatwootConversationId, status])
+}
+
+/// Onde uma cobrança do Conexa está diante da nota fiscal. A decisão é pura e
+/// testada em `src/server/notas-fiscais/regras.ts`.
+enum SituacaoCobrancaFiscal {
+  /// Todo item cobrado tem código de serviço: as notas estão montadas.
+  PRONTA
+  /// Algum item cobrado está sem código. Nada sai até alguém classificar —
+  /// código de serviço não é chutado.
+  AGUARDANDO_CLASSIFICACAO
+  /// Precisa de uma pessoa antes: retenção de ISS, vendas que não somam o
+  /// valor da cobrança.
+  CONFERIR
+  /// Não leva nota automática: regra do cliente, cobrança sem valor, nota já
+  /// registrada no Conexa.
+  FORA_DA_REGRA
+}
+
+/// Uma cobrança do Conexa vista pelas notas fiscais (05/10/2026). Uma linha por
+/// cobrança: o `cobrancaId` único é a primeira trava contra nota em dobro.
+///
+/// Guarda a cobrança como foi lida e os itens já classificados (com a
+/// categoria de serviço de cada um): com eles a decisão é refeita sem chamar o
+/// Conexa de novo quando alguém muda a tabela de códigos.
+model CobrancaFiscal {
+  id            String                 @id @default(cuid())
+  /// `chargeId` do Conexa.
+  cobrancaId    Int                    @unique
+  /// A unidade do Conexa — é a empresa emissora (SEAHUB ou SEATECH).
+  empresaId     Int
+  clienteId     Int
+  /// "quitada" (o padrão) ou "gerada" (cliente com nota antes do pagamento).
+  evento        String
+  /// "sombra": só registrada, nada foi à Spedy.
+  modo          String
+  /// AAAA-MM-DD, do Conexa. Nula em cobrança gerada e ainda não paga.
+  quitadaEm     String?
+  valorCentavos Int
+  situacao      SituacaoCobrancaFiscal
+  motivo        String?                @db.Text
+  /// `CobrancaLida`: a cobrança no momento da leitura.
+  cobranca      Json
+  /// `ItemClassificado[]`: cada venda com produto, valor e categoria.
+  itens         Json
+  /// `NotaPlanejada[]`: código, valor, descrição e chave de cada nota.
+  notas         Json
+  /// Avisos que não mudam a decisão (juros, competência em outro mês).
+  observacoes   Json                   @default("[]")
+  criadaEm      DateTime               @default(now())
+  atualizadaEm  DateTime               @updatedAt
+
+  @@index([situacao, criadaEm])
+  @@index([criadaEm])
+  @@index([clienteId])
 }
 
 enum TipoDeAvisoDeSaldo {

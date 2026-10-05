@@ -197,6 +197,20 @@ export class ConexaClient {
     });
   }
 
+  /**
+   * ⚠ O "produto" de uma venda pode ser uma SALA: a venda de reserva traz o id
+   * da sala em `product.id`, e aqui ela volta 404. O plano de um contrato, ao
+   * contrário, existe como produto — com a mesma `categoryId` do plano.
+   */
+  obterProduto(id: number) {
+    return this.requisitar<Record<string, unknown>>(`/product/${id}`);
+  }
+
+  /** Categorias de serviço: é a categoria do produto que diz o código da nota. */
+  listarCategoriasDeServico(filtros: { limit?: number; offset?: number } = {}) {
+    return this.listar<Record<string, unknown>>("/serviceCategories", filtros);
+  }
+
   // ─── Contratos ───────────────────────────────────────────────────────────
 
   /**
@@ -279,8 +293,11 @@ export class ConexaClient {
 
   listarCobrancas(filtros: {
     companyId?: number;
-    customerId?: number;
+    customerId?: number | number[];
     status?: string;
+    /** AAAA-MM-DD. */
+    paymentDateFrom?: string;
+    paymentDateTo?: string;
     limit?: number;
     offset?: number;
   }) {

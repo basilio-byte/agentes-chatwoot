@@ -15,8 +15,17 @@ import {
   IntegrationProvider,
   IntegrationStatus,
   type PresenteStatus,
+  type SituacaoCobrancaFiscal,
   UserRole,
 } from "@/generated/prisma/enums";
+import {
+  NotasFiscaisConfigForm,
+  type LinhaDeCategoria,
+} from "@/components/notas-fiscais-config";
+import { clientesEmTexto, lerConfigNotasFiscais } from "@/server/notas-fiscais/config";
+import { categoriasDoConexa } from "@/server/notas-fiscais/categorias";
+import { resumoDasCobrancas } from "@/server/notas-fiscais/resumo";
+import { formatarReais, type NotaPlanejada } from "@/server/notas-fiscais/regras";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
 import { ConexaConfigForm } from "@/components/conexa-config";
@@ -55,6 +64,7 @@ import {
   Cake,
   Ear,
   FileSignature,
+  FileText,
   Hourglass,
   IdCard,
   Images,
@@ -78,6 +88,20 @@ const SITUACAO_DO_PRESENTE: Record<PresenteStatus, string> = {
   ENTREGUE: "com a equipe",
   CANCELADO: "cancelado",
   FALHOU: "falhou",
+};
+
+const SITUACAO_FISCAL: Record<SituacaoCobrancaFiscal, string> = {
+  PRONTA: "emitiria",
+  AGUARDANDO_CLASSIFICACAO: "aguardando código",
+  CONFERIR: "conferir",
+  FORA_DA_REGRA: "sem nota",
+};
+
+const TOM_FISCAL: Record<SituacaoCobrancaFiscal, "success" | "warning" | "accent" | "neutral"> = {
+  PRONTA: "success",
+  AGUARDANDO_CLASSIFICACAO: "warning",
+  CONFERIR: "accent",
+  FORA_DA_REGRA: "neutral",
 };
 
 const TOM_DO_PRESENTE: Record<PresenteStatus, "success" | "danger" | "warning" | "neutral"> = {
@@ -205,6 +229,52 @@ export default async function IntegracoesPage({
     take: 15,
     select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true, payload: true },
   });
+  const notasFiscais = registros.find((i) => i.provider === IntegrationProvider.NOTAS_FISCAIS);
+  const configNotas = lerConfigNotasFiscais(notasFiscais?.config);
+  // Em memória por 1 h e com prazo curto: um Conexa lento não segura a página.
+  const categoriasFiscais = await categoriasDoConexa();
+  const nomesDasEmpresas = new Map(
+    categoriasFiscais.categorias.flatMap((c) => c.empresas.map((e) => [e.id, e.nome] as const)),
+  );
+  const linhasDeCategoria: LinhaDeCategoria[] = [
+    ...categoriasFiscais.categorias.map((c) => ({
+      id: c.id,
+      nome: c.nome,
+      empresas: c.empresas.map((e) => e.nome).join(", "),
+      ativa: c.ativa,
+      codigo: configNotas.codigos[String(c.id)] ?? "",
+    })),
+    // Código gravado para categoria que o Conexa não devolveu agora: continua na
+    // tela, senão salvar o formulário apagaria o código em silêncio.
+    ...Object.entries(configNotas.codigos)
+      .filter(([id]) => !categoriasFiscais.categorias.some((c) => String(c.id) === id))
+      .map(([id, codigo]) => ({
+        id: Number(id),
+        nome: `Categoria ${id}`,
+        empresas: "",
+        ativa: true,
+        codigo,
+        sumiu: true,
+      })),
+  ];
+  const cobrancasFiscais = await db.cobrancaFiscal.findMany({
+    orderBy: { criadaEm: "desc" },
+    take: 40,
+    select: {
+      id: true,
+      cobrancaId: true,
+      empresaId: true,
+      clienteId: true,
+      evento: true,
+      quitadaEm: true,
+      valorCentavos: true,
+      situacao: true,
+      motivo: true,
+      notas: true,
+      observacoes: true,
+    },
+  });
+  const resumoFiscal = await resumoDasCobrancas();
   const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
   const configNps = lerConfigNps(nps?.config);
   // Sem telefone nem nome: a tela é aberta pela equipe inteira.
@@ -1290,6 +1360,157 @@ export default async function IntegracoesPage({
                               )}
                             </td>
                             <td className="whitespace-nowrap tabular-nums">{formatarData(a.createdAt)}</td>
+                          </tr>
+                        );
+                      })}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            id: "notas-fiscais",
+            rotulo: "Notas fiscais",
+            icone: <FileText size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Notas fiscais (Spedy)</h2>
+                    {notasFiscais?.enabled ? (
+                      <Badge tone="accent">modo sombra</Badge>
+                    ) : (
+                      <Badge>desligado</Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    Vai substituir os dois fluxos de emissão do n8n, agora com o{" "}
+                    <strong>código de serviço certo</strong> em cada nota. O código sai
+                    da <strong>categoria de serviço</strong> que cada produto e cada
+                    plano têm no Conexa, pela tabela de baixo.
+                  </p>
+
+                  <Aviso tone="warning">
+                    Por enquanto é só o <strong>modo sombra</strong>: o sistema lê as
+                    cobranças pagas no Conexa e registra a nota que emitiria.{" "}
+                    <strong>Nenhuma nota é emitida</strong>, a Spedy não é chamada, e o
+                    n8n continua emitindo como sempre. Serve para conferir, cobrança por
+                    cobrança, se o código e o valor estão certos antes de trocar.
+                  </Aviso>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+                    <li>
+                      Confere a cada <strong>30 minutos</strong>, a qualquer hora (Pix
+                      cai de madrugada também).
+                    </li>
+                    <li>
+                      Cobrança com dois códigos vira <strong>duas notas</strong>: uma
+                      NFS-e carrega um código só.
+                    </li>
+                    <li>
+                      Item cobrado sem código deixa a cobrança inteira{" "}
+                      <strong>aguardando código</strong>. Retenção de ISS e vendas que
+                      não somam o valor da cobrança vão para <strong>conferir</strong>.
+                    </li>
+                    <li>
+                      Itens de R$ 0 (reserva descontada do pacote) ficam fora da nota.
+                    </li>
+                  </ul>
+
+                  {notasFiscais?.lastCheckedAt ? (
+                    <p className="text-xs text-muted">
+                      Última conferência: {formatarData(notasFiscais.lastCheckedAt)}
+                      {notasFiscais.lastError ? ` — ${notasFiscais.lastError}` : ""}
+                    </p>
+                  ) : null}
+                  {categoriasFiscais.erro ? (
+                    <Aviso tone="danger">
+                      Não consegui ler as categorias do Conexa agora (
+                      {categoriasFiscais.erro}). Os códigos já gravados continuam
+                      valendo.
+                    </Aviso>
+                  ) : null}
+
+                  <NotasFiscaisConfigForm
+                    habilitada={notasFiscais?.enabled ?? false}
+                    inicio={configNotas.inicio ?? ""}
+                    categorias={linhasDeCategoria}
+                    codigoReservaDeSala={configNotas.codigoReservaDeSala}
+                    clientes={clientesEmTexto(configNotas)}
+                    somenteLeitura={!editavel}
+                  />
+                </Card>
+
+                <Card className="space-y-3">
+                  <h3 className="font-medium">Últimas cobranças conferidas</h3>
+                  <p className="text-sm text-muted">
+                    Nos últimos 7 dias: {resumoFiscal.PRONTA} emitiria(m) ·{" "}
+                    {resumoFiscal.AGUARDANDO_CLASSIFICACAO} aguardando código ·{" "}
+                    {resumoFiscal.CONFERIR} para conferir ·{" "}
+                    {resumoFiscal.FORA_DA_REGRA} sem nota.
+                  </p>
+                  {cobrancasFiscais.length === 0 ? (
+                    <p className="text-sm text-muted">Nenhuma cobrança conferida ainda.</p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>Paga em</th>
+                          <th>Cobrança</th>
+                          <th className="text-right">Valor</th>
+                          <th>Nota que emitiria</th>
+                          <th>Situação</th>
+                        </>
+                      }
+                    >
+                      {cobrancasFiscais.map((c) => {
+                        const notas = (c.notas ?? []) as unknown as NotaPlanejada[];
+                        const observacoes = (c.observacoes ?? []) as unknown as string[];
+                        return (
+                          <tr key={c.id} className="align-top">
+                            <td className="whitespace-nowrap tabular-nums">
+                              {c.quitadaEm
+                                ? `${c.quitadaEm.slice(8, 10)}/${c.quitadaEm.slice(5, 7)}`
+                                : "gerada"}
+                            </td>
+                            <td className="whitespace-nowrap">
+                              <span className="tabular-nums">#{c.cobrancaId}</span>
+                              <span className="block text-xs text-muted">
+                                {nomesDasEmpresas.get(c.empresaId) ?? `unidade ${c.empresaId}`}
+                              </span>
+                              <span className="block text-xs text-muted tabular-nums">
+                                cliente {c.clienteId}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap text-right tabular-nums">
+                              {formatarReais(c.valorCentavos)}
+                            </td>
+                            <td className="min-w-44">
+                              {notas.length === 0
+                                ? "—"
+                                : notas.map((n) => (
+                                    <span key={n.chave} className="block">
+                                      <strong className="tabular-nums">{n.codigo}</strong>{" "}
+                                      <span className="tabular-nums">{formatarReais(n.valorCentavos)}</span>
+                                      <span className="block whitespace-pre-line text-xs text-muted">
+                                        {n.descricao}
+                                      </span>
+                                    </span>
+                                  ))}
+                            </td>
+                            <td className="min-w-44">
+                              <Badge tone={TOM_FISCAL[c.situacao]}>{SITUACAO_FISCAL[c.situacao]}</Badge>
+                              {c.motivo ? (
+                                <span className="mt-1 block text-xs text-muted">{c.motivo}</span>
+                              ) : null}
+                              {observacoes.map((o) => (
+                                <span key={o} className="block text-xs text-muted">
+                                  · {o}
+                                </span>
+                              ))}
+                            </td>
                           </tr>
                         );
                       })}

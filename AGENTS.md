@@ -1599,6 +1599,67 @@ de Integrações.
   outros avisos da caixa 31. "Enviado" quer dizer que o Chatwoot aceitou, não
   que chegou: quem leva ao WhatsApp é a WAHA.
 
+### Notas fiscais (Spedy): modo sombra primeiro
+
+Integração `NOTAS_FISCAIS`, fora do registry como o NPS e a cobrança: sem
+modelo, sem ferramenta. Vai substituir os dois fluxos de emissão do n8n ("antes"
+e "após a quitação"), ~850 NFS-e por mês. Pedido do usuário em 05/10/2026, com a
+task de pôr o código de serviço certo em cada nota. Regras puras e testadas em
+`notas-fiscais/regras.ts` e `config.ts`; a rodada em `notas-fiscais/conferir.ts`;
+a tela na aba "Notas fiscais" de Integrações.
+
+- ⚠ **Por enquanto NÃO emite nada.** O único modo é a SOMBRA: o vigia lê as
+  cobranças pagas no Conexa a cada 30 min e grava em `CobrancaFiscal` a nota que
+  emitiria. Não chama a Spedy, não escreve no Conexa, não toca no n8n. É o
+  relatório que a equipe confere contra as notas reais antes de qualquer corte.
+- **O que o n8n fazia, e por que não se copia.** Toda nota saía com o mesmo
+  produto genérico, sem código de serviço; `transactionId: null` desligava a
+  idempotência da Spedy; ninguém conferia se a nota foi autorizada; o webhook
+  "após" tinha endereço adivinhável e lia valor e produtos do próprio corpo; a
+  lista de nomes de "sala privativa" estava desatualizada; e quem não devia ter
+  nota automática era id escrito dentro de `If`. Os nós de OpenAI e o ramo
+  Panteão estão DESCONECTADOS — venda com Panteão não gera nota nenhuma.
+- **O código sai da CATEGORIA DE SERVIÇO do Conexa**, não do nome do produto:
+  cobrança → `salesIds` → `GET /sale/:id` → `product.id` → `GET /product/:id` →
+  `categoryId` → tabela da tela. Vale para venda de contrato também: o plano
+  aparece como produto, com a mesma categoria. A equipe já mantém a categoria
+  no ERP; nome de produto tem erro de digitação e plano novo toda semana.
+  ⚠ Ela não é perfeita: há sala privativa em categoria "Serviços de Espaço".
+  Por isso o código é por categoria e a tabela é da equipe, não do código.
+- ⚠ **O item de reserva de sala dá 404 em `/product`.** O "produto" da venda é o
+  id da SALA (o mesmo que a reserva traz), e sala não está no cadastro de
+  produtos. Só é tratado como reserva se o nome tiver o padrão `[UNIDADE] - …`;
+  404 com outro nome fica aguardando classificação.
+- **Código nunca é chutado.** Item cobrado sem código segura a cobrança INTEIRA
+  ("aguardando código"); retenção de ISS e vendas que não somam a cobrança vão
+  para "conferir". Item de R$ 0 (descontado do pacote) fica fora da nota e não
+  segura nada.
+- **Uma nota por código**: uma NFS-e carrega um código só. A chave da nota
+  (`conexa-<cobrança>-<código>`) será o `integrationId` da Spedy, idempotente.
+- **Regras por cliente na tela**: "antes" (nota na GERAÇÃO da cobrança) e
+  "nunca". ⚠ Cliente "antes" visto só já pago continua levando a nota — exceto
+  se a cobrança foi gerada antes do início configurado: aquela teve a nota do
+  fluxo antigo, e emitir no pagamento seria nota em dobro no corte.
+- **Salvar a tela refaz as decisões** das cobranças em sombra, sem chamar o
+  Conexa (por isso a linha guarda a cobrança lida e os itens classificados).
+  Cobrança que ficou fora sem os itens lidos e agora entraria é apagada, e a
+  rodada seguinte a lê de novo. ⚠ Comparar o que foi gravado exige ordenar as
+  chaves: o `jsonb` devolve outra ordem, e a comparação por texto regravava tudo.
+- **A janela da rodada nunca volta mais que 7 dias** e lê no máximo 40
+  cobranças novas por vez: o Conexa limita a 60 requisições por minuto, e os
+  agentes usam o mesmo limite.
+- **A lista de categorias da tela fica 1 h em memória e tem prazo de 6 s**: a
+  página de Integrações renderiza todas as abas, e um Conexa lento não pode
+  segurá-la.
+- **O que falta para emitir** (não construído): cliente da Spedy com as duas
+  chaves (SEAHUB e SEATECH), a porta do aviso do Conexa (token no path, relendo
+  a cobrança pela API), acompanhamento da autorização pelo webhook assinado da
+  Spedy MAIS uma releitura periódica (a Spedy desliga o webhook depois de 5
+  falhas e não reenvia), aviso de rejeição, e o modo de conferência com
+  rascunho (`issue: false` gera PDF de prévia sem efeito fiscal). E o corte:
+  desligar o n8n e apontar o Conexa no mesmo momento, com a data de quitação
+  separando o que é de quem.
+
 ### Conexa: armadilhas da API v2
 
 Achadas no primeiro uso real (09/09 a 15/09/2026), depois de semanas de teste
