@@ -75,6 +75,14 @@ export type ArquivoEnviado = {
    * mesmo PDF duas vezes é pagar duas vezes pela mesma página.
    */
   chaveDoCache?: string | null;
+  /**
+   * Instrução própria para IMAGEM, no lugar da global de Integrações.
+   *
+   * Para quem lê foto com outro propósito que não o atendimento (a vistoria do
+   * jardim). ⚠ Quem passa isto tem de pôr a instrução na `chaveDoCache` —
+   * senão a leitura feita com uma instrução volta do cache para outra.
+   */
+  instrucaoImagem?: string | null;
 };
 
 export type LeituraDeArquivoEnviado = {
@@ -398,7 +406,7 @@ async function executarLeitura(
       cliente: entrada.cliente,
       arquivo,
       model: entrada.config.modeloVisao,
-      instrucao: entrada.config.instrucaoImagem,
+      instrucao: entrada.instrucaoImagem?.trim() || entrada.config.instrucaoImagem,
     });
   }
 

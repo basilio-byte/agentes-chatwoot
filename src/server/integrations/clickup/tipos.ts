@@ -69,6 +69,29 @@ export type ClickUpTarefa = {
   parent?: string | null;
   /** O valor de cada campo personalizado — vem na listagem e no detalhe. */
   custom_fields?: Array<{ id: string; value?: unknown }>;
+  /** Só no detalhe (`GET /task/{id}`), inclusive o que foi anexado por comentário. */
+  attachments?: ClickUpAnexo[];
+};
+
+/**
+ * Arquivo anexado a uma tarefa — direto nela ou por um comentário.
+ *
+ * ⚠ O anexo NÃO diz de qual comentário veio. O que liga a foto à anotação
+ * escrita junto é o `comment_text`, que repete o nome de cada arquivo publicado
+ * (ver `clickup/fotos.ts`).
+ */
+export type ClickUpAnexo = {
+  id: string;
+  /** Milissegundos em string, como o resto da API. */
+  date?: string | number | null;
+  title?: string | null;
+  extension?: string | null;
+  mimetype?: string | null;
+  size?: number | null;
+  url?: string | null;
+  deleted?: boolean | null;
+  hidden?: boolean | null;
+  user?: ClickUpUsuario | null;
 };
 
 export type ClickUpComentario = {

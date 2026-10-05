@@ -1760,7 +1760,7 @@ consegue pagar o caminho certo pega o atalho.
   palavra do nome e exigir correspondência ÚNICA; sem isso, não se escreve nada
   (`prazos/vendedor.ts`).
 
-### Catálogo de tools: 33 em 10 categorias
+### Catálogo de tools: 34 em 10 categorias
 
 `categoria` em `ToolDefinition` existe **só para a tela do agente** agrupar. A
 ordem que vai para a API continua sendo alfabética por nome.
@@ -1777,7 +1777,51 @@ ordem que vai para a API continua sendo alfabética por nome.
 - **A allowlist de espaços vale para escrita também** (`espacoBloqueado`) —
   senão restringir espaços só limitaria a leitura.
 - Todas as 33 ligadas pesam **~4,2k tokens em toda mensagem**. A tela mostra a
-  estimativa (`tokensAproximadosDaTool`) para a escolha ser informada.
+  estimativa (`tokensAproximadosDaTool`) para a escolha ser informada. (Conta
+  feita antes de `clickup_ler_fotos_da_tarefa`, a 34ª.)
+
+### Fotos de uma tarefa do ClickUp: o agente de jardim
+
+`clickup_ler_fotos_da_tarefa` olha as fotos anexadas a uma tarefa nos últimos
+dias e devolve o que cada uma mostra, segundo o critério que o agente escreve
+em `foco`. Pedido de 01/10/2026 (task "Agente verificador de jardim"): a equipe
+fotografa as áreas externas toda semana e publica as fotos como COMENTÁRIOS da
+tarefa "Manutenção Jardim (fotos semanais)", e o agente avalia contra o
+"Padrão Ouro" — o critério mora no prompt. Regras puras e testadas em
+`clickup/fotos.ts`.
+
+- **Quem enxerga é a leitura de mídia da OpenAI**, pelo mesmo `lerArquivoEnviado`
+  do Drive e da mesa: lista fechada de formatos, teto de tamanho e toggles. ⚠
+  Com "ler imagem" desligado, a ferramenta recusa sem baixar nada.
+- ⚠ **A instrução da visão NÃO é a global de Integrações.** A global manda
+  transcrever comprovante, porque é o que o cliente manda no WhatsApp; trocá-la
+  para servir a vistoria mudaria todo atendimento. `lerArquivoEnviado` aceita
+  `instrucaoImagem`, e o enquadramento fixo (`instrucaoDaFoto`) manda descrever
+  só o que se vê e dizer "não dá para ver" em vez de adivinhar.
+- ⚠ **O critério entra na chave do cache** (`clickup:<anexo>:<hash>`). Só o
+  anexo devolveria a descrição feita com o critério antigo depois de alguém
+  mudar o prompt — a avaliação nova sairia velha, sem erro nenhum.
+- **Uma chamada lê o lote inteiro** (até `MAX_FOTOS_POR_LEITURA`, as mais
+  recentes, três por vez). Uma chamada por foto estouraria o limite de etapas
+  do turno, a mesma lição das contas de energia.
+- **A mesma foto publicada duas vezes é lida uma vez**, por nome e tamanho: na
+  tarefa real ela aparece com dois ids. Só o nome não serve, porque todo print
+  colado no ClickUp se chama `image.png`.
+- ⚠ **O anexo não diz de qual comentário veio.** A anotação ("poldar") é achada
+  pelo `comment_text`, que repete o nome de cada arquivo publicado (às vezes
+  codificado, `%20`): o comentário que cita o nome e chegou até 15 min depois do
+  upload, o mais próximo primeiro. O upload chega 1 a 45 s antes do comentário.
+  `GET /task/{id}/comment` devolve só os 25 mais recentes: além disso a foto
+  continua lida, sem a anotação.
+- ⚠ **O download vai primeiro SEM o token.** Na conta da Seahub o endereço do
+  anexo abre sem autenticação (conferido em 01/10/2026); o token só vai depois
+  de um 401/403, e só para `*.clickup-attachments.com` ou
+  `attachments.clickup.com`.
+- **Sem foto no período, o retorno diz que não há o que avaliar**, para o
+  modelo não descrever foto que não recebeu.
+- ⚠ **As fotos do "Padrão Ouro" que estão na task foram ajustadas por IA.** Servem
+  de ilustração para gente; o agente compara contra o TEXTO do critério, não
+  contra elas.
 
 ### Assinatura eletrônica: dois caminhos
 

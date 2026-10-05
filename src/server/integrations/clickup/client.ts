@@ -10,8 +10,18 @@ import type {
   ClickUpTarefa,
   ClickUpWorkspace,
 } from "./tipos";
+import { hostDeAnexoPermitido } from "./fotos";
 
 const BASE = "https://api.clickup.com/api/v2";
+
+export class AnexoGrandeDemaisError extends Error {
+  constructor(tamanho: number, limite: number) {
+    super(
+      `o arquivo tem ${(tamanho / 1_048_576).toFixed(1)} MB e o limite configurado para leitura é ${(limite / 1_048_576).toFixed(0)} MB`,
+    );
+    this.name = "AnexoGrandeDemaisError";
+  }
+}
 
 export class ClickUpApiError extends Error {
   constructor(
@@ -273,6 +283,60 @@ export class ClickUpClient {
     return this.requisitar<unknown>(`/comment/${commentId}`, {
       method: "DELETE",
     });
+  }
+
+  // --- anexos --------------------------------------------------------------
+
+  /**
+   * Baixa os bytes de um anexo, pelo `url` que a API devolve.
+   *
+   * Fora do `requisitar`, como o download do Drive: aquele método existe para
+   * JSON e repete a chamada; aqui o corpo é binário e pode ter megabytes.
+   *
+   * ⚠ A primeira tentativa vai SEM o token. Na conta da Seahub o endereço do
+   * anexo abre sem autenticação (conferido em 01/10/2026); o token só vai se o
+   * servidor recusar (401/403), e só para servidor do próprio ClickUp. Num
+   * redirecionamento para outro domínio, o `fetch` do Node descarta o
+   * `Authorization` sozinho.
+   *
+   * O teto é conferido duas vezes, no `content-length` e nos bytes recebidos:
+   * o cabeçalho é opcional e pode mentir.
+   */
+  async baixarAnexo(
+    url: string,
+    limiteBytes: number,
+  ): Promise<{ bytes: Buffer; mimeType: string | null }> {
+    if (!hostDeAnexoPermitido(url)) {
+      throw new Error("o endereço do anexo não é de um servidor do ClickUp");
+    }
+
+    const baixar = (comToken: boolean) =>
+      fetch(url, {
+        headers: comToken ? { Authorization: this.token } : {},
+        signal: AbortSignal.timeout(60_000),
+      });
+
+    let resposta = await baixar(false);
+    if (resposta.status === 401 || resposta.status === 403) {
+      resposta = await baixar(true);
+    }
+
+    if (!resposta.ok) {
+      const corpo = await resposta.text().catch(() => "");
+      throw new ClickUpApiError(resposta.status, corpo.slice(0, 300));
+    }
+
+    const declarado = Number(resposta.headers.get("content-length") ?? "");
+    if (Number.isFinite(declarado) && declarado > limiteBytes) {
+      throw new AnexoGrandeDemaisError(declarado, limiteBytes);
+    }
+
+    const bytes = Buffer.from(await resposta.arrayBuffer());
+    if (bytes.length > limiteBytes) {
+      throw new AnexoGrandeDemaisError(bytes.length, limiteBytes);
+    }
+
+    return { bytes, mimeType: resposta.headers.get("content-type") };
   }
 
   // --- tarefas: exclusão ---------------------------------------------------

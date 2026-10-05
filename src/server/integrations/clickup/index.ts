@@ -1,8 +1,24 @@
 import { z } from "zod";
-import { IntegrationProvider } from "@/generated/prisma/enums";
+import { IntegrationProvider, MediaKind } from "@/generated/prisma/enums";
+import { agoraEmSaoPaulo } from "@/lib/tempo";
+import { tipoLigado } from "@/server/integrations/openai/classificar";
+import { criarClienteOpenAI } from "@/server/integrations/openai/client";
+import { capacidadeDeMidia } from "@/server/integrations/openai/credenciais";
+import { lerArquivoEnviado } from "@/server/integrations/openai/upload";
 import type { IntegrationDefinition, ToolContext } from "../types";
 import { clickupConfigSchema, type ClickUpConfig } from "./config";
-import { ClickUpClient } from "./client";
+import { AnexoGrandeDemaisError, ClickUpApiError, ClickUpClient } from "./client";
+import {
+  DIAS_PADRAO,
+  MAX_FOTOS_POR_LEITURA,
+  anotacaoDaFoto,
+  chaveDaLeitura,
+  cortarDescricao,
+  instante,
+  instrucaoDaFoto,
+  nomeDoAnexo,
+  selecionarFotos,
+} from "./fotos";
 import {
   deTimestamp,
   filtrarPorTexto,
@@ -24,6 +40,33 @@ import {
 
 /** Teto por resposta: lista longa demais só gasta token sem ajudar o modelo. */
 const LIMITE_RESULTADOS = 25;
+
+/**
+ * Fotos lidas ao mesmo tempo. Vinte uma a uma levariam minutos; todas juntas
+ * seriam vinte downloads de megabytes na memória do worker, que atende quatro
+ * conversas ao mesmo tempo.
+ */
+const LEITURAS_SIMULTANEAS = 3;
+
+/** `map` assíncrono com no máximo `limite` em andamento, na ordem de entrada. */
+async function emParalelo<T, R>(
+  itens: T[],
+  limite: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const resultados = new Array<R>(itens.length);
+  let proximo = 0;
+  const trabalhador = async () => {
+    while (proximo < itens.length) {
+      const i = proximo++;
+      resultados[i] = await fn(itens[i]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limite, itens.length) }, trabalhador),
+  );
+  return resultados;
+}
 
 function contexto(ctx: ToolContext): {
   cliente: ClickUpClient;
@@ -313,6 +356,140 @@ export const clickupIntegration: IntegrationDefinition = {
             texto: c.comment_text ?? "",
             resolvido: c.resolved ?? false,
           })),
+        };
+      },
+    },
+
+    {
+      name: "clickup_ler_fotos_da_tarefa",
+      categoria: "Tarefas",
+      description:
+        "Olha as FOTOS anexadas a uma tarefa do ClickUp nos últimos dias (inclusive as publicadas em comentários) e devolve, para cada uma, o que ela mostra segundo o critério que você escrever em `foco`, com data, quem mandou e a anotação escrita junto. Use para avaliar fotos de vistoria ou manutenção. Uma chamada lê o lote inteiro, até 20 fotos, das mais recentes — não chame de novo para a mesma tarefa no mesmo turno.",
+      inputSchema: z.object({
+        tarefaId: z.string().min(1).describe("Id da tarefa onde as fotos são publicadas."),
+        ultimosDias: z
+          .number()
+          .int()
+          .min(1)
+          .max(60)
+          .optional()
+          .default(DIAS_PADRAO)
+          .describe("Quantos dias para trás olhar, contados de agora. Padrão: 7."),
+        foco: z
+          .string()
+          .min(10)
+          .max(4000)
+          .describe(
+            "O critério de avaliação: o que observar em cada foto. A descrição de cada foto sai orientada por ele.",
+          ),
+      }),
+      async execute(entrada, ctx) {
+        const { tarefaId, ultimosDias, foco } = entrada as {
+          tarefaId: string;
+          ultimosDias?: number;
+          foco: string;
+        };
+        const dias = ultimosDias ?? DIAS_PADRAO;
+        const { cliente } = contexto(ctx);
+
+        // ⚠ Mesmo acoplamento de `google_drive_ler_arquivo`: o toggle da
+        // leitura de mídia manda aqui como manda no atendimento. Quem desliga
+        // "ler imagem" em Integrações espera que NADA leia imagem e seja cobrado.
+        const capacidade = await capacidadeDeMidia(ctx.agentId);
+        if (!capacidade.ligada || !capacidade.apiKey) {
+          return {
+            lido: false,
+            erro: `Não dá para olhar fotos: ${capacidade.motivo ?? "leitura de mídia indisponível"}. Avise que essa configuração está faltando — não é algo que você possa resolver.`,
+          };
+        }
+        if (!tipoLigado(MediaKind.IMAGE, capacidade.config)) {
+          return {
+            lido: false,
+            erro: "Não dá para olhar fotos: a leitura de imagem está desligada em Integrações → Leitura de mídia. Avise que essa configuração está faltando — não é algo que você possa resolver.",
+          };
+        }
+
+        const tarefa = await cliente.obterTarefa(tarefaId);
+        const selecao = selecionarFotos(tarefa.attachments ?? [], Date.now(), dias);
+        const periodo = `últimos ${dias} dias`;
+
+        if (selecao.fotos.length === 0) {
+          return {
+            lido: true,
+            tarefa: tarefa.name,
+            link: tarefa.url ?? null,
+            periodo,
+            fotos: [],
+            aviso: `Nenhuma foto foi publicada nesta tarefa nos ${periodo}. Não há o que avaliar — não descreva fotos que você não recebeu.`,
+          };
+        }
+
+        // Sem os comentários a foto continua legível; perde-se só a anotação.
+        const comentarios = await cliente
+          .listarComentarios(tarefaId)
+          .then((r) => r.comments)
+          .catch(() => []);
+
+        const instrucao = instrucaoDaFoto(foco);
+        const openai = criarClienteOpenAI(capacidade.config, capacidade.apiKey);
+        const limiteBytes = capacidade.config.tamanhoMaximoMb * 1_048_576;
+
+        const fotos = await emParalelo(selecao.fotos, LEITURAS_SIMULTANEAS, async (anexo) => {
+          const quando = instante(anexo.date);
+          const momento = quando ? agoraEmSaoPaulo(new Date(quando)) : null;
+          const anotacao = anotacaoDaFoto(anexo, comentarios);
+          const base = {
+            arquivo: anexo.title ?? null,
+            enviadaEm: momento ? `${momento.data} ${momento.hora}` : null,
+            enviadaPor: anotacao.autor,
+            anotacao: anotacao.texto,
+          };
+
+          let baixado: { bytes: Buffer; mimeType: string | null };
+          try {
+            baixado = await cliente.baixarAnexo(anexo.url!, limiteBytes);
+          } catch (erro) {
+            const motivo =
+              erro instanceof AnexoGrandeDemaisError
+                ? erro.message
+                : erro instanceof ClickUpApiError
+                  ? `o ClickUp respondeu ${erro.status} ao baixar`
+                  : "falha de rede ao baixar";
+            return { ...base, lida: false, erro: `não consegui baixar a foto (${motivo})` };
+          }
+
+          const leitura = await lerArquivoEnviado({
+            bytes: baixado.bytes,
+            nome: nomeDoAnexo(anexo),
+            mimeType: baixado.mimeType ?? anexo.mimetype ?? null,
+            config: capacidade.config,
+            cliente: openai,
+            agentId: ctx.agentId,
+            chaveDoCache: chaveDaLeitura(anexo.id, instrucao),
+            instrucaoImagem: instrucao,
+          });
+
+          return leitura.texto != null
+            ? { ...base, lida: true, descricao: cortarDescricao(leitura.texto) }
+            : { ...base, lida: false, erro: leitura.motivo };
+        });
+
+        const lidas = fotos.filter((f) => f.lida).length;
+        return {
+          lido: lidas > 0,
+          tarefa: tarefa.name,
+          link: tarefa.url ?? null,
+          periodo,
+          lidas,
+          naoLidas: fotos.length - lidas,
+          ...(selecao.foraDoTeto > 0
+            ? {
+                foraDoTeto: `${selecao.foraDoTeto} foto(s) mais antiga(s) do período ficaram de fora — o máximo é ${MAX_FOTOS_POR_LEITURA} por leitura. Diga isso no que escrever: elas NÃO foram avaliadas.`,
+              }
+            : {}),
+          ...(selecao.repetidas > 0 ? { repetidasIgnoradas: selecao.repetidas } : {}),
+          ...(selecao.semSerFoto > 0 ? { anexosQueNaoSaoFoto: selecao.semSerFoto } : {}),
+          fotos,
         };
       },
     },

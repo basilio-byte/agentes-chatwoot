@@ -25,6 +25,8 @@ let chamadas: { audio: number; imagem: number; documento: number };
 let erroDaLeitura: unknown = null;
 /** Texto que a leitura devolve. */
 let textoLido = "texto extraído do arquivo";
+/** A instrução com que a última imagem foi mandada à visão. */
+let instrucaoDaImagem: string | null = null;
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -58,8 +60,9 @@ vi.mock("./client", async () => {
       if (erroDaLeitura) throw erroDaLeitura;
       return { texto: textoLido, model: "m-audio", inputTokens: 5, outputTokens: 7 };
     },
-    descreverImagem: async () => {
+    descreverImagem: async (args: { instrucao: string }) => {
       chamadas.imagem++;
+      instrucaoDaImagem = args.instrucao;
       if (erroDaLeitura) throw erroDaLeitura;
       return { texto: textoLido, model: "m-visao", inputTokens: 9, outputTokens: 3 };
     },
@@ -105,6 +108,7 @@ beforeEach(() => {
   chamadas = { audio: 0, imagem: 0, documento: 0 };
   erroDaLeitura = null;
   textoLido = "texto extraído do arquivo";
+  instrucaoDaImagem = null;
 });
 
 describe("leitura do arquivo enviado", () => {
@@ -157,6 +161,23 @@ describe("os toggles por tipo valem aqui também", () => {
   // chamado em UM lugar (`analise.ts`), e a mesa não passa por lá. Sem esta
   // checagem o operador desliga a leitura em Integrações, o worker obedece, e a
   // mesa continua enviando e sendo cobrada — sem erro e sem rastro.
+  it("imagem vai com a instrução global de Integrações", async () => {
+    await lerArquivoEnviado(entrada({ nome: "foto.jpg" }));
+
+    expect(instrucaoDaImagem).toBe(lerConfigOpenAI({}).instrucaoImagem);
+  });
+
+  it("instrução própria vale só para quem a passou — a global fica intacta", async () => {
+    await lerArquivoEnviado(
+      entrada({ nome: "foto.jpg", instrucaoImagem: "Avalie o canteiro." }),
+    );
+    expect(instrucaoDaImagem).toBe("Avalie o canteiro.");
+
+    // Instrução em branco não pode mandar a visão trabalhar sem instrução.
+    await lerArquivoEnviado(entrada({ nome: "foto.jpg", instrucaoImagem: "   " }));
+    expect(instrucaoDaImagem).toBe(lerConfigOpenAI({}).instrucaoImagem);
+  });
+
   it("imagem desligada não é enviada nem cobrada", async () => {
     const r = await lerArquivoEnviado(
       entrada({ nome: "foto.jpg", config: config({ lerImagem: false }) }),
