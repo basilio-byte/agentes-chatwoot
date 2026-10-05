@@ -588,6 +588,13 @@ e testado em `src/server/agents/conduta.ts`.
   `ChatwootClient` recebe dois tokens: o do bot para agir e um **token de
   usuário** para ler estado e histórico (global, em Integrações). Sem o de
   leitura o atendimento morre antes de chamar o modelo.
+  ⚠ **E o bot só ESCREVE dentro da conversa.** `PUT /contacts/{id}` com o token
+  dele volta o mesmo 401: `anotar_no_contato` lia o contato com o token de
+  usuário e gravava com o do bot, e falhou em TODA chamada até 05/10/2026 —
+  inclusive nas vendas autônomas de 01/10 e 04/10. Pior: a recusa saía traduzida
+  como "falta token de leitura", com o token configurado, e o agente escreveu na
+  task que os dados estavam no contato. Hoje a gravação do contato vai com o
+  token de usuário, e a tradução só fala em leitura quando a chamada foi um GET.
 
 ### Leitura de mídia: áudio, imagem e documento viram contexto
 
@@ -1779,6 +1786,33 @@ ordem que vai para a API continua sendo alfabética por nome.
 - Todas as 33 ligadas pesam **~4,2k tokens em toda mensagem**. A tela mostra a
   estimativa (`tokensAproximadosDaTool`) para a escolha ser informada. (Conta
   feita antes de `clickup_ler_fotos_da_tarefa`, a 34ª.)
+
+### Task em dobro na mesma conversa: a criação confere sozinha
+
+`clickup_criar_tarefa` não cria se esta conversa já tem, nos últimos
+`DIAS_SEM_REPETIR` (7), uma task viva criada por ela na MESMA lista — devolve
+`criada: false, jaExistia: true` com o link, mandando completar a existente.
+Regra pura e testada em `clickup/repeticao.ts`.
+
+- **Nasceu da conversa 14454** (04 e 05/10/2026): a venda fechada pelo agente
+  virou TRÊS tasks no CRM Comercial. O vendedor criou uma; um "Sim" do cliente à
+  mensagem de retomada bastou para criar outra — o histórico que o modelo
+  recebe é texto puro e não mostra o que ele fez —; e o checkbox, 43 horas
+  depois, acionou o CRM, que procurou pelo telefone, não achou (as duas tinham
+  nascido sem CELULAR) e criou a terceira.
+- **Conta QUALQUER agente da conversa**, não só quem chama: a terceira veio de
+  outro agente. Lê das `ToolCall`, sem modelo, como o checkbox já fazia.
+- **Sete dias, não um**, porque entre a venda de sábado e o checkbox de segunda
+  passaram 43 h. Task apagada (404), arquivada ou fechada não barra.
+- ⚠ **Compara pelo `listaId`**, que o retorno da criação passou a gravar em
+  05/10/2026. Chamada anterior a isso não barra nada — comparar pelo nome da
+  lista confundiria listas homônimas.
+- **Falha de leitura não barra**: travar a criação por soluço de banco
+  deixaria a venda sem registro, que é o erro que isto evita.
+- **Só com conversa.** Playground, gatilho e agendamento não têm onde conferir.
+- O que fica de fora, de propósito: a segunda oportunidade legítima do mesmo
+  cliente na mesma semana e na mesma lista. A recusa manda deixar uma pessoa
+  criar — task em dobro é vendedor, cobrança e contrato em dobro.
 
 ### Fotos de uma tarefa do ClickUp: o agente de jardim
 

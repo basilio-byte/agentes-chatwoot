@@ -40,7 +40,11 @@ export class ChatwootClient {
   private async requisitar<T>(
     caminho: string,
     init: RequestInit = {},
-    /** Leitura usa o token de usuário quando existe. */
+    /**
+     * Usa o token de usuário quando existe. O nome é histórico: vale para toda
+     * chamada que o Agent Bot não pode fazer — ler a conversa e o histórico, e
+     * também GRAVAR fora da conversa, como o cadastro do contato.
+     */
     leitura = false,
   ): Promise<T> {
     const usandoTokenDeLeitura = leitura && Boolean(this.tokenDeLeitura);
@@ -60,17 +64,24 @@ export class ChatwootClient {
     if (!resposta.ok) {
       const corpo = await resposta.text().catch(() => "");
 
-      // O erro mais confuso desta API: o token está certo, só não pode LER.
-      // Sem esta tradução, a mensagem no painel não diz o que fazer.
+      // O erro mais confuso desta API: o token está certo, só não pode fazer
+      // AQUILO. Sem esta tradução, a mensagem no painel não diz o que fazer.
+      // ⚠ Não dizer "leitura" quando foi uma gravação: em 04/10/2026 a recusa
+      // de um PUT no contato saiu como "falta token de leitura", com o token de
+      // leitura configurado, e escondeu o defeito por dias.
       if (
         resposta.status === 401 &&
         corpo.includes("not authorized for bots") &&
         !usandoTokenDeLeitura
       ) {
+        const metodo = (init.method ?? "GET").toUpperCase();
         throw new ChatwootApiError(
           resposta.status,
-          "o token do Agent Bot não tem permissão de leitura no Chatwoot. " +
-            "Configure o token de leitura em Integrações → Chatwoot (token de acesso de um usuário).",
+          metodo === "GET"
+            ? "o token do Agent Bot não tem permissão de leitura no Chatwoot. " +
+                "Configure o token de leitura em Integrações → Chatwoot (token de acesso de um usuário)."
+            : `o Chatwoot não deixa o Agent Bot fazer ${metodo} em ${caminho.split("?")[0]} — ` +
+                "esta chamada precisa ir com o token de usuário. É defeito do sistema, não de configuração.",
         );
       }
 
@@ -602,10 +613,19 @@ export class ChatwootClient {
       else mesclado[chave] = valor;
     }
 
-    await this.requisitar(`/contacts/${contactId}`, {
-      method: "PUT",
-      body: JSON.stringify({ custom_attributes: mesclado }),
-    });
+    // ⚠ Grava com o token de USUÁRIO, como lê. O Agent Bot só age dentro das
+    // conversas: `PUT /contacts` com o token dele volta 401 "not authorized for
+    // bots". Foi assim até 05/10/2026 — a leitura passava, a gravação falhava, e
+    // toda chamada de `anotar_no_contato` terminava em erro, inclusive nas
+    // vendas autônomas.
+    await this.requisitar(
+      `/contacts/${contactId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ custom_attributes: mesclado }),
+      },
+      true,
+    );
 
     return mesclado;
   }

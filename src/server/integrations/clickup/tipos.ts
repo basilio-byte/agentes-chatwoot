@@ -67,6 +67,7 @@ export type ClickUpTarefa = {
   folder?: { id: string; name?: string };
   space?: { id: string; name?: string };
   parent?: string | null;
+  archived?: boolean | null;
   /** O valor de cada campo personalizado — vem na listagem e no detalhe. */
   custom_fields?: Array<{ id: string; value?: unknown }>;
   /** Só no detalhe (`GET /task/{id}`), inclusive o que foi anexado por comentário. */

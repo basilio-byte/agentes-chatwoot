@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { IntegrationProvider, MediaKind } from "@/generated/prisma/enums";
+import { db } from "@/lib/db";
 import { agoraEmSaoPaulo } from "@/lib/tempo";
 import { tipoLigado } from "@/server/integrations/openai/classificar";
 import { criarClienteOpenAI } from "@/server/integrations/openai/client";
@@ -30,6 +31,7 @@ import {
   resolverMembro,
 } from "./formatacao";
 import { nomesDisponiveis, prepararCampos, resolverCampo } from "./campos";
+import { DIAS_SEM_REPETIR, aindaVale, tarefasNaLista, type TarefaAnterior } from "./repeticao";
 import { mesmoTelefone, variacoesDoTelefone } from "./telefone";
 import {
   PRIORIDADES,
@@ -47,6 +49,57 @@ const LIMITE_RESULTADOS = 25;
  * conversas ao mesmo tempo.
  */
 const LEITURAS_SIMULTANEAS = 3;
+
+/**
+ * A task que este sistema já criou nesta conversa e nesta lista, e que ainda
+ * vale — ou `null`. Ver `repeticao.ts`.
+ *
+ * Conta QUALQUER agente da conversa, não só quem está chamando: no caso que
+ * motivou, a terceira task veio de outro agente (o CRM, pelo checkbox) em cima
+ * das duas do vendedor.
+ *
+ * Falha de leitura (banco ou ClickUp) não barra nada: a barreira é rede de
+ * segurança, e travar a criação por soluço deixaria a venda sem registro — o
+ * erro que este caminho existe para evitar.
+ */
+async function tarefaAnteriorNaConversa(
+  cliente: ClickUpClient,
+  conversationId: string,
+  listaId: string,
+): Promise<TarefaAnterior | null> {
+  let candidatas: TarefaAnterior[];
+  try {
+    const chamadas = await db.toolCall.findMany({
+      where: {
+        toolName: "clickup_criar_tarefa",
+        isError: false,
+        createdAt: { gte: new Date(Date.now() - DIAS_SEM_REPETIR * 86_400_000) },
+        run: { conversationId },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: { output: true, createdAt: true },
+    });
+    candidatas = tarefasNaLista(chamadas, listaId);
+  } catch {
+    return null;
+  }
+
+  // Até três: a que foi apagada ou fechada à mão não conta, e a de antes dela
+  // pode estar viva.
+  for (const candidata of candidatas.slice(0, 3)) {
+    try {
+      const tarefa = await cliente.obterTarefa(candidata.id);
+      if (aindaVale(tarefa)) {
+        return { ...candidata, url: tarefa.url ?? candidata.url, nome: tarefa.name ?? candidata.nome };
+      }
+    } catch {
+      // 404 é task apagada; outro erro, não dá para saber — nos dois casos,
+      // segue para a próxima em vez de barrar no escuro.
+    }
+  }
+  return null;
+}
 
 /** `map` assíncrono com no máximo `limite` em andamento, na ordem de entrada. */
 async function emParalelo<T, R>(
@@ -278,6 +331,22 @@ export const clickupIntegration: IntegrationDefinition = {
           };
         }
 
+        // ⚠ Antes de qualquer outra coisa: o modelo não vê o que já fez em
+        // turnos anteriores, e um "sim" do cliente bastou para criar a mesma
+        // venda duas vezes (conversa 14454). Ver `repeticao.ts`.
+        if (ctx.conversationId) {
+          const anterior = await tarefaAnteriorNaConversa(cliente, ctx.conversationId, listaId);
+          if (anterior) {
+            const quando = agoraEmSaoPaulo(anterior.em);
+            return {
+              criada: false,
+              jaExistia: true,
+              tarefa: { id: anterior.id, nome: anterior.nome, url: anterior.url },
+              observacao: `NÃO criei outra: já existe uma task desta conversa nesta lista, criada em ${quando.data} às ${quando.hora} — ${anterior.url ?? anterior.id}. Task em dobro vira vendedor, cobrança e contrato em dobro. Se faltam dados nela, complete ESSA task (campos com clickup_definir_campo_personalizado, nome ou descrição com clickup_atualizar_tarefa). Se for mesmo outra oportunidade do mesmo cliente, deixe uma pessoa da equipe criar.`,
+            };
+          }
+        }
+
         let assignees: number[] | undefined;
         if (args.responsavel) {
           const membros = await membrosDoWorkspace(cliente, config.teamId);
@@ -323,6 +392,8 @@ export const clickupIntegration: IntegrationDefinition = {
           criada: true,
           camposPreenchidos: custom_fields?.length ?? 0,
           ...formatarTarefa(tarefa),
+          // É por ele que a barreira de task em dobro reconhece a lista.
+          listaId: tarefa.list?.id ?? listaId,
         };
       },
     },
