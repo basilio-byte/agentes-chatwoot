@@ -435,7 +435,7 @@ export const clickupIntegration: IntegrationDefinition = {
       name: "clickup_ler_fotos_da_tarefa",
       categoria: "Tarefas",
       description:
-        "Olha as FOTOS anexadas a uma tarefa do ClickUp nos últimos dias (inclusive as publicadas em comentários) e devolve, para cada uma, o que ela mostra segundo o critério que você escrever em `foco`, com data, quem mandou e a anotação escrita junto. Use para avaliar fotos de vistoria ou manutenção. Uma chamada lê o lote inteiro, até 20 fotos, das mais recentes — não chame de novo para a mesma tarefa no mesmo turno.",
+        "Olha as FOTOS anexadas a uma tarefa do ClickUp nos últimos dias (inclusive as publicadas em comentários) e devolve, para cada uma, o que ela mostra segundo o critério que você escrever em `foco`, com data, quem mandou, a anotação escrita junto e o link da foto (cite o link: o nome do arquivo costuma ser só image.png). Use para avaliar fotos de vistoria ou manutenção. Uma chamada lê o lote inteiro, até 20 fotos, das mais recentes — não chame de novo para a mesma tarefa no mesmo turno.",
       inputSchema: z.object({
         tarefaId: z.string().min(1).describe("Id da tarefa onde as fotos são publicadas."),
         ultimosDias: z
@@ -511,6 +511,10 @@ export const clickupIntegration: IntegrationDefinition = {
           const anotacao = anotacaoDaFoto(anexo, comentarios);
           const base = {
             arquivo: anexo.title ?? null,
+            // ⚠ O nome não identifica a foto: todo print colado no ClickUp se
+            // chama `image.png` (7 de 12 no primeiro relatório, 05/10/2026). O
+            // link abre a foto, e é ele que o relatório cita.
+            link: anexo.url ?? null,
             enviadaEm: momento ? `${momento.data} ${momento.hora}` : null,
             enviadaPor: anotacao.autor,
             anotacao: anotacao.texto,

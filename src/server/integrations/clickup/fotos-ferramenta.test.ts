@@ -169,6 +169,8 @@ describe("clickup_ler_fotos_da_tarefa", () => {
       descricao: "descrição de WhatsApp Image 1.jpeg",
     });
     expect(fotos[0].enviadaEm).toMatch(/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/);
+    // Todo print se chama `image.png`: é o link que identifica a foto.
+    expect(fotos[1]).toMatchObject({ arquivo: "image.png", link: `${HOST_ANEXO}/t1/a2/image.png` });
     // A foto de 30 dias atrás não foi baixada nem lida.
     expect(downloads.some((d) => d.url.includes("/fora/"))).toBe(false);
   });
