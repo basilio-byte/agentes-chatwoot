@@ -107,7 +107,7 @@ export type FatosDoCliente = {
 const CAMPOS_DA_TASK: { campo: string; fato: keyof FatosDoCliente }[] = [
   { campo: "NOME CLIENTE", fato: "nome" },
   { campo: "CPF", fato: "cpf" },
-  { campo: "CNPJ", fato: "cnpj" },
+  { campo: "CNPJ [CADASTRO]", fato: "cnpj" },
   { campo: "E-mail", fato: "email" },
   { campo: "Nome da sala", fato: "sala" },
 ];
