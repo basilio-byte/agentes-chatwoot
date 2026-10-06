@@ -74,6 +74,10 @@ let bancoFalha = false;
 let tarefasNoClickUp: Record<string, Record<string, unknown> | null> = {};
 let criacoes = 0;
 
+// O que o sistema sabe do cliente tem teste próprio (`contato/`); aqui só atrapalharia a
+// conferência da consulta da barreira.
+vi.mock("@/server/contato/fatos", () => ({ fatosDoClienteDaConversa: async () => ({}) }));
+
 vi.mock("@/lib/db", () => ({
   db: {
     toolCall: {

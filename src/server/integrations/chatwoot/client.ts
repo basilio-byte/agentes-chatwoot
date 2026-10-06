@@ -439,6 +439,31 @@ export class ChatwootClient {
   }
 
   /**
+   * As definições dos atributos personalizados do CONTATO: chave, tipo e, nos de
+   * lista, as opções válidas. Uma opção que não está aqui aparece em branco na
+   * tela do Chatwoot, então quem grava atributo de lista confere antes.
+   *
+   * Leitura, então usa o token de usuário.
+   */
+  async listarDefinicoesDeAtributosDoContato() {
+    const bruto = await this.requisitar<
+      Array<{
+        attribute_key?: string;
+        attribute_display_type?: string;
+        attribute_values?: string[] | null;
+      }>
+    >("/custom_attribute_definitions?attribute_model=contact_attribute", {}, true);
+
+    return (Array.isArray(bruto) ? bruto : [])
+      .filter((d) => typeof d.attribute_key === "string")
+      .map((d) => ({
+        chave: d.attribute_key as string,
+        tipo: d.attribute_display_type ?? "text",
+        opcoes: (d.attribute_values ?? []).filter((o): o is string => typeof o === "string"),
+      }));
+  }
+
+  /**
    * Contato, com os atributos personalizados que já existem nele.
    *
    * Leitura, então usa o token de usuário — o do bot é recusado aqui como em

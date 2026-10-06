@@ -1599,6 +1599,41 @@ de Integrações.
   outros avisos da caixa 31. "Enviado" quer dizer que o Chatwoot aceitou, não
   que chegou: quem leva ao WhatsApp é a WAHA.
 
+### Cadastro completo: o sistema preenche contato e task com o que já sabe
+
+Chamado do Diego (06/10/2026, conversa de reserva de sala): a task do CRM saiu
+sem tipo de produto, categoria, CPF e e-mail, e o contato no Chatwoot ficou só
+com `url` e `id_clickup`. Decisão do usuário: *"tudo o que for possível
+preencher dos atributos de contato / campos personalizados da task, sempre devem
+ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
+`regras.ts`, leitura dos fatos em `fatos.ts`, contato em `espelho.ts`) e
+`src/server/email-do-contato/`.
+
+- **É do SISTEMA, dentro de `clickup_criar_tarefa`**, só nas listas do CRM
+  (`LISTAS_DO_CRM`) e só dentro de uma conversa. Depender de o modelo lembrar de
+  mais uma ferramenta é o que deixou o cadastro vazio.
+- **Os fatos vêm do Conexa, pelo cliente que um agente JÁ usou nesta conversa**
+  (`clienteId` lido das `ToolCall`), nunca de busca por nome ou telefone, que
+  acharia outra pessoa. A sala é a que o Conexa gravou na reserva. A `ToolCall` é
+  gravada logo após cada ferramenta, então o CRM — que roda DENTRO do turno de
+  quem o aciona — já enxerga o que o agente de origem fez.
+- ⚠ **Só preenche o VAZIO**, na task e no contato: o que o agente confirmou com o
+  cliente e o que a equipe escreveu valem mais que o cadastro. Cada fato extra é
+  validado sozinho (`prepararCampos`): um campo problemático nunca impede a task.
+- **Atributo de lista do contato só entra se a opção existir** (sem acento nem
+  caixa): valor fora da lista aparece em branco no Chatwoot. O CPF vai só com
+  dígitos, em texto, para manter o zero à esquerda.
+- **E-mail**: o que o cliente digita na conversa vai para o atributo `email`
+  ("E-mail do responsável") do contato e para o campo "E-mail" da task desta
+  conversa, mesmo com a conversa nas mãos de uma pessoa (`registrarEmailDoCliente`,
+  na rota do webhook, sem esperar). ⚠ NÃO vai para o e-mail nativo do contato: é
+  único na conta, e o mesmo e-mail em dois contatos dá 422. Dois e-mails na mesma
+  mensagem, ou e-mail da própria Seahub, não gravam nada.
+- **Nunca lança e nunca atrasa** a criação da task nem o atendimento; falha vira
+  log, e a nota interna (pelo robô da caixa) só sai quando algo mudou ou deu erro.
+- **Ainda é prompt, não código**: "Auto Venda" quando o próprio agente fecha e
+  `CPF:`/`Sala:` no pedido do Salas ao CRM — dependem de alterar os prompts.
+
 ### Notas fiscais (Spedy): modo sombra primeiro
 
 Integração `NOTAS_FISCAIS`, fora do registry como o NPS e a cobrança: sem

@@ -122,7 +122,7 @@ async function passarUma(
 }
 
 /** Tasks que um agente criou nesta conversa, da mais recente para a mais antiga. */
-async function tarefasCriadasNaConversa(
+export async function tarefasCriadasNaConversa(
   chatwootConversationId: number,
   agora: number,
 ): Promise<string[]> {

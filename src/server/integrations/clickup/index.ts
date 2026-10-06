@@ -1,3 +1,6 @@
+import { espelharTaskNoContato } from "@/server/contato/espelho";
+import { fatosDoClienteDaConversa } from "@/server/contato/fatos";
+import { camposComOsFatos, camposVaziosParaPreencher, LISTAS_DO_CRM } from "@/server/contato/regras";
 import { z } from "zod";
 import { IntegrationProvider, MediaKind, RunSource, RunStatus } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
@@ -362,11 +365,17 @@ export const clickupIntegration: IntegrationDefinition = {
 
         // Resolve nome → id antes de criar. Se algum campo não casar, não cria:
         // tarefa órfã com metade dos dados é pior do que pedir a correção.
+        // Na lista do CRM, o que o sistema já sabe do cliente (Conexa, reserva)
+        // preenche o que o agente deixou em branco — só campo que existe na lista,
+        // só o vazio, e cada fato é validado sozinho: um campo ruim não impede a task.
+        const doCrm = LISTAS_DO_CRM.includes(listaId) && !!ctx.conversationId;
+        const fatos = doCrm ? await fatosDoClienteDaConversa(ctx.conversationId) : {};
+
         let custom_fields: { id: string; value: unknown }[] | undefined;
-        if (args.camposPersonalizados?.length) {
+        if (args.camposPersonalizados?.length || (doCrm && Object.keys(fatos).length)) {
           const { fields } = await cliente.listarCamposPersonalizados(listaId);
           const { prontos, problemas } = prepararCampos(
-            args.camposPersonalizados,
+            args.camposPersonalizados ?? [],
             fields,
           );
 
@@ -378,6 +387,16 @@ export const clickupIntegration: IntegrationDefinition = {
             };
           }
           custom_fields = prontos;
+
+          if (doCrm) {
+            const dados = Object.fromEntries(
+              (args.camposPersonalizados ?? []).map((c) => [c.campo, c.valor]),
+            );
+            for (const extra of camposVaziosParaPreencher(fatos, fields, dados)) {
+              const um = prepararCampos([extra], fields);
+              if (um.problemas.length === 0) custom_fields.push(...um.prontos);
+            }
+          }
         }
 
         const tarefa = await cliente.criarTarefa(listaId, {
@@ -389,6 +408,14 @@ export const clickupIntegration: IntegrationDefinition = {
           assignees,
           tags: args.tags,
           custom_fields,
+        });
+
+        // O que a task traz vai também para o cadastro do contato no Chatwoot.
+        // Nunca lança e nunca muda o retorno: a task é o registro que importa.
+        await espelharTaskNoContato({
+          ctx,
+          listaId: tarefa.list?.id ?? listaId,
+          campos: camposComOsFatos(args.camposPersonalizados ?? [], fatos),
         });
 
         return {

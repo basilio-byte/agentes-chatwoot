@@ -14,6 +14,7 @@ import { leituraDeMidiaLigada } from "@/server/integrations/openai/credenciais";
 import { agendarAtendimento } from "@/server/queue/atendimento";
 import { lerConversa, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
 import { capturarRespostaDoNps } from "@/server/nps/resposta";
+import { registrarEmailDoCliente } from "@/server/email-do-contato/registrar";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,6 +123,11 @@ export async function POST(
     await marcarEntrega(entrega, "nps", nps.detalhe);
     return NextResponse.json({ ok: true, nps: true });
   }
+
+  // O e-mail que o cliente digita vai para o contato e para a task do CRM,
+  // mesmo com a conversa nas mãos de uma pessoa (é onde ele costuma chegar).
+  // Sem esperar: nunca lança, e o atendimento não pode atrasar por isso.
+  void registrarEmailDoCliente(payload, agentId);
 
   // Decisão barata aqui para não encher a fila de ruído (typing, eco, nota
   // privada). O worker ainda reconfere o estado no banco depois do debounce.
