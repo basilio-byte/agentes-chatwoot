@@ -6,6 +6,7 @@ import { SituacaoDaNota } from "@/generated/prisma/enums";
 import { SpedyApiError, SpedyRedeError, type CorpoDeNota, type NotaDaSpedy } from "@/server/integrations/spedy/client";
 import {
   acompanharNotas,
+  avisarProblemas,
   enviarNota,
   type Dependencias,
   type LinhaDaNota,
@@ -39,6 +40,7 @@ const CEP_OK: CepLido = { estado: "ok", ibge: 2408102, cidade: "Natal", uf: "RN"
 
 function repositorioEmMemoria() {
   const linhas = new Map<string, LinhaDaNota>();
+  const avisadas = new Set<string>();
   const repo: Repositorio = {
     async obter(chave) {
       return linhas.get(chave) ? { ...linhas.get(chave)! } : null;
@@ -51,17 +53,25 @@ function repositorioEmMemoria() {
     async atualizar(chave, dados) {
       linhas.set(chave, { ...linhas.get(chave)!, ...dados });
     },
+    async aAvisar() {
+      return [...linhas.values()].filter(
+        (l) => (l.situacao === SituacaoDaNota.REJEITADA || l.situacao === SituacaoDaNota.FALHOU) && !avisadas.has(l.chave),
+      );
+    },
+    async marcarAvisadas(chaves) {
+      for (const c of chaves) avisadas.add(c);
+    },
     async aAcompanhar() {
       return [...linhas.values()].filter(
         (l) => l.situacao === SituacaoDaNota.ENVIADA || l.situacao === SituacaoDaNota.INCERTA,
       );
     },
   };
-  return { repo, linhas };
+  return { repo, linhas, avisadas };
 }
 
 function montar(extra: Partial<Dependencias> = {}) {
-  const { repo, linhas } = repositorioEmMemoria();
+  const { repo, linhas, avisadas } = repositorioEmMemoria();
   const spedy = {
     criarNota: vi.fn<(c: CorpoDeNota) => Promise<NotaDaSpedy>>(async (c) => ({
       id: "spedy-1",
@@ -79,9 +89,10 @@ function montar(extra: Partial<Dependencias> = {}) {
     tomador: async () => TOMADOR,
     cep: async () => CEP_OK,
     agora: () => new Date("2026-10-07T15:00:00Z"),
+    avisar: async () => "enviado",
     ...extra,
   };
-  return { dep, spedy, linhas };
+  return { dep, spedy, linhas, avisadas };
 }
 
 const args = { nota: NOTA, cobrancaId: 900, clienteId: 77, empresa: "SEATECH", enviarEmailAoCliente: true };
@@ -241,5 +252,77 @@ describe("acompanhar as notas enviadas", () => {
     c.spedy.obterNota.mockRejectedValue(new SpedyRedeError("fora do ar"));
     expect((await acompanharNotas(c.dep)).falhas).toBe(1);
     expect(c.linhas.get(NOTA.chave)?.situacao).toBe("ENVIADA");
+  });
+});
+
+describe("aviso à equipe", () => {
+  const rejeitar = async (c: ReturnType<typeof montar>) => {
+    await enviarNota(c.dep, args);
+    c.spedy.obterNota.mockResolvedValue({
+      id: "spedy-1",
+      integrationId: NOTA.chave,
+      status: "rejected",
+      number: null,
+      processingDetail: { code: "E0240", message: "O CEP do tomador não existe." },
+    });
+    await acompanharNotas(c.dep);
+  };
+
+  it("⚠ leva a rejeição num e-mail só e marca como avisada SÓ depois de enviada", async () => {
+    const avisar = vi.fn<Dependencias["avisar"]>(async () => "enviado");
+    const c = montar({ avisar });
+    await rejeitar(c);
+    const r = await avisarProblemas(c.dep, ["suporte@seahubcoworking.com.br"]);
+    expect(r).toEqual({ avisadas: 1, pendentes: 0 });
+    expect(avisar).toHaveBeenCalledTimes(1);
+    expect(avisar.mock.calls[0][0][0]).toMatchObject({
+      cobrancaId: 900,
+      situacao: "REJEITADA",
+      motivo: "E0240: O CEP do tomador não existe.",
+    });
+    expect(avisar.mock.calls[0][1]).toEqual(["suporte@seahubcoworking.com.br"]);
+    expect(c.avisadas.has(NOTA.chave)).toBe(true);
+
+    // Já avisada: não manda de novo.
+    expect(await avisarProblemas(c.dep, ["suporte@seahubcoworking.com.br"])).toEqual({ avisadas: 0, pendentes: 0 });
+    expect(avisar).toHaveBeenCalledTimes(1);
+  });
+
+  it("⚠ aviso que NÃO saiu continua pendente e tenta de novo na rodada seguinte", async () => {
+    const avisar = vi.fn<Dependencias["avisar"]>().mockResolvedValueOnce("falhou").mockResolvedValue("enviado");
+    const c = montar({ avisar });
+    await rejeitar(c);
+    expect(await avisarProblemas(c.dep, ["a@b.com"])).toMatchObject({ avisadas: 0, pendentes: 1, motivo: "falhou" });
+    expect(c.avisadas.size).toBe(0);
+    expect(await avisarProblemas(c.dep, ["a@b.com"])).toEqual({ avisadas: 1, pendentes: 0 });
+  });
+
+  it("sem destinatário na tela ou sem a Resend no servidor, nada é marcado como avisado", async () => {
+    const c = montar({ avisar: async () => "sem provedor" });
+    await rejeitar(c);
+    expect(await avisarProblemas(c.dep, [])).toMatchObject({
+      avisadas: 0,
+      pendentes: 1,
+      motivo: "sem destinatário na tela",
+    });
+    expect(await avisarProblemas(c.dep, ["a@b.com"])).toMatchObject({ avisadas: 0, motivo: "sem provedor" });
+    expect(c.avisadas.size).toBe(0);
+  });
+
+  it("cadastro do cliente parado também vai no aviso, e nota boa não", async () => {
+    const avisar = vi.fn<Dependencias["avisar"]>(async () => "enviado");
+    const c = montar({ avisar, cep: async () => ({ estado: "inexistente" }) });
+    await enviarNota(c.dep, args);
+    await avisarProblemas(c.dep, ["a@b.com"]);
+    expect(avisar.mock.calls[0][0][0]).toMatchObject({
+      situacao: "FALHOU",
+      motivo: expect.stringMatching(/^Cadastro do cliente:/),
+    });
+
+    const bom = montar({ avisar });
+    await enviarNota(bom.dep, args);
+    avisar.mockClear();
+    expect(await avisarProblemas(bom.dep, ["a@b.com"])).toEqual({ avisadas: 0, pendentes: 0 });
+    expect(avisar).not.toHaveBeenCalled();
   });
 });

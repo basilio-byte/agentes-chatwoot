@@ -30,6 +30,7 @@ import {
 import { categoriasDoConexa } from "@/server/notas-fiscais/categorias";
 import {
   chavesDaSpedyNoServidor,
+  emailNoServidor,
   resumoDasCobrancas,
   resumoDasNotas,
 } from "@/server/notas-fiscais/resumo";
@@ -1468,8 +1469,10 @@ export default async function IntegracoesPage({
                       soCobrancas: configNotas.emissao.soCobrancas.join(" "),
                       aPartirDe: configNotas.emissao.aPartirDe ?? "",
                       enviarEmailAoCliente: configNotas.emissao.enviarEmailAoCliente,
+                      emailsDeAviso: configNotas.emissao.emailsDeAviso.join(" "),
                     }}
                     chaves={chavesDaSpedy}
+                    emailNoServidor={emailNoServidor()}
                     somenteLeitura={!editavel}
                   />
                 </Card>
@@ -1485,8 +1488,8 @@ export default async function IntegracoesPage({
                   {notasEmitidas.contagem.REJEITADA + notasEmitidas.contagem.FALHOU > 0 ? (
                     <Aviso tone="danger">
                       Há nota que precisa de uma pessoa: rejeitada pela prefeitura ou parada por
-                      cadastro do cliente. O motivo está na linha. O aviso por e-mail ao suporte
-                      ainda não existe — olhe esta lista.
+                      cadastro do cliente. O motivo está na linha. Se os e-mails de aviso e a
+                      Resend estiverem configurados, a equipe também recebe por e-mail.
                     </Aviso>
                   ) : null}
                   {notasEmitidas.ultimas.length === 0 ? (

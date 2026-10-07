@@ -32,6 +32,7 @@ export function NotasFiscaisConfigForm({
   produtos,
   emissao,
   chaves,
+  emailNoServidor,
   somenteLeitura,
 }: {
   habilitada: boolean;
@@ -45,9 +46,12 @@ export function NotasFiscaisConfigForm({
     soCobrancas: string;
     aPartirDe: string;
     enviarEmailAoCliente: boolean;
+    emailsDeAviso: string;
   };
   /** Se a chave de cada empresa está no servidor (nunca o valor). */
   chaves: Record<string, boolean>;
+  /** Se a Resend (chave e remetente) está no servidor. */
+  emailNoServidor: boolean;
   somenteLeitura: boolean;
 }) {
   const [estado, salvar, salvando] = useActionState<EstadoNotasFiscais, FormData>(
@@ -67,6 +71,7 @@ export function NotasFiscaisConfigForm({
   const [liberadas, setLiberadas] = useState(emissao.soCobrancas);
   const [corte, setCorte] = useState(emissao.aPartirDe);
   const [emailAoCliente, setEmailAoCliente] = useState(emissao.enviarEmailAoCliente);
+  const [avisos, setAvisos] = useState(emissao.emailsDeAviso);
 
   const enviar = (evento: React.FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
@@ -271,6 +276,34 @@ export function NotasFiscaisConfigForm({
           />
           Spedy envia a nota por e-mail ao cliente (o n8n já faz isso)
         </label>
+
+        <Field
+          label="Avisar por e-mail quando uma nota der problema"
+          hint={
+            <>
+              Até 5 endereços, separados por espaço ou vírgula. Recebem um e-mail quando a prefeitura
+              <strong> rejeita</strong> uma nota, a Spedy a recusa ou o cadastro do cliente a
+              segura. Um e-mail só por rodada, com tudo que está pendente.{" "}
+              {emailNoServidor ? (
+                "Envio pela Resend: configurado no servidor."
+              ) : (
+                <span className="text-danger">
+                  A Resend NÃO está configurada no servidor (<code>RESEND_API_KEY</code> e{" "}
+                  <code>EMAIL_REMETENTE</code>): sem ela o aviso não sai, e o problema só aparece na
+                  lista de notas abaixo.
+                </span>
+              )}
+            </>
+          }
+        >
+          <Input
+            name="emailsDeAviso"
+            placeholder="suporte@seahubcoworking.com.br"
+            value={avisos}
+            onChange={(e) => setAvisos(e.target.value)}
+            disabled={somenteLeitura}
+          />
+        </Field>
       </fieldset>
 
       {estado.erro ? <Aviso tone="danger">{estado.erro}</Aviso> : null}

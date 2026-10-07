@@ -11,17 +11,21 @@ import {
   SpedyRedeError,
   type NotaDaSpedy,
 } from "@/server/integrations/spedy/client";
+import { createHash } from "node:crypto";
+import { configuracaoDeEmail, enviarEmail } from "@/server/integrations/resend/client";
 import { lerConfigNotasFiscais, type NotasFiscaisConfig } from "../config";
 import type { NotaPlanejada } from "../regras";
 import { consultarCep } from "./cep";
 import {
   lerTomador,
   montarCorpo,
+  montarAviso,
   motivoDaRecusa,
   podeEmitir,
   problemasDoTomador,
   situacaoDoStatus,
   type CepLido,
+  type NotaComProblema,
   type Tomador,
 } from "./regras";
 
@@ -75,7 +79,12 @@ export type Repositorio = {
   criar(linha: Omit<LinhaDaNota, "spedyId" | "numero" | "motivo" | "tentativas" | "enviadaEm">): Promise<boolean>;
   atualizar(chave: string, dados: Partial<Omit<LinhaDaNota, "chave">>): Promise<void>;
   aAcompanhar(limite: number): Promise<LinhaDaNota[]>;
+  /** Rejeitadas e com falha que ainda não foram levadas a uma pessoa. */
+  aAvisar(limite: number): Promise<LinhaDaNota[]>;
+  marcarAvisadas(chaves: string[], quando: Date): Promise<void>;
 };
+
+export type ResultadoDoAviso = "enviado" | "sem provedor" | "falhou";
 
 export type SpedyDaEmpresa = Pick<SpedyClient, "criarNota" | "obterNota" | "buscarPorIntegrationId">;
 
@@ -87,6 +96,8 @@ export type Dependencias = {
   tomador: (clienteId: number) => Promise<Tomador | null>;
   cep: (cep: string) => Promise<CepLido>;
   agora: () => Date;
+  /** Leva o problema a uma pessoa. `sem provedor`: falta a Resend no servidor. */
+  avisar: (notas: NotaComProblema[], destinos: string[]) => Promise<ResultadoDoAviso>;
 };
 
 export type ResultadoDoEnvio =
@@ -242,6 +253,34 @@ export async function acompanharNotas(dep: Dependencias): Promise<Acompanhamento
   return r;
 }
 
+export type Aviso = { avisadas: number; pendentes: number; motivo?: string };
+
+/**
+ * Leva à equipe, num e-mail só, o que deu errado e ainda não foi dito a
+ * ninguém. ⚠ Só marca como avisada se a Resend ACEITOU: aviso que não saiu
+ * continua pendente e tenta de novo na rodada seguinte — um problema fiscal
+ * que ninguém leu é pior que um e-mail repetido.
+ */
+export async function avisarProblemas(dep: Dependencias, destinos: string[]): Promise<Aviso> {
+  const pendentes = await dep.repo.aAvisar(20);
+  if (!pendentes.length) return { avisadas: 0, pendentes: 0 };
+  if (!destinos.length) return { avisadas: 0, pendentes: pendentes.length, motivo: "sem destinatário na tela" };
+
+  const notas: NotaComProblema[] = pendentes.map((l) => ({
+    chave: l.chave,
+    cobrancaId: l.cobrancaId,
+    empresa: l.empresa,
+    codigo: l.codigo,
+    valorCentavos: l.valorCentavos,
+    situacao: l.situacao === SituacaoDaNota.REJEITADA ? "REJEITADA" : "FALHOU",
+    motivo: l.motivo,
+  }));
+  const resultado = await dep.avisar(notas, destinos);
+  if (resultado !== "enviado") return { avisadas: 0, pendentes: pendentes.length, motivo: resultado };
+  await dep.repo.marcarAvisadas(pendentes.map((l) => l.chave), dep.agora());
+  return { avisadas: pendentes.length, pendentes: 0 };
+}
+
 // ---------------------------------------------------------------------------
 // A rodada (no relógio do vigia)
 // ---------------------------------------------------------------------------
@@ -254,6 +293,7 @@ export type RodadaDeEmissao = {
   adiadas?: number;
   semChave?: string[];
   acompanhamento?: Acompanhamento;
+  aviso?: Aviso;
   erro?: string;
 };
 
@@ -307,7 +347,10 @@ async function rodar(
   // Acompanhar vale mesmo com a emissão desligada: nota que já saiu precisa
   // terminar de ser lida, e ler não escreve nada na Spedy.
   r.acompanhamento = await acompanharNotas(dep);
-  if (!config.emissao.ligada) return r;
+  if (!config.emissao.ligada) {
+    r.aviso = await avisarSemLancar(dep, config);
+    return r;
+  }
 
   const prontas = await db.cobrancaFiscal.findMany({
     where: { situacao: "PRONTA" },
@@ -349,10 +392,21 @@ async function rodar(
       if (resultado === "enviada") await pausar(PAUSA_ENTRE_ENVIOS_MS);
     }
   }
-  if (r.enviadas || r.falhas || r.incertas || r.semChave?.length) {
+  r.aviso = await avisarSemLancar(dep, config);
+  if (r.enviadas || r.falhas || r.incertas || r.semChave?.length || r.aviso.avisadas) {
     logger.info(r, "notas fiscais: rodada de emissão");
   }
   return r;
+}
+
+/** Falha no aviso nunca derruba a rodada: o problema fica pendente e volta na próxima. */
+async function avisarSemLancar(dep: Dependencias, config: NotasFiscaisConfig): Promise<Aviso> {
+  try {
+    return await avisarProblemas(dep, config.emissao.emailsDeAviso);
+  } catch (erro) {
+    logger.warn({ erro: mensagemDe(erro) }, "notas fiscais: o aviso à equipe falhou");
+    return { avisadas: 0, pendentes: 0, motivo: "falhou" };
+  }
 }
 
 const pausa = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms));
@@ -385,6 +439,17 @@ export function repositorioReal(): Repositorio {
     async atualizar(chave, dados) {
       await db.notaFiscalEmitida.update({ where: { chave }, data: { ...dados, verificadaEm: new Date() } });
     },
+    async aAvisar(limite) {
+      const linhas = await db.notaFiscalEmitida.findMany({
+        where: { situacao: { in: [SituacaoDaNota.REJEITADA, SituacaoDaNota.FALHOU] }, avisadaEm: null },
+        orderBy: { atualizadaEm: "asc" },
+        take: limite,
+      });
+      return linhas.map(ler);
+    },
+    async marcarAvisadas(chaves, quando) {
+      await db.notaFiscalEmitida.updateMany({ where: { chave: { in: chaves } }, data: { avisadaEm: quando } });
+    },
     async aAcompanhar(limite) {
       const linhas = await db.notaFiscalEmitida.findMany({
         where: { situacao: { in: [SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA] } },
@@ -396,7 +461,7 @@ export function repositorioReal(): Repositorio {
   };
 }
 
-function dependenciasReais(): Dependencias {
+export function dependenciasReais(): Dependencias {
   const clientes = new Map<string, SpedyClient>();
   const tomadores = new Map<number, Tomador | null>();
   return {
@@ -425,5 +490,19 @@ function dependenciasReais(): Dependencias {
     },
     cep: (cep) => consultarCep(cep),
     agora: () => new Date(),
+    async avisar(notas, destinos) {
+      const email = configuracaoDeEmail();
+      if (!email) return "sem provedor";
+      const aviso = montarAviso(notas);
+      // Mesma lista = mesma chave: um reenvio depois de timeout não duplica.
+      const idempotencia = `nfse-aviso-${createHash("sha256").update(notas.map((n) => n.chave).sort().join("|")).digest("hex").slice(0, 40)}`;
+      try {
+        await enviarEmail(email, { para: destinos, assunto: aviso.assunto, texto: aviso.texto, html: aviso.html, idempotencia });
+        return "enviado";
+      } catch (erro) {
+        logger.warn({ erro: mensagemDe(erro) }, "notas fiscais: o e-mail de aviso não saiu");
+        return "falhou";
+      }
+    },
   };
 }

@@ -285,6 +285,70 @@ export function motivoDaRecusa(detalhe: { message?: string; code?: string } | nu
   return cortar(detalhe.code ? `${detalhe.code}: ${texto}` : texto, 400);
 }
 
+// ---------------------------------------------------------------------------
+// O aviso à equipe
+// ---------------------------------------------------------------------------
+
+export type NotaComProblema = {
+  chave: string;
+  cobrancaId: number;
+  empresa: string;
+  codigo: string;
+  valorCentavos: number;
+  situacao: "REJEITADA" | "FALHOU";
+  motivo: string | null;
+};
+
+const escaparHtml = (t: string) =>
+  t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** O que a pessoa que recebe o aviso precisa fazer, conforme a causa. */
+function oQueFazer(n: NotaComProblema): string {
+  if (n.situacao === "FALHOU" && n.motivo?.startsWith("Cadastro do cliente:")) {
+    return "Corrija o cadastro do cliente no Conexa. A nota sai sozinha na próxima conferência (a cada 5 minutos).";
+  }
+  if (n.situacao === "FALHOU") {
+    return "A Spedy recusou o pedido e repetir igual dá no mesmo. Precisa de ajuda técnica.";
+  }
+  return "A prefeitura recusou a nota. Corrija a causa e reemita pela tela da Spedy (Reemitir nota fiscal).";
+}
+
+/**
+ * O e-mail para quem cuida das notas. Uma mensagem só com tudo que está
+ * pendente, e não um e-mail por nota: um lote ruim não pode encher a caixa.
+ * Sem nome nem documento do cliente — só a cobrança, que se acha no Conexa.
+ */
+export function montarAviso(notas: NotaComProblema[]): { assunto: string; texto: string; html: string } {
+  const n = notas.length;
+  const assunto = `NFS-e: ${n} nota${n === 1 ? "" : "s"} precisa${n === 1 ? "" : "m"} de atenção`;
+  const linhas = notas.map((nota) => {
+    const situacao = nota.situacao === "REJEITADA" ? "rejeitada pela prefeitura" : "parada antes de enviar";
+    return {
+      titulo: `Cobrança #${nota.cobrancaId} (${nota.empresa}) — ${formatarReais(nota.valorCentavos)}, código ${nota.codigo}`,
+      situacao,
+      motivo: nota.motivo ?? "sem motivo registrado",
+      fazer: oQueFazer(nota),
+    };
+  });
+  const texto = [
+    n === 1 ? "Uma nota fiscal precisa de atenção:" : `${n} notas fiscais precisam de atenção:`,
+    "",
+    ...linhas.flatMap((l) => [`• ${l.titulo}`, `  Situação: ${l.situacao}`, `  Motivo: ${l.motivo}`, `  O que fazer: ${l.fazer}`, ""]),
+    "Aviso automático do sistema de notas fiscais da Seahub.",
+  ].join("\n");
+  const html = [
+    `<p>${n === 1 ? "Uma nota fiscal precisa de atenção:" : `${n} notas fiscais precisam de atenção:`}</p>`,
+    "<ul>",
+    ...linhas.map(
+      (l) =>
+        `<li><strong>${escaparHtml(l.titulo)}</strong><br>Situação: ${escaparHtml(l.situacao)}<br>Motivo: ${escaparHtml(l.motivo)}<br>O que fazer: ${escaparHtml(l.fazer)}</li>`,
+    ),
+    "</ul>",
+    "<p><small>Aviso automático do sistema de notas fiscais da Seahub.</small></p>",
+  ].join("");
+  return { assunto, texto, html };
+}
+
 /** Minutos que uma nota pode ficar na fila da prefeitura antes de virar motivo de olhar. */
 export const MINUTOS_NA_FILA = 30;
 

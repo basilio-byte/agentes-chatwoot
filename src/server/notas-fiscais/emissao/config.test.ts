@@ -3,6 +3,7 @@ import {
   configDoFormulario,
   lerConfigNotasFiscais,
   lerCobrancasLiberadas,
+  lerEmailsDeAviso,
   notasFiscaisConfigSchema,
 } from "../config";
 
@@ -16,6 +17,7 @@ describe("config da emissão", () => {
       soCobrancas: [],
       aPartirDe: null,
       enviarEmailAoCliente: true,
+      emailsDeAviso: [],
     });
     // 3 = SEAHUB COWORKING e 4 = SEATECH (conferido na configuração do Conexa).
     expect(antiga.empresas).toEqual({ "3": "SEAHUB", "4": "SEATECH" });
@@ -69,6 +71,22 @@ describe("formulário da emissão", () => {
 
   it("dia de corte inválido é recusado", () => {
     expect(form({ aPartirDe: "amanhã" })).toHaveProperty("erro");
+  });
+
+  it("grava os e-mails de aviso, em minúsculas e sem repetir", () => {
+    const r = form({ emailsDeAviso: "Suporte@Seahubcoworking.com.br, fin@seahubcoworking.com.br;suporte@seahubcoworking.com.br" }) as {
+      config: typeof atual;
+    };
+    expect(r.config.emissao.emailsDeAviso).toEqual(["suporte@seahubcoworking.com.br", "fin@seahubcoworking.com.br"]);
+    expect(lerEmailsDeAviso("")).toEqual({ emails: [] });
+  });
+
+  it("⚠ um endereço inválido recusa tudo, dizendo qual; mais de 5 também", () => {
+    expect(lerEmailsDeAviso("ok@x.com semarroba")).toEqual({
+      erro: 'E-mails de aviso: "semarroba" não é um e-mail válido.',
+    });
+    expect(lerEmailsDeAviso("a@x.com b@x.com c@x.com d@x.com e@x.com f@x.com")).toHaveProperty("erro");
+    expect(form({ emailsDeAviso: "semarroba" })).toHaveProperty("erro");
   });
 
   it("salvar a tela não apaga as empresas nem as regras já gravadas", () => {

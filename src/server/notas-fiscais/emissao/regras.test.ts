@@ -6,6 +6,7 @@ import {
   dataDeCompetencia,
   LIMITES,
   lerTomador,
+  montarAviso,
   montarCorpo,
   motivoDaRecusa,
   podeEmitir,
@@ -255,6 +256,50 @@ describe("competência", () => {
   it("sem competência, ou com lixo, não manda data", () => {
     expect(dataDeCompetencia(null, "2026-10-07")).toBeUndefined();
     expect(dataDeCompetencia("lixo", "2026-10-07")).toBeUndefined();
+  });
+});
+
+describe("texto do aviso à equipe", () => {
+  const rejeitada = {
+    chave: "conexa-900-030302",
+    cobrancaId: 900,
+    empresa: "SEATECH",
+    codigo: "03.03.02",
+    valorCentavos: 14900,
+    situacao: "REJEITADA" as const,
+    motivo: "E0240: O CEP do tomador não existe.",
+  };
+
+  it("uma nota: assunto no singular, cobrança, valor, código, motivo e o que fazer", () => {
+    const a = montarAviso([rejeitada]);
+    expect(a.assunto).toBe("NFS-e: 1 nota precisa de atenção");
+    expect(a.texto).toMatch(/Cobrança #900 \(SEATECH\) — R\$\s?149,00, código 03\.03\.02/);
+    expect(a.texto).toContain("Situação: rejeitada pela prefeitura");
+    expect(a.texto).toContain("Motivo: E0240: O CEP do tomador não existe.");
+    expect(a.texto).toMatch(/reemita pela tela da Spedy/);
+  });
+
+  it("várias notas vão num e-mail só, e cada causa pede uma providência diferente", () => {
+    const a = montarAviso([
+      rejeitada,
+      { ...rejeitada, cobrancaId: 901, situacao: "FALHOU", motivo: "Cadastro do cliente: o CEP 59056000 do cadastro não existe" },
+      { ...rejeitada, cobrancaId: 902, situacao: "FALHOU", motivo: "Spedy respondeu 400: dado inválido" },
+    ]);
+    expect(a.assunto).toBe("NFS-e: 3 notas precisam de atenção");
+    expect(a.texto).toMatch(/Corrija o cadastro do cliente no Conexa/);
+    expect(a.texto).toMatch(/Precisa de ajuda técnica/);
+  });
+
+  it("⚠ não leva nome nem documento do cliente", () => {
+    const a = montarAviso([rejeitada]);
+    expect(a.texto + a.html).not.toMatch(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/);
+  });
+
+  it("⚠ o motivo vem da prefeitura: o HTML escapa o que ela escrever", () => {
+    const a = montarAviso([{ ...rejeitada, motivo: '<img src=x onerror="alert(1)"> & mais' }]);
+    expect(a.html).not.toContain("<img");
+    expect(a.html).toContain("&lt;img");
+    expect(a.html).toContain("&amp; mais");
   });
 });
 

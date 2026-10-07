@@ -1743,9 +1743,18 @@ a tela na aba "Notas fiscais" de Integrações.
     recebe a nota por e-mail da Spedy; padrão `enviarEmailAoCliente: true`).
   - **Acompanha mesmo com a emissão desligada**: nota que já saiu precisa terminar
     de ser lida (ler não escreve na Spedy). Rejeitada guarda o motivo da prefeitura
-    e aparece no topo da lista "Notas emitidas". ⚠ **O aviso por e-mail ao suporte
-    ainda NÃO existe**: o projeto não tem provedor de e-mail. Hoje o único aviso é
-    a lista na tela.
+    e aparece no topo da lista "Notas emitidas".
+  - **O aviso à equipe é por e-mail, pela Resend** (`integrations/resend/client.ts`,
+    API HTTP, sem biblioteca de SMTP). A chave e o remetente são variáveis do
+    SERVIDOR (`RESEND_API_KEY`, `EMAIL_REMETENTE`, ex. `Seahub <notas@…>`, com o
+    domínio verificado na Resend); os destinatários (até 5) ficam na tela, em
+    `emissao.emailsDeAviso`. Leva rejeitada pela prefeitura, recusa da Spedy e
+    cadastro de cliente parado, **num e-mail só por rodada** (`montarAviso`), sem
+    nome nem documento do cliente — só a cobrança — e com o HTML escapado, porque
+    o motivo vem da prefeitura. ⚠ **Só marca como avisada se a Resend ACEITOU**:
+    aviso que não saiu fica pendente e volta na rodada seguinte; problema fiscal
+    que ninguém leu é pior que e-mail repetido. A `Idempotency-Key` impede o
+    duplicado depois de um timeout. Vale mesmo com a emissão desligada.
 - **Uma nota por código**: uma NFS-e carrega um código só. A chave da nota
   (`conexa-<cobrança>-<código>`) será o `integrationId` da Spedy, idempotente.
 - **Regras por cliente na tela**: "antes" (nota na GERAÇÃO da cobrança) e
@@ -1763,7 +1772,7 @@ a tela na aba "Notas fiscais" de Integrações.
 - **A lista de categorias da tela fica 1 h em memória e tem prazo de 6 s**: a
   página de Integrações renderiza todas as abas, e um Conexa lento não pode
   segurá-la.
-- **O que falta para emitir de verdade**: (1) a chave de cada empresa como variável do servidor; (2) a primeira nota REAL, numa cobrança liberada e pequena, com o n8n sem emitir essa; (3) a porta do aviso do Conexa (token no path, relendo a cobrança pela API) — hoje a rodada de 30 min é quem acha a cobrança, com atraso de até 30 min; (4) o webhook assinado da Spedy MAIS a releitura periódica que já existe (a Spedy desliga o webhook depois de 5 falhas e não reenvia); (5) o aviso de rejeição por e-mail, que precisa de um provedor; (6) o corte: desligar os dois fluxos do n8n e apontar o Conexa no mesmo momento, com a data de quitação separando o que é de quem.
+- **O que falta para emitir de verdade**: (1) a chave de cada empresa como variável do servidor; (2) a primeira nota REAL, numa cobrança liberada e pequena, com o n8n sem emitir essa; (3) a porta do aviso do Conexa (token no path, relendo a cobrança pela API) — hoje a rodada de 30 min é quem acha a cobrança, com atraso de até 30 min; (4) o webhook assinado da Spedy MAIS a releitura periódica que já existe (a Spedy desliga o webhook depois de 5 falhas e não reenvia); (5) a Resend no servidor (`RESEND_API_KEY` e `EMAIL_REMETENTE`) e os destinatários na tela; (6) o corte: desligar os dois fluxos do n8n e apontar o Conexa no mesmo momento, com a data de quitação separando o que é de quem.
 
 ### Conexa: armadilhas da API v2
 

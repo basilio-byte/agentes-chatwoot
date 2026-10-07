@@ -1,5 +1,6 @@
 import type { SituacaoCobrancaFiscal, SituacaoDaNota } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
+import { configuracaoDeEmail } from "@/server/integrations/resend/client";
 import { chaveDaSpedy } from "@/server/integrations/spedy/client";
 import { EMPRESAS_DA_SPEDY, type EmpresaDaSpedy } from "./config";
 
@@ -82,6 +83,11 @@ export async function resumoDasNotas(): Promise<{
   const vistos = new Set<string>();
   const ultimas = [...pedemPessoa, ...recentes].filter((n) => !vistos.has(n.id) && vistos.add(n.id));
   return { contagem, ultimas: ultimas.slice(0, 20) };
+}
+
+/** Só SE a Resend (chave e remetente) está no servidor. O valor nunca sai daqui. */
+export function emailNoServidor(): boolean {
+  return configuracaoDeEmail() !== null;
 }
 
 /** Só SE a chave de cada empresa está no servidor. O valor nunca sai daqui. */

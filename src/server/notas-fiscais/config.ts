@@ -59,6 +59,12 @@ export const emissaoSchema = z.object({
    * tirar do cliente a nota que ele já recebe.
    */
   enviarEmailAoCliente: z.boolean().default(true),
+  /**
+   * Quem recebe o aviso quando uma nota é REJEITADA pela prefeitura, é recusada
+   * pela Spedy ou fica parada por cadastro do cliente. Sem ninguém aqui, o aviso
+   * não sai e o problema só aparece na lista da tela.
+   */
+  emailsDeAviso: z.array(z.string().email().max(120)).max(5).default([]),
 });
 
 export type EmissaoConfig = z.infer<typeof emissaoSchema>;
@@ -133,6 +139,7 @@ export const notasFiscaisConfigSchema = z.object({
     soCobrancas: [],
     aPartirDe: null,
     enviarEmailAoCliente: true,
+    emailsDeAviso: [],
   }),
 });
 
@@ -209,6 +216,20 @@ export function lerCobrancasLiberadas(
     if (!ids.includes(id)) ids.push(id);
   }
   return { ids };
+}
+
+/** E-mails de aviso, separados por espaço, vírgula, ponto e vírgula ou linha. */
+export function lerEmailsDeAviso(texto: string): { emails: string[] } | { erro: string } {
+  const emails: string[] = [];
+  for (const parte of texto.split(/[\s,;]+/).filter(Boolean)) {
+    if (!z.string().email().safeParse(parte).success) {
+      return { erro: `E-mails de aviso: "${parte.slice(0, 40)}" não é um e-mail válido.` };
+    }
+    const normal = parte.toLowerCase();
+    if (!emails.includes(normal)) emails.push(normal);
+  }
+  if (emails.length > 5) return { erro: "E-mails de aviso: no máximo 5 destinatários." };
+  return { emails };
 }
 
 export type RegraDeProduto = NotasFiscaisConfig["produtos"][number]["regra"];
@@ -297,7 +318,11 @@ export function configDoFormulario(
   const cobrancas = lerCobrancasLiberadas(campos.soCobrancas ?? "");
   if ("erro" in cobrancas) return cobrancas;
 
+  const emails = lerEmailsDeAviso(campos.emailsDeAviso ?? "");
+  if ("erro" in emails) return emails;
+
   const emissao = {
+    emailsDeAviso: emails.emails,
     ligada: campos.emissaoLigada === "on",
     soCobrancas: cobrancas.ids,
     aPartirDe: valor("aPartirDe") || null,
