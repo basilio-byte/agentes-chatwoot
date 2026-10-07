@@ -1679,6 +1679,15 @@ a tela na aba "Notas fiscais" de Integrações.
   cobrança conta com ele. ⚠ A regra só vale para item que existe no cadastro de
   produtos: o "produto" da reserva de sala é o id da SALA, e id de sala pode
   coincidir com id de produto.
+- **A nota sai pelo VALOR PAGO, sempre, e a competência é o mês da
+  cobrança** (respostas do Laercio, 06/10/2026: *"Valor pago sempre"* e
+  *"Competência é a data do mês que a cobrança se refere"*). Com juros e multa o
+  cliente pagou mais que o serviço, e a diferença entra na nota. ⚠ **Só quando há
+  UMA nota e nenhum item ficou fora dela**: com dois códigos, ou com bebida fora
+  da nota, não existe rateio honesto — qualquer divisão seria palpite sobre onde
+  o juro incidiu —, e a cobrança vai para "conferir" com o motivo escrito
+  (`pelaValorPago`). A competência (`AAAA-MM`, de `competenceDate`) vai em cada
+  nota; o aviso "competência ≠ pagamento" saiu, porque o desencontro é o normal.
 - **Uma nota por código**: uma NFS-e carrega um código só. A chave da nota
   (`conexa-<cobrança>-<código>`) será o `integrationId` da Spedy, idempotente.
 - **Regras por cliente na tela**: "antes" (nota na GERAÇÃO da cobrança) e

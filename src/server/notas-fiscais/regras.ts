@@ -251,6 +251,8 @@ export type NotaPlanejada = {
   descricao: string;
   chave: string;
   vendas: number[];
+  /** O mês a que a cobrança se refere (AAAA-MM) — não o do pagamento (Laercio, 06/10/2026). */
+  competencia: string | null;
 };
 
 export type Situacao = "PRONTA" | "AGUARDANDO_CLASSIFICACAO" | "CONFERIR" | "FORA_DA_REGRA";
@@ -263,13 +265,11 @@ export type Decisao = {
   observacoes: string[];
 };
 
-const mesAno = (d: string) => `${d.slice(5, 7)}/${d.slice(0, 4)}`;
-const diaMesAno = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
-
 /** Uma nota por código de serviço: uma NFS-e carrega um código só. */
 export function montarNotas(
   cobrancaId: number,
   itens: (ItemClassificado & { codigo: string })[],
+  competencia: string | null = null,
 ): NotaPlanejada[] {
   const porCodigo = new Map<string, (ItemClassificado & { codigo: string })[]>();
   for (const item of itens) {
@@ -285,6 +285,7 @@ export function montarNotas(
       descricao: descricaoDaNota(grupo),
       chave: chaveDaNota(cobrancaId, codigo),
       vendas: grupo.map((i) => i.id),
+      competencia,
     }));
 }
 
@@ -388,7 +389,7 @@ export function decidir(
   );
   const foraDaNota = destinos.filter((d) => d.destino?.tipo === "fora").map((d) => d.item);
   const aConferir = destinos.filter((d) => d.destino?.tipo === "conferir").map((d) => d.item);
-  const notas = montarNotas(cobranca.id, comCodigo);
+  const notas = montarNotas(cobranca.id, comCodigo, mesDaCompetencia(cobranca.competencia));
 
   for (const item of foraDaNota) {
     observacoes.push(`fora da nota (sem CNAE): ${item.nome}, ${formatarReais(item.valorCentavos)}`);
@@ -421,6 +422,10 @@ export function decidir(
       observacoes,
     };
   }
+  const ajuste = pelaValorPago(notas, cobranca, foraDaNota.length > 0);
+  if (ajuste.motivo) {
+    return { situacao: "CONFERIR", motivo: ajuste.motivo, notas, observacoes };
+  }
   if (cobranca.retemIss) {
     return {
       situacao: "CONFERIR",
@@ -429,7 +434,40 @@ export function decidir(
       observacoes,
     };
   }
-  return { situacao: "PRONTA", motivo: null, notas, observacoes };
+  return { situacao: "PRONTA", motivo: null, notas: ajuste.notas, observacoes };
+}
+
+/** AAAA-MM de uma data AAAA-MM-DD, ou `null`. */
+export function mesDaCompetencia(data: string | null): string | null {
+  return data && /^\d{4}-\d{2}/.test(data) ? data.slice(0, 7) : null;
+}
+
+/**
+ * A nota sai pelo VALOR PAGO, sempre (Laercio, 06/10/2026): com juros e multa o
+ * cliente pagou mais que o serviço, e a nota acompanha o pago.
+ *
+ * ⚠ A diferença só vai para a nota quando há UMA nota e nenhum item ficou fora
+ * dela: com dois códigos, ou com bebida fora da nota, não existe jeito honesto
+ * de ratear — qualquer divisão seria palpite sobre o que o juro incidiu. Esses
+ * casos vão para conferência, com o motivo escrito.
+ */
+export function pelaValorPago(
+  notas: NotaPlanejada[],
+  cobranca: Pick<CobrancaLida, "valorCentavos" | "valorPagoCentavos">,
+  haItemFora: boolean,
+): { notas: NotaPlanejada[]; motivo: string | null } {
+  const pago = cobranca.valorPagoCentavos;
+  if (pago === null || pago <= 0 || pago === cobranca.valorCentavos) return { notas, motivo: null };
+  if (notas.length !== 1 || haItemFora) {
+    return {
+      notas,
+      motivo: `paga ${formatarReais(pago)} sobre ${formatarReais(cobranca.valorCentavos)}, e a diferença não dá para ratear ${notas.length > 1 ? "entre as notas" : "com itens fora da nota"}`,
+    };
+  }
+  return {
+    notas: [{ ...notas[0], valorCentavos: notas[0].valorCentavos + (pago - cobranca.valorCentavos) }],
+    motivo: null,
+  };
 }
 
 /** Avisos que não mudam a decisão, mas que quem confere precisa ver. */
@@ -438,16 +476,7 @@ function observar(cobranca: CobrancaLida, itens: ItemClassificado[]): string[] {
   const pago = cobranca.valorPagoCentavos;
   if (pago !== null && pago !== cobranca.valorCentavos) {
     avisos.push(
-      `paga ${formatarReais(pago)} sobre ${formatarReais(cobranca.valorCentavos)} (${pago > cobranca.valorCentavos ? "juros/multa" : "desconto"})`,
-    );
-  }
-  if (
-    cobranca.competencia &&
-    cobranca.quitadaEm &&
-    cobranca.competencia.slice(0, 7) !== cobranca.quitadaEm.slice(0, 7)
-  ) {
-    avisos.push(
-      `competência ${mesAno(cobranca.competencia)}, paga em ${diaMesAno(cobranca.quitadaEm)}`,
+      `paga ${formatarReais(pago)} sobre ${formatarReais(cobranca.valorCentavos)} (${pago > cobranca.valorCentavos ? "juros/multa" : "desconto"}) — a nota sai pelo valor pago`,
     );
   }
   const zerados = itens.filter((i) => i.valorCentavos <= 0).length;

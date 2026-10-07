@@ -7,6 +7,7 @@ import {
   codigoDoItem,
   decidir,
   decisaoDeFora,
+  mesDaCompetencia,
   descricaoDaNota,
   desdeQuando,
   ehNomeDeSala,
@@ -45,8 +46,12 @@ const cobrancaBruta = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+// Quem muda só o `amount` quer uma cobrança paga POR INTEIRO: o valor pago
+// acompanha, a menos que o teste diga o contrário (juros, desconto).
 const cobranca = (extra: Record<string, unknown> = {}): CobrancaLida =>
-  lerCobranca(cobrancaBruta(extra))!;
+  lerCobranca(
+    cobrancaBruta("amount" in extra && !("paidAmount" in extra) ? { paidAmount: extra.amount, ...extra } : extra),
+  )!;
 
 const item = (parcial: Partial<ItemClassificado>): ItemClassificado => ({
   id: 1,
@@ -164,6 +169,7 @@ describe("decisão", () => {
         descricao: "EV - Endereço Fiscal Batial Mensal",
         chave: "conexa-900-030302",
         vendas: [1],
+        competencia: "2026-10",
       },
     ]);
     expect(d.observacoes).toContain("1 item(ns) de R$ 0 (descontados do pacote) fora da nota");
@@ -216,16 +222,68 @@ describe("decisão", () => {
     expect(d.motivo).toMatch(/retém ISS/);
   });
 
-  it("juros, competência em outro mês e itens zerados viram observação, sem mudar a decisão", () => {
-    const d = decidir(
-      cobranca({ amount: 149, currentAmount: 152.08, paidAmount: 152.08, competenceDate: "2026-09-01" }),
-      [item({})],
-      config(),
-      "quitada",
-    );
-    expect(d.situacao).toBe("PRONTA");
-    expect(d.observacoes[0]).toMatch(/paga R\$\s?152,08 sobre R\$\s?149,00 \(juros\/multa\)/);
-    expect(d.observacoes[1]).toBe("competência 09/2026, paga em 05/10/2026");
+  describe("valor pago e competência (respostas do Laercio, 06/10/2026)", () => {
+    it("⚠ a nota sai pelo VALOR PAGO: o juro entra na nota, e a observação diz isso", () => {
+      const d = decidir(
+        cobranca({ amount: 149, currentAmount: 152.08, paidAmount: 152.08 }),
+        [item({})],
+        config(),
+        "quitada",
+      );
+      expect(d.situacao).toBe("PRONTA");
+      expect(d.notas[0].valorCentavos).toBe(15208);
+      expect(d.observacoes[0]).toMatch(/paga R\$\s?152,08 sobre R\$\s?149,00 \(juros\/multa\) — a nota sai pelo valor pago/);
+    });
+
+    it("pago igual ao cobrado não muda nada", () => {
+      const d = decidir(cobranca({ amount: 149, paidAmount: 149 }), [item({})], config(), "quitada");
+      expect(d.notas[0].valorCentavos).toBe(14900);
+      expect(d.observacoes.some((o) => o.startsWith("paga"))).toBe(false);
+    });
+
+    it("⚠ com DOIS códigos o juro não é rateado: vai para conferência, com o motivo", () => {
+      const d = decidir(
+        cobranca({ amount: 2158, paidAmount: 2200 }),
+        [
+          item({ id: 1, nome: "Contrato: Sala 05 - Ayrton Senna", categoriaId: 3, valorCentavos: 215000 }),
+          item({ id: 2, nome: "Seabox Básico - Encomenda", categoriaId: 23, valorCentavos: 800 }),
+        ],
+        config(),
+        "quitada",
+      );
+      expect(d.situacao).toBe("CONFERIR");
+      expect(d.motivo).toMatch(/não dá para ratear entre as notas/);
+      expect(d.notas.map((n) => n.valorCentavos)).toEqual([215000, 800]);
+    });
+
+    it("⚠ com item fora da nota (bebida) o juro também não é atribuído à nota", () => {
+      const c = config({ produtos: [{ produtoId: 2799, regra: "sem nota", observacao: "" }] });
+      const d = decidir(
+        cobranca({ amount: 160, paidAmount: 165 }),
+        [item({}), item({ id: 2, produtoId: 2799, nome: "Red Bull", valorCentavos: 1100 })],
+        c,
+        "quitada",
+      );
+      expect(d.situacao).toBe("CONFERIR");
+      expect(d.motivo).toMatch(/não dá para ratear com itens fora da nota/);
+    });
+
+    it("a competência é o MÊS DA COBRANÇA, não o do pagamento — e não gera mais aviso", () => {
+      const d = decidir(
+        cobranca({ competenceDate: "2026-09-01", paymentDate: "2026-10-05" }),
+        [item({})],
+        config(),
+        "quitada",
+      );
+      expect(d.notas[0].competencia).toBe("2026-09");
+      expect(d.observacoes.some((o) => o.includes("competência"))).toBe(false);
+    });
+
+    it("sem data de competência a nota fica sem mês, nunca com um palpite", () => {
+      expect(mesDaCompetencia(null)).toBeNull();
+      expect(mesDaCompetencia("lixo")).toBeNull();
+      expect(mesDaCompetencia("2026-09-01")).toBe("2026-09");
+    });
   });
 
   describe("regras por cliente (no lugar dos ids escritos nos If do n8n)", () => {
