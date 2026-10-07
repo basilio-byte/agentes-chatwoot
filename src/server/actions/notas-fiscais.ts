@@ -63,6 +63,8 @@ export async function salvarConfigNotasFiscais(
         codigoReservaDeSala: lido.config.codigoReservaDeSala,
         regrasPorCliente: lido.config.clientes.length,
         regrasPorProduto: lido.config.produtos,
+        // Quem ligou, ou mudou, a emissão de nota fiscal REAL fica registrado.
+        emissao: lido.config.emissao,
       },
     },
   });
@@ -74,10 +76,14 @@ export async function salvarConfigNotasFiscais(
   const efeito = mudou
     ? ` ${refeitas.mudadas} cobrança(s) já vista(s) refeita(s) com a tabela nova${refeitas.apagadas ? `, e ${refeitas.apagadas} volta(m) a ser lida(s) na próxima conferência` : ""}.`
     : "";
-  return {
-    ok:
-      (ligada
-        ? "Modo sombra ligado. A primeira conferência acontece em até 1 minuto e depois a cada 30 minutos. Nenhuma nota é emitida."
-        : "Desligado. Nada é lido do Conexa.") + efeito,
-  };
+  const emissao = lido.config.emissao;
+  const quemEmite = emissao.soCobrancas.length
+    ? `só as cobranças ${emissao.soCobrancas.join(", ")}`
+    : `o que for pago a partir de ${emissao.aPartirDe}`;
+  const modo = !ligada
+    ? "Desligado. Nada é lido do Conexa."
+    : emissao.ligada
+      ? `Emissão LIGADA: ${quemEmite} vira nota fiscal real na Spedy, a cada 5 minutos. O n8n não pode emitir essas mesmas.`
+      : "Modo sombra ligado. A primeira conferência acontece em até 1 minuto e depois a cada 30 minutos. Nenhuma nota é emitida.";
+  return { ok: modo + efeito };
 }

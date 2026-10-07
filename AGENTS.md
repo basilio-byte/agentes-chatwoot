@@ -1688,6 +1688,64 @@ a tela na aba "Notas fiscais" de Integrações.
   o juro incidiu —, e a cobrança vai para "conferir" com o motivo escrito
   (`pelaValorPago`). A competência (`AAAA-MM`, de `competenceDate`) vai em cada
   nota; o aviso "competência ≠ pagamento" saiu, porque o desencontro é o normal.
+- **A EMISSÃO (incremento 2, 07/10/2026) é outra chave e nasce DESLIGADA.** Módulos
+  em `notas-fiscais/emissao/` (regras puras em `regras.ts`, rodada em `emitir.ts`,
+  consulta de CEP em `cep.ts`) e o cliente em `integrations/spedy/client.ts`.
+  Roda no vigia a cada 5 min. Ligar a integração (sombra) não emite nada: só a
+  chave `emissao.ligada` da tela, e ainda assim só o que passa pelas travas abaixo.
+  - ⚠ **Não existe ambiente de teste na Spedy.** As duas chaves da Seahub abrem só
+    a PRODUÇÃO (o sandbox é conta à parte e dá 401): cada nota é fiscal e gasta
+    número da sequência da empresa. O único ensaio sem efeito é o rascunho
+    (`issue: false`), que não transmite nada nem consome número — e por isso
+    também não prova que o Natal aceita o código.
+  - ⚠ **Três travas, todas pelo lado da cautela** (`podeEmitir`): chave geral ligada;
+    cobrança PRONTA; e **lista de cobranças liberadas OU dia de corte com o n8n**.
+    Sem nenhum dos dois, nada sai (a tela recusa salvar assim). Sem a lista, só
+    emite o pago a partir do corte: o que é mais antigo já teve a nota do n8n, e
+    reemitir seria nota em dobro. A lista liberada é como se faz a primeira nota
+    real, numa cobrança escolhida e pequena.
+  - **A chave da Spedy é variável do SERVIDOR**, `SPEDY_KEY_SEAHUB` e
+    `SPEDY_KEY_SEATECH`, nunca campo de tela nem coluna do banco. Falta a chave =
+    "sem chave": nada é reservado nem enviado. Quem emite por qual empresa é
+    `config.empresas` (unidade 3 do Conexa = SEAHUB COWORKING, 4 = SEATECH,
+    conferido na configuração do Conexa).
+  - ⚠ **O cliente da Spedy NÃO tem cancelar nem apagar**, de propósito, e há teste
+    que trava isso. O `DELETE` da Spedy é "Cancelar NFS-e" (só de nota autorizada,
+    com justificativa), não apaga rascunho: um erro nosso nunca pode cancelar nota
+    fiscal. Quem cancela é uma pessoa, na tela da Spedy. (Em 07/10 tentei apagar
+    por esse verbo, achando que apagava rascunho: a Spedy recusou, 415 e 400.)
+  - **Reserva antes de enviar** (`NotaFiscalEmitida`, `chave` única =
+    `conexa-<cobrança>-<código>` = `integrationId`): duas rodadas ou um reinício
+    não mandam a mesma nota, e a Spedy ainda recusa pelo identificador. **A
+    tentativa é anotada ANTES do envio**: se o processo cai depois do POST, a
+    rodada seguinte sabe que pode ter saído e **procura a nota pelo identificador
+    antes de mandar de novo**.
+  - **Erro de rede, prazo e 5xx = INCERTA, nunca "não saiu".** 4xx = FALHOU (repetir
+    igual dá no mesmo, alguém corrige). 408/429 = "tente depois": volta a ser tentada.
+  - **Cadastro ruim não gasta número.** CEP que não existe, CEP de outra cidade que a
+    do cadastro (a rejeição E0240 de 07/10), documento sem 11/14 dígitos ou nome
+    vazio ficam FALHOU com "Cadastro do cliente: …" e são relidos a cada rodada:
+    corrigiu no Conexa, a nota sai. A consulta de CEP (ViaCEP, também fonte do
+    código IBGE) que FALHA é `desconhecido`, nunca `inexistente`: um serviço
+    público fora do ar não segura nota de cliente.
+  - ⚠ **Limites de texto** (`LIMITES`, em `regras.ts`): o n8n corta o nome do cliente
+    em 80 caracteres (`name` e `legalName`, `.slice(0, 80)`) — o único corte que
+    faz — e aqui também. A Spedy declara rua e bairro 100, número 10, complemento
+    150, CEP 15 e `integrationId` 36. **E-mail grande demais não é cortado**: um
+    e-mail pela metade é outro endereço, então fica de fora. Mudou um limite? É na
+    tabela, e o teste confere que nada a ultrapassa.
+  - **A nota sai com o código de tributação NACIONAL** (`nationalTaxationCode`,
+    `03.03.02` → `030302`): é o campo que o código do Laercio ocupa. Natal usa o
+    emissor nacional e declara usar o item da LC 116 e o código municipal; as
+    notas atuais do n8n saem com esses campos VAZIOS e o NBS padrão, e foram
+    autorizadas. **Se o Natal aceita o `030302` só a primeira emissão real diz.**
+  - **O que o n8n fazia e foi mantido:** `sendEmailToCustomer: true` (o cliente
+    recebe a nota por e-mail da Spedy; padrão `enviarEmailAoCliente: true`).
+  - **Acompanha mesmo com a emissão desligada**: nota que já saiu precisa terminar
+    de ser lida (ler não escreve na Spedy). Rejeitada guarda o motivo da prefeitura
+    e aparece no topo da lista "Notas emitidas". ⚠ **O aviso por e-mail ao suporte
+    ainda NÃO existe**: o projeto não tem provedor de e-mail. Hoje o único aviso é
+    a lista na tela.
 - **Uma nota por código**: uma NFS-e carrega um código só. A chave da nota
   (`conexa-<cobrança>-<código>`) será o `integrationId` da Spedy, idempotente.
 - **Regras por cliente na tela**: "antes" (nota na GERAÇÃO da cobrança) e
@@ -1705,14 +1763,7 @@ a tela na aba "Notas fiscais" de Integrações.
 - **A lista de categorias da tela fica 1 h em memória e tem prazo de 6 s**: a
   página de Integrações renderiza todas as abas, e um Conexa lento não pode
   segurá-la.
-- **O que falta para emitir** (não construído): cliente da Spedy com as duas
-  chaves (SEAHUB e SEATECH), a porta do aviso do Conexa (token no path, relendo
-  a cobrança pela API), acompanhamento da autorização pelo webhook assinado da
-  Spedy MAIS uma releitura periódica (a Spedy desliga o webhook depois de 5
-  falhas e não reenvia), aviso de rejeição, e o modo de conferência com
-  rascunho (`issue: false` gera PDF de prévia sem efeito fiscal). E o corte:
-  desligar o n8n e apontar o Conexa no mesmo momento, com a data de quitação
-  separando o que é de quem.
+- **O que falta para emitir de verdade**: (1) a chave de cada empresa como variável do servidor; (2) a primeira nota REAL, numa cobrança liberada e pequena, com o n8n sem emitir essa; (3) a porta do aviso do Conexa (token no path, relendo a cobrança pela API) — hoje a rodada de 30 min é quem acha a cobrança, com atraso de até 30 min; (4) o webhook assinado da Spedy MAIS a releitura periódica que já existe (a Spedy desliga o webhook depois de 5 falhas e não reenvia); (5) o aviso de rejeição por e-mail, que precisa de um provedor; (6) o corte: desligar os dois fluxos do n8n e apontar o Conexa no mesmo momento, com a data de quitação separando o que é de quem.
 
 ### Conexa: armadilhas da API v2
 

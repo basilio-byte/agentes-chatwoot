@@ -28,7 +28,11 @@ import {
   produtosEmTexto,
 } from "@/server/notas-fiscais/config";
 import { categoriasDoConexa } from "@/server/notas-fiscais/categorias";
-import { resumoDasCobrancas } from "@/server/notas-fiscais/resumo";
+import {
+  chavesDaSpedyNoServidor,
+  resumoDasCobrancas,
+  resumoDasNotas,
+} from "@/server/notas-fiscais/resumo";
 import { formatarReais, type NotaPlanejada } from "@/server/notas-fiscais/regras";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
@@ -279,6 +283,9 @@ export default async function IntegracoesPage({
     },
   });
   const resumoFiscal = await resumoDasCobrancas();
+  const notasEmitidas = await resumoDasNotas();
+  const chavesDaSpedy = chavesDaSpedyNoServidor();
+  const emitindo = !!notasFiscais?.enabled && configNotas.emissao.ligada;
   const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
   const configNps = lerConfigNps(nps?.config);
   // Sem telefone nem nome: a tela é aberta pela equipe inteira.
@@ -1382,7 +1389,9 @@ export default async function IntegracoesPage({
                 <Card className="space-y-3">
                   <div className="flex items-center gap-2">
                     <h2 className="font-medium">Notas fiscais (Spedy)</h2>
-                    {notasFiscais?.enabled ? (
+                    {emitindo ? (
+                      <Badge tone="warning">emitindo</Badge>
+                    ) : notasFiscais?.enabled ? (
                       <Badge tone="accent">modo sombra</Badge>
                     ) : (
                       <Badge>desligado</Badge>
@@ -1396,13 +1405,23 @@ export default async function IntegracoesPage({
                     plano têm no Conexa, pela tabela de baixo.
                   </p>
 
-                  <Aviso tone="warning">
-                    Por enquanto é só o <strong>modo sombra</strong>: o sistema lê as
-                    cobranças pagas no Conexa e registra a nota que emitiria.{" "}
-                    <strong>Nenhuma nota é emitida</strong>, a Spedy não é chamada, e o
-                    n8n continua emitindo como sempre. Serve para conferir, cobrança por
-                    cobrança, se o código e o valor estão certos antes de trocar.
-                  </Aviso>
+                  {emitindo ? (
+                    <Aviso tone="warning">
+                      <strong>A emissão está ligada.</strong> As cobranças prontas e liberadas
+                      (abaixo) viram nota fiscal real na Spedy. A nota sai pelo valor{" "}
+                      <strong>pago</strong>, com o código de tributação da tabela e a competência do
+                      mês da cobrança. Nada é cancelado ou apagado por aqui: isso é feito na tela da
+                      Spedy.
+                    </Aviso>
+                  ) : (
+                    <Aviso tone="warning">
+                      O sistema lê as cobranças pagas no Conexa e registra a nota que emitiria
+                      (<strong>modo sombra</strong>). <strong>Nenhuma nota é emitida</strong>, a
+                      Spedy não é chamada, e o n8n continua emitindo como sempre. Serve para
+                      conferir, cobrança por cobrança, se o código e o valor estão certos antes de
+                      trocar. A emissão tem chave própria, mais abaixo, e nasce desligada.
+                    </Aviso>
+                  )}
 
                   <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
                     <li>
@@ -1444,8 +1463,74 @@ export default async function IntegracoesPage({
                     codigoReservaDeSala={configNotas.codigoReservaDeSala}
                     clientes={clientesEmTexto(configNotas)}
                     produtos={produtosEmTexto(configNotas)}
+                    emissao={{
+                      ligada: configNotas.emissao.ligada,
+                      soCobrancas: configNotas.emissao.soCobrancas.join(" "),
+                      aPartirDe: configNotas.emissao.aPartirDe ?? "",
+                      enviarEmailAoCliente: configNotas.emissao.enviarEmailAoCliente,
+                    }}
+                    chaves={chavesDaSpedy}
                     somenteLeitura={!editavel}
                   />
+                </Card>
+
+                <Card className="space-y-3">
+                  <h3 className="font-medium">Notas emitidas na Spedy</h3>
+                  <p className="text-sm text-muted">
+                    {notasEmitidas.contagem.AUTORIZADA} autorizada(s) · {notasEmitidas.contagem.ENVIADA}{" "}
+                    na fila da prefeitura · {notasEmitidas.contagem.REJEITADA} rejeitada(s) ·{" "}
+                    {notasEmitidas.contagem.FALHOU} com falha · {notasEmitidas.contagem.INCERTA} sem
+                    resposta.
+                  </p>
+                  {notasEmitidas.contagem.REJEITADA + notasEmitidas.contagem.FALHOU > 0 ? (
+                    <Aviso tone="danger">
+                      Há nota que precisa de uma pessoa: rejeitada pela prefeitura ou parada por
+                      cadastro do cliente. O motivo está na linha. O aviso por e-mail ao suporte
+                      ainda não existe — olhe esta lista.
+                    </Aviso>
+                  ) : null}
+                  {notasEmitidas.ultimas.length === 0 ? (
+                    <p className="text-sm text-muted">Nenhuma nota enviada ainda.</p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>Cobrança</th>
+                          <th>Empresa</th>
+                          <th>Código</th>
+                          <th className="text-right">Valor</th>
+                          <th>Situação</th>
+                        </>
+                      }
+                    >
+                      {notasEmitidas.ultimas.map((n) => (
+                        <tr key={n.id} className="align-top">
+                          <td className="whitespace-nowrap tabular-nums">#{n.cobrancaId}</td>
+                          <td className="whitespace-nowrap">{n.empresa}</td>
+                          <td className="whitespace-nowrap tabular-nums">{n.codigo}</td>
+                          <td className="whitespace-nowrap text-right tabular-nums">
+                            {formatarReais(n.valorCentavos)}
+                          </td>
+                          <td>
+                            <Badge
+                              tone={
+                                n.situacao === "AUTORIZADA"
+                                  ? "success"
+                                  : n.situacao === "REJEITADA" || n.situacao === "FALHOU"
+                                    ? "danger"
+                                    : "accent"
+                              }
+                            >
+                              {n.situacao === "AUTORIZADA" && n.numero ? `nº ${n.numero}` : n.situacao.toLowerCase()}
+                            </Badge>
+                            {n.motivo ? (
+                              <span className="mt-1 block max-w-md text-xs text-muted">{n.motivo}</span>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </Tabela>
+                  )}
                 </Card>
 
                 <Card className="space-y-3">

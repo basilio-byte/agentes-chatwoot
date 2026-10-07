@@ -12,6 +12,7 @@ import { conferirJanelas } from "@/server/janela/conferir";
 import { conferirCobrancas } from "@/server/cobranca/conferir";
 import { conferirPresentes } from "@/server/aniversario/conferir";
 import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
+import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -235,6 +236,18 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.acao === "iniciada") logger.info("notas fiscais: conferência iniciada");
     } catch (erro) {
       logger.error({ erro }, "notas fiscais falharam ao iniciar");
+    }
+
+    // Emissão das notas na Spedy: DESLIGADA por padrão (chave própria na tela,
+    // além do liga/desliga da integração). Confere a cada 5 min e não se
+    // sobrepõe; nota que já saiu continua sendo acompanhada mesmo desligada.
+    try {
+      const rodada = await emitirNotasFiscais();
+      if (rodada.enviadas || rodada.falhas || rodada.incertas || rodada.semChave?.length || rodada.erro) {
+        logger.info(rodada, "notas fiscais: emissão");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "notas fiscais: a emissão falhou");
     }
 
     // Só consulta o Conexa enquanto houver pedido de presente esperando, e no

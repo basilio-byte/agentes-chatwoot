@@ -1214,6 +1214,60 @@ model CobrancaFiscal {
   @@index([clienteId])
 }
 
+enum SituacaoDaNota {
+  /// A linha existe e ainda NADA foi à Spedy. É a trava contra nota em dobro:
+  /// a chave única nasce aqui, antes de qualquer envio.
+  RESERVADA
+  /// A Spedy aceitou e enfileirou. Falta a prefeitura autorizar ou recusar.
+  ENVIADA
+  AUTORIZADA
+  /// A prefeitura recusou. O motivo vem dela e precisa chegar a uma pessoa.
+  REJEITADA
+  /// A Spedy recusou o pedido (dado inválido). Repetir sem corrigir dá no mesmo.
+  FALHOU
+  /// O envio caiu no meio (timeout, 5xx): pode ter saído ou não. A rodada
+  /// seguinte procura a nota pelo identificador antes de mandar de novo.
+  INCERTA
+  /// Cancelada na prefeitura por uma pessoa.
+  CANCELADA
+}
+
+/// Uma NFS-e emitida pela Spedy a partir de uma cobrança do Conexa (07/10/2026).
+/// Uma linha por nota — uma cobrança com dois códigos de serviço gera duas.
+///
+/// `chave` é única e é o `integrationId` que vai à Spedy: o banco e a Spedy
+/// recusam a mesma nota duas vezes, cada um do seu lado.
+model NotaFiscalEmitida {
+  id            String          @id @default(cuid())
+  /// `conexa-<cobrança>-<código sem pontos>`, no máximo 36 caracteres.
+  chave         String          @unique
+  cobrancaId    Int
+  /// SEAHUB ou SEATECH: de qual empresa na Spedy a nota sai.
+  empresa       String
+  /// Código de tributação nacional, no formato 03.03.02.
+  codigo        String
+  valorCentavos Int
+  /// AAAA-MM: o mês a que a cobrança se refere.
+  competencia   String?
+  situacao      SituacaoDaNota
+  /// Id da nota na Spedy, quando ela aceitou.
+  spedyId       String?
+  /// Número da NFS-e, depois de autorizada.
+  numero        Int?
+  /// O que a Spedy ou a prefeitura disseram, quando recusaram.
+  motivo        String?         @db.Text
+  tentativas    Int             @default(0)
+  enviadaEm     DateTime?
+  verificadaEm  DateTime?
+  /// Quando a recusa foi levada a uma pessoa.
+  avisadaEm     DateTime?
+  criadaEm      DateTime        @default(now())
+  atualizadaEm  DateTime        @updatedAt
+
+  @@index([situacao, atualizadaEm])
+  @@index([cobrancaId])
+}
+
 enum TipoDeAvisoDeSaldo {
   /// Saldo abaixo do limite configurado.
   BAIXO

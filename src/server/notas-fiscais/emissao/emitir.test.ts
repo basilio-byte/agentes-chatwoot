@@ -1,0 +1,245 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/db", () => ({ db: {} }));
+
+import { SituacaoDaNota } from "@/generated/prisma/enums";
+import { SpedyApiError, SpedyRedeError, type CorpoDeNota, type NotaDaSpedy } from "@/server/integrations/spedy/client";
+import {
+  acompanharNotas,
+  enviarNota,
+  type Dependencias,
+  type LinhaDaNota,
+  type Repositorio,
+} from "./emitir";
+import type { CepLido, Tomador } from "./regras";
+
+const NOTA = {
+  chave: "conexa-900-030302",
+  codigo: "03.03.02",
+  valorCentavos: 14900,
+  descricao: "Reserva de sala",
+  competencia: "2026-10",
+  vendas: [1],
+};
+
+const TOMADOR: Tomador = {
+  nome: "Maria da Silva",
+  documento: "04578999483",
+  email: "maria@exemplo.com",
+  telefone: null,
+  cep: "59056000",
+  rua: "Rua A",
+  numero: "10",
+  bairro: "Centro",
+  complemento: "",
+  cidade: "Natal",
+  uf: "RN",
+};
+const CEP_OK: CepLido = { estado: "ok", ibge: 2408102, cidade: "Natal", uf: "RN" };
+
+function repositorioEmMemoria() {
+  const linhas = new Map<string, LinhaDaNota>();
+  const repo: Repositorio = {
+    async obter(chave) {
+      return linhas.get(chave) ? { ...linhas.get(chave)! } : null;
+    },
+    async criar(l) {
+      if (linhas.has(l.chave)) return false;
+      linhas.set(l.chave, { ...l, spedyId: null, numero: null, motivo: null, tentativas: 0, enviadaEm: null });
+      return true;
+    },
+    async atualizar(chave, dados) {
+      linhas.set(chave, { ...linhas.get(chave)!, ...dados });
+    },
+    async aAcompanhar() {
+      return [...linhas.values()].filter(
+        (l) => l.situacao === SituacaoDaNota.ENVIADA || l.situacao === SituacaoDaNota.INCERTA,
+      );
+    },
+  };
+  return { repo, linhas };
+}
+
+function montar(extra: Partial<Dependencias> = {}) {
+  const { repo, linhas } = repositorioEmMemoria();
+  const spedy = {
+    criarNota: vi.fn<(c: CorpoDeNota) => Promise<NotaDaSpedy>>(async (c) => ({
+      id: "spedy-1",
+      integrationId: c.integrationId,
+      status: "enqueued",
+      number: null,
+      processingDetail: null,
+    })),
+    obterNota: vi.fn<(id: string) => Promise<NotaDaSpedy>>(),
+    buscarPorIntegrationId: vi.fn<(id: string) => Promise<NotaDaSpedy | null>>(async () => null),
+  };
+  const dep: Dependencias = {
+    repo,
+    spedy: () => spedy,
+    tomador: async () => TOMADOR,
+    cep: async () => CEP_OK,
+    agora: () => new Date("2026-10-07T15:00:00Z"),
+    ...extra,
+  };
+  return { dep, spedy, linhas };
+}
+
+const args = { nota: NOTA, cobrancaId: 900, clienteId: 77, empresa: "SEATECH", enviarEmailAoCliente: true };
+
+describe("enviar a nota", () => {
+  let ctx: ReturnType<typeof montar>;
+  beforeEach(() => {
+    ctx = montar();
+  });
+
+  it("reserva, manda e guarda o que a Spedy respondeu", async () => {
+    expect(await enviarNota(ctx.dep, args)).toBe("enviada");
+    const l = ctx.linhas.get(NOTA.chave)!;
+    expect(l).toMatchObject({ situacao: "ENVIADA", spedyId: "spedy-1", tentativas: 1 });
+    const corpo = ctx.spedy.criarNota.mock.calls[0][0];
+    expect(corpo).toMatchObject({
+      integrationId: "conexa-900-030302",
+      nationalTaxationCode: "030302",
+      issue: true,
+      total: { invoiceAmount: 149 },
+    });
+  });
+
+  it("⚠ a mesma nota NUNCA é enviada duas vezes", async () => {
+    await enviarNota(ctx.dep, args);
+    expect(await enviarNota(ctx.dep, args)).toBe("ja existe");
+    expect(await enviarNota(ctx.dep, args)).toBe("ja existe");
+    expect(ctx.spedy.criarNota).toHaveBeenCalledTimes(1);
+  });
+
+  it("⚠ a tentativa é anotada ANTES de o envio sair", async () => {
+    let visto: LinhaDaNota | undefined;
+    ctx.spedy.criarNota.mockImplementation(async (c) => {
+      visto = { ...ctx.linhas.get(NOTA.chave)! };
+      return { id: "x", integrationId: c.integrationId, status: "enqueued", number: null, processingDetail: null };
+    });
+    await enviarNota(ctx.dep, args);
+    expect(visto?.tentativas).toBe(1);
+    expect(visto?.enviadaEm).not.toBeNull();
+  });
+
+  it("⚠ recusa da Spedy (4xx) é FALHOU e não é repetida sozinha", async () => {
+    ctx.spedy.criarNota.mockRejectedValue(new SpedyApiError(400, "Spedy respondeu 400: dado inválido"));
+    expect(await enviarNota(ctx.dep, args)).toBe("falhou");
+    expect(ctx.linhas.get(NOTA.chave)).toMatchObject({ situacao: "FALHOU", motivo: expect.stringContaining("dado inválido") });
+    expect(await enviarNota(ctx.dep, args)).toBe("ja existe");
+    expect(ctx.spedy.criarNota).toHaveBeenCalledTimes(1);
+  });
+
+  it("⚠ erro de rede é INCERTA, e a rodada seguinte procura a nota ANTES de mandar de novo", async () => {
+    ctx.spedy.criarNota.mockRejectedValueOnce(new SpedyRedeError("timeout"));
+    expect(await enviarNota(ctx.dep, args)).toBe("incerta");
+    expect(ctx.linhas.get(NOTA.chave)?.situacao).toBe("INCERTA");
+
+    // A nota tinha saído: a procura acha e NÃO manda de novo.
+    ctx.spedy.buscarPorIntegrationId.mockResolvedValueOnce({
+      id: "spedy-9",
+      integrationId: NOTA.chave,
+      status: "enqueued",
+      number: null,
+      processingDetail: null,
+    });
+    expect(await enviarNota(ctx.dep, args)).toBe("enviada");
+    expect(ctx.spedy.criarNota).toHaveBeenCalledTimes(1);
+    expect(ctx.linhas.get(NOTA.chave)).toMatchObject({ situacao: "ENVIADA", spedyId: "spedy-9" });
+  });
+
+  it("INCERTA que a Spedy não conhece sai de verdade na rodada seguinte", async () => {
+    ctx.spedy.criarNota.mockRejectedValueOnce(new SpedyApiError(503, "Spedy respondeu 503"));
+    expect(await enviarNota(ctx.dep, args)).toBe("incerta");
+    expect(await enviarNota(ctx.dep, args)).toBe("enviada");
+    expect(ctx.spedy.criarNota).toHaveBeenCalledTimes(2);
+  });
+
+  it("429 é 'tente depois': não saiu, e volta a ser tentada", async () => {
+    ctx.spedy.criarNota.mockRejectedValueOnce(new SpedyApiError(429, "Spedy respondeu 429"));
+    expect(await enviarNota(ctx.dep, args)).toBe("adiada");
+    expect(ctx.linhas.get(NOTA.chave)?.situacao).toBe("RESERVADA");
+    expect(await enviarNota(ctx.dep, args)).toBe("enviada");
+  });
+
+  it("⚠ cadastro ruim NÃO chama a Spedy nem gasta número, e a nota sai quando o cadastro é corrigido", async () => {
+    let cep: CepLido = { estado: "inexistente" };
+    const c = montar({ cep: async () => cep });
+    expect(await enviarNota(c.dep, args)).toBe("falhou");
+    expect(c.linhas.get(NOTA.chave)).toMatchObject({
+      situacao: "FALHOU",
+      motivo: expect.stringMatching(/^Cadastro do cliente: o CEP 59056000 do cadastro não existe/),
+    });
+    expect(c.spedy.criarNota).not.toHaveBeenCalled();
+
+    cep = CEP_OK; // alguém corrigiu o CEP no Conexa
+    expect(await enviarNota(c.dep, args)).toBe("enviada");
+    expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
+  });
+
+  it("sem a chave da empresa no servidor: não reserva nada e diz isso", async () => {
+    const c = montar({ spedy: () => null });
+    expect(await enviarNota(c.dep, args)).toBe("sem chave");
+    expect(c.linhas.size).toBe(0);
+  });
+
+  it("não conseguiu ler o cliente no Conexa: adia, sem reservar e sem acusar o cadastro", async () => {
+    const c = montar({ tomador: async () => null });
+    expect(await enviarNota(c.dep, args)).toBe("adiada");
+    expect(c.linhas.size).toBe(0);
+    expect(c.spedy.criarNota).not.toHaveBeenCalled();
+  });
+
+  it("a Spedy já devolver 'authorized' não precisa esperar", async () => {
+    ctx.spedy.criarNota.mockResolvedValueOnce({
+      id: "s",
+      integrationId: NOTA.chave,
+      status: "authorized",
+      number: 42641,
+      processingDetail: null,
+    });
+    await enviarNota(ctx.dep, args);
+    expect(ctx.linhas.get(NOTA.chave)).toMatchObject({ situacao: "AUTORIZADA", numero: 42641 });
+  });
+});
+
+describe("acompanhar as notas enviadas", () => {
+  it("autorizada ganha o número; rejeitada guarda o motivo da prefeitura", async () => {
+    const c = montar();
+    await enviarNota(c.dep, args);
+    await enviarNota(c.dep, { ...args, nota: { ...NOTA, chave: "conexa-901-030302" }, cobrancaId: 901 });
+    c.spedy.obterNota
+      .mockResolvedValueOnce({ id: "spedy-1", integrationId: NOTA.chave, status: "authorized", number: 6794, processingDetail: null })
+      .mockResolvedValueOnce({
+        id: "spedy-1",
+        integrationId: "conexa-901-030302",
+        status: "rejected",
+        number: null,
+        processingDetail: { code: "E0240", message: "O CEP do tomador não existe." },
+      });
+    const r = await acompanharNotas(c.dep);
+    expect(r).toMatchObject({ autorizadas: 1, rejeitadas: 1, naFila: 0 });
+    expect(c.linhas.get(NOTA.chave)).toMatchObject({ situacao: "AUTORIZADA", numero: 6794 });
+    expect(c.linhas.get("conexa-901-030302")).toMatchObject({
+      situacao: "REJEITADA",
+      motivo: "E0240: O CEP do tomador não existe.",
+    });
+  });
+
+  it("nota ainda na fila continua sendo acompanhada", async () => {
+    const c = montar();
+    await enviarNota(c.dep, args);
+    c.spedy.obterNota.mockResolvedValue({ id: "spedy-1", integrationId: NOTA.chave, status: "enqueued", number: null, processingDetail: null });
+    expect((await acompanharNotas(c.dep)).naFila).toBe(1);
+    expect(c.linhas.get(NOTA.chave)?.situacao).toBe("ENVIADA");
+  });
+
+  it("falha ao perguntar à Spedy não muda a nota", async () => {
+    const c = montar();
+    await enviarNota(c.dep, args);
+    c.spedy.obterNota.mockRejectedValue(new SpedyRedeError("fora do ar"));
+    expect((await acompanharNotas(c.dep)).falhas).toBe(1);
+    expect(c.linhas.get(NOTA.chave)?.situacao).toBe("ENVIADA");
+  });
+});

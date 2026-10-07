@@ -3,9 +3,12 @@ import { z } from "zod";
 /**
  * Configuração das notas fiscais (Spedy) — o que a tela edita.
  *
- * Por enquanto só existe o modo SOMBRA: o sistema lê as cobranças pagas no
- * Conexa e registra a nota que emitiria, sem chamar a Spedy. É o relatório que
- * a equipe confere contra as notas reais do n8n antes de qualquer corte.
+ * O modo SOMBRA lê as cobranças pagas no Conexa e registra a nota que
+ * emitiria, sem chamar a Spedy. É o relatório que a equipe confere contra as
+ * notas reais do n8n antes de qualquer corte.
+ *
+ * A EMISSÃO (`emissao`) é outra chave, e nasce desligada: ligar a integração
+ * não emite nada. Ver `emissao/`.
  */
 
 /**
@@ -23,6 +26,42 @@ export function normalizarCodigo(texto: string): string | null {
 }
 
 const codigo = z.string().regex(FORMATO_DO_CODIGO);
+
+export const EMPRESAS_DA_SPEDY = ["SEAHUB", "SEATECH"] as const;
+export type EmpresaDaSpedy = (typeof EMPRESAS_DA_SPEDY)[number];
+
+/**
+ * A emissão de verdade. ⚠ Tudo aqui nasce DESLIGADO e restrito, porque não
+ * existe ambiente de teste na Spedy: nota emitida é nota fiscal real e gasta
+ * número da sequência da empresa.
+ */
+export const emissaoSchema = z.object({
+  /** Chave geral. Desligada, a rodada nunca chama a Spedy. */
+  ligada: z.boolean().default(false),
+  /**
+   * Emitir SÓ estas cobranças (id no Conexa). É como se faz a primeira nota
+   * real: uma cobrança escolhida por uma pessoa, com o n8n sem emitir essa.
+   */
+  soCobrancas: z.array(z.number().int().positive()).max(200).default([]),
+  /**
+   * Sem lista, só emite cobrança quitada a partir deste dia (AAAA-MM-DD). É o
+   * CORTE com o n8n: o que foi pago antes já teve nota dele, e emitir de novo
+   * seria nota em dobro. Sem lista E sem data, nada é emitido.
+   */
+  aPartirDe: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .default(null),
+  /**
+   * Deixa a Spedy mandar o e-mail da nota ao tomador. Ligado por padrão porque
+   * é o que o n8n faz hoje (`sendEmailToCustomer: true`): o corte não pode
+   * tirar do cliente a nota que ele já recebe.
+   */
+  enviarEmailAoCliente: z.boolean().default(true),
+});
+
+export type EmissaoConfig = z.infer<typeof emissaoSchema>;
 
 export const REGRAS_DE_CLIENTE = ["antes", "nunca"] as const;
 export type RegraDeCliente = (typeof REGRAS_DE_CLIENTE)[number];
@@ -81,6 +120,20 @@ export const notasFiscaisConfigSchema = z.object({
     )
     .max(300)
     .default([]),
+  /**
+   * Qual empresa da Spedy emite as notas de cada unidade do Conexa (`companyId`
+   * da cobrança). Conferido na configuração do Conexa em 07/10/2026: 3 é a
+   * SEAHUB COWORKING e 4 é a SEATECH. Unidade fora daqui não emite.
+   */
+  empresas: z
+    .record(z.string().regex(/^\d+$/), z.enum(EMPRESAS_DA_SPEDY))
+    .default({ "3": "SEAHUB", "4": "SEATECH" }),
+  emissao: emissaoSchema.default({
+    ligada: false,
+    soCobrancas: [],
+    aPartirDe: null,
+    enviarEmailAoCliente: true,
+  }),
 });
 
 export type NotasFiscaisConfig = z.infer<typeof notasFiscaisConfigSchema>;
@@ -141,6 +194,21 @@ export function lerClientes(
     });
   }
   return { clientes };
+}
+
+/** Ids de cobrança, separados por espaço, vírgula ou linha. Um inválido recusa tudo. */
+export function lerCobrancasLiberadas(
+  texto: string,
+): { ids: number[] } | { erro: string } {
+  const ids: number[] = [];
+  for (const parte of texto.split(/[\s,;]+/).filter(Boolean)) {
+    if (!/^\d+$/.test(parte) || Number(parte) <= 0) {
+      return { erro: `Cobranças liberadas: "${parte.slice(0, 20)}" não é um id de cobrança do Conexa.` };
+    }
+    const id = Number(parte);
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return { ids };
 }
 
 export type RegraDeProduto = NotasFiscaisConfig["produtos"][number]["regra"];
@@ -226,8 +294,24 @@ export function configDoFormulario(
   const produtos = lerProdutos(campos.produtos ?? "");
   if ("erro" in produtos) return produtos;
 
+  const cobrancas = lerCobrancasLiberadas(campos.soCobrancas ?? "");
+  if ("erro" in cobrancas) return cobrancas;
+
+  const emissao = {
+    ligada: campos.emissaoLigada === "on",
+    soCobrancas: cobrancas.ids,
+    aPartirDe: valor("aPartirDe") || null,
+    enviarEmailAoCliente: campos.enviarEmailAoCliente === "on",
+  };
+  if (emissao.ligada && !emissao.soCobrancas.length && !emissao.aPartirDe) {
+    return {
+      erro: "Emissão ligada: informe as cobranças liberadas OU o dia do corte com o n8n. Sem nenhum dos dois nada seria emitido.",
+    };
+  }
+
   const lido = notasFiscaisConfigSchema.safeParse({
     ...atual,
+    emissao,
     inicio: valor("inicio") || null,
     codigos,
     codigoReservaDeSala: codigoDaSala,

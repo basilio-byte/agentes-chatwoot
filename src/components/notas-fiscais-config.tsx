@@ -30,6 +30,8 @@ export function NotasFiscaisConfigForm({
   codigoReservaDeSala,
   clientes,
   produtos,
+  emissao,
+  chaves,
   somenteLeitura,
 }: {
   habilitada: boolean;
@@ -38,6 +40,14 @@ export function NotasFiscaisConfigForm({
   codigoReservaDeSala: string;
   clientes: string;
   produtos: string;
+  emissao: {
+    ligada: boolean;
+    soCobrancas: string;
+    aPartirDe: string;
+    enviarEmailAoCliente: boolean;
+  };
+  /** Se a chave de cada empresa está no servidor (nunca o valor). */
+  chaves: Record<string, boolean>;
   somenteLeitura: boolean;
 }) {
   const [estado, salvar, salvando] = useActionState<EstadoNotasFiscais, FormData>(
@@ -53,6 +63,10 @@ export function NotasFiscaisConfigForm({
   const [sala, setSala] = useState(codigoReservaDeSala);
   const [regras, setRegras] = useState(clientes);
   const [produtosTexto, setProdutosTexto] = useState(produtos);
+  const [emitir, setEmitir] = useState(emissao.ligada);
+  const [liberadas, setLiberadas] = useState(emissao.soCobrancas);
+  const [corte, setCorte] = useState(emissao.aPartirDe);
+  const [emailAoCliente, setEmailAoCliente] = useState(emissao.enviarEmailAoCliente);
 
   const enviar = (evento: React.FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
@@ -178,6 +192,86 @@ export function NotasFiscaisConfigForm({
           className="font-mono text-[13px]"
         />
       </Field>
+
+      <fieldset className="space-y-3 rounded-lg border border-line p-4">
+        <legend className="px-1 text-[13px] font-medium">Emissão de verdade (Spedy)</legend>
+        <Aviso tone="warning">
+          Ligada, o sistema <strong>emite nota fiscal real</strong>. Não existe ambiente de teste na
+          Spedy: cada nota gasta um número da sequência da empresa. Enquanto o n8n estiver emitindo,
+          libere só as cobranças que ele <strong>não</strong> vai emitir, senão a nota sai em dobro.
+        </Aviso>
+
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+          {Object.entries(chaves).map(([empresa, presente]) => (
+            <span key={empresa} className={presente ? "" : "text-danger"}>
+              Chave {empresa}: {presente ? "no servidor" : "FALTA no servidor"}
+            </span>
+          ))}
+        </div>
+        {Object.values(chaves).some((p) => !p) ? (
+          <p className="text-xs text-muted">
+            A chave de cada empresa é uma variável do servidor (<code>SPEDY_KEY_SEAHUB</code> e{" "}
+            <code>SPEDY_KEY_SEATECH</code>), não um campo desta tela. Sem ela a empresa não emite.
+          </p>
+        ) : null}
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="emissaoLigada"
+            checked={emitir}
+            onChange={(e) => setEmitir(e.target.checked)}
+            disabled={somenteLeitura}
+            className="size-4 accent-accent"
+          />
+          Emitir as notas na Spedy
+        </label>
+
+        <Field
+          label="Cobranças liberadas"
+          hint={
+            <>
+              Ids das cobranças do Conexa, separados por espaço, vírgula ou linha. Com lista, só
+              estas são emitidas — é assim que se faz a <strong>primeira nota real</strong>, numa
+              cobrança escolhida e pequena.
+            </>
+          }
+        >
+          <Input
+            name="soCobrancas"
+            placeholder="31450 31451"
+            value={liberadas}
+            onChange={(e) => setLiberadas(e.target.value)}
+            disabled={somenteLeitura}
+            className="tabular-nums"
+          />
+        </Field>
+
+        <Field
+          label="Corte com o n8n (sem lista)"
+          hint="Sem lista, só emite cobrança paga a partir deste dia. O que foi pago antes já teve a nota do n8n: emitir de novo seria nota em dobro."
+        >
+          <Input
+            type="date"
+            name="aPartirDe"
+            value={corte}
+            onChange={(e) => setCorte(e.target.value)}
+            disabled={somenteLeitura}
+          />
+        </Field>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="enviarEmailAoCliente"
+            checked={emailAoCliente}
+            onChange={(e) => setEmailAoCliente(e.target.checked)}
+            disabled={somenteLeitura}
+            className="size-4 accent-accent"
+          />
+          Spedy envia a nota por e-mail ao cliente (o n8n já faz isso)
+        </label>
+      </fieldset>
 
       {estado.erro ? <Aviso tone="danger">{estado.erro}</Aviso> : null}
       {estado.ok ? <Aviso tone="success">{estado.ok}</Aviso> : null}
