@@ -28,6 +28,7 @@ export function NotasFiscaisConfigForm({
   inicio,
   categorias,
   codigoReservaDeSala,
+  codigoSemVenda,
   clientes,
   produtos,
   emissao,
@@ -39,6 +40,7 @@ export function NotasFiscaisConfigForm({
   inicio: string;
   categorias: LinhaDeCategoria[];
   codigoReservaDeSala: string;
+  codigoSemVenda: string;
   clientes: string;
   produtos: string;
   emissao: {
@@ -65,6 +67,7 @@ export function NotasFiscaisConfigForm({
     Object.fromEntries(categorias.map((c) => [c.id, c.codigo])),
   );
   const [sala, setSala] = useState(codigoReservaDeSala);
+  const [semVenda, setSemVenda] = useState(codigoSemVenda);
   const [regras, setRegras] = useState(clientes);
   const [produtosTexto, setProdutosTexto] = useState(produtos);
   const [emitir, setEmitir] = useState(emissao.ligada);
@@ -115,6 +118,18 @@ export function NotasFiscaisConfigForm({
             placeholder="03.03.02"
             value={sala}
             onChange={(e) => setSala(e.target.value)}
+            disabled={somenteLeitura}
+          />
+        </Field>
+        <Field
+          label="Código da cobrança sem venda"
+          hint="Parcela de venda parcelada e pagamento de renegociação não têm venda ligada. Vazio = ficam em conferência."
+        >
+          <Input
+            name="codigoSemVenda"
+            placeholder="03.03.02"
+            value={semVenda}
+            onChange={(e) => setSemVenda(e.target.value)}
             disabled={somenteLeitura}
           />
         </Field>

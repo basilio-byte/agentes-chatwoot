@@ -95,6 +95,13 @@ export const notasFiscaisConfigSchema = z.object({
    */
   codigoReservaDeSala: z.union([codigo, z.literal("")]).default(""),
   /**
+   * O código da cobrança que NÃO tem venda ligada: parcela de uma venda
+   * parcelada (a venda fica na primeira parcela) e pagamento de renegociação.
+   * É o "03.03.02 — demais serviços" da task do Laercio, que ele confirmou para
+   * este caso (07/10/2026). Vazio = essas cobranças ficam em conferência.
+   */
+  codigoSemVenda: z.union([codigo, z.literal("")]).default("03.03.02"),
+  /**
    * Regras por cliente do Conexa, no lugar dos ids escritos dentro dos `If` do
    * n8n. "antes": a nota sai quando a cobrança é GERADA, e não quando é paga.
    * "nunca": sem nota automática.
@@ -309,6 +316,13 @@ export function configDoFormulario(
     return { erro: `Reserva de sala: "${sala}" não é um código no formato 03.03.02.` };
   }
 
+  // Formulário que não traz o campo (versão antiga da tela) não apaga o código.
+  const semVenda = campos.codigoSemVenda === undefined ? atual.codigoSemVenda : valor("codigoSemVenda");
+  const codigoSemVenda = semVenda ? normalizarCodigo(semVenda) : "";
+  if (codigoSemVenda === null) {
+    return { erro: `Cobrança sem venda: "${semVenda}" não é um código no formato 03.03.02.` };
+  }
+
   const clientes = lerClientes(campos.clientes ?? "");
   if ("erro" in clientes) return clientes;
 
@@ -340,6 +354,7 @@ export function configDoFormulario(
     inicio: valor("inicio") || null,
     codigos,
     codigoReservaDeSala: codigoDaSala,
+    codigoSemVenda,
     clientes: clientes.clientes,
     produtos: produtos.produtos,
   });

@@ -70,6 +70,12 @@ export type CobrancaLida = {
   /** Com juros e multa, quando houver. */
   valorAtualCentavos: number | null;
   valorPagoCentavos: number | null;
+  /**
+   * Desconto dado NA cobrança (`discountAmount`). As vendas somam
+   * `valor + desconto`: sem ler isto a cobrança com desconto parecia "não somar"
+   * e ficava parada em conferência (4 de 7 em 07/10/2026). Zero quando não há.
+   */
+  descontoCentavos: number;
   quitadaEm: string | null;
   competencia: string | null;
   criadaEm: string | null;
@@ -100,6 +106,9 @@ export function lerCobranca(bruto: Record<string, unknown>): CobrancaLida | null
     valorCentavos: centavos(valor),
     valorAtualCentavos: emCentavos(bruto.currentAmount),
     valorPagoCentavos: emCentavos(bruto.paidAmount),
+    // Visto no corpo do aviso do Conexa (execução do n8n de 07/10/2026):
+    // `rawAmount` 5080, `discountAmount` 2920, `amount` 2160.
+    descontoCentavos: emCentavos(bruto.discountAmount) ?? 0,
     quitadaEm: dia(bruto.paymentDate),
     competencia: dia(bruto.competenceDate),
     criadaEm: dia(bruto.createdAt),
@@ -291,7 +300,7 @@ export function montarNotas(
 
 type ConfigDaDecisao = Pick<
   NotasFiscaisConfig,
-  "codigos" | "codigoReservaDeSala" | "clientes" | "inicio" | "produtos"
+  "codigos" | "codigoReservaDeSala" | "codigoSemVenda" | "clientes" | "inicio" | "produtos"
 >;
 
 /**
@@ -362,6 +371,32 @@ export function decidir(
   // Item de R$ 0 (reserva descontada do pacote) não vai na nota, e por isso
   // não precisa de código: não pode segurar a cobrança.
   const cobrados = itens.filter((i) => i.valorCentavos > 0);
+
+  // Cobrança SEM venda ligada: parcela de venda parcelada (a venda fica na 1ª
+  // parcela) ou pagamento de renegociação. O n8n emitia uma nota de "Outros
+  // Produtos" sem código; aqui vai o código padrão de "demais serviços", que a
+  // task do Laercio define e ele confirmou — só quando a cobrança NÃO tem venda,
+  // nunca quando as vendas existem e não deram código.
+  if (!cobrados.length && !cobranca.vendasIds.length && config.codigoSemVenda) {
+    observacoes.push(
+      `sem venda ligada: nota com o código padrão ${config.codigoSemVenda} (demais serviços)`,
+    );
+    const nota = notaSemVenda(cobranca, config.codigoSemVenda);
+    const ajusteSemVenda = pelaValorPago([nota], cobranca, false);
+    if (ajusteSemVenda.motivo) {
+      return { situacao: "CONFERIR", motivo: ajusteSemVenda.motivo, notas: [nota], observacoes };
+    }
+    if (cobranca.retemIss) {
+      return {
+        situacao: "CONFERIR",
+        motivo: `o cliente retém ISS (${formatarReais(cobranca.valorIssCentavos)})`,
+        notas: [nota],
+        observacoes,
+      };
+    }
+    return { situacao: "PRONTA", motivo: null, notas: ajusteSemVenda.notas, observacoes };
+  }
+
   if (!cobrados.length) {
     return {
       situacao: "CONFERIR",
@@ -406,10 +441,12 @@ export function decidir(
   // O que ficou fora da nota continua sendo cobrado: a soma confere com ele.
   const soma = [...notas.map((n) => n.valorCentavos), ...[...foraDaNota, ...aConferir].map((i) => i.valorCentavos)]
     .reduce((s, v) => s + v, 0);
-  if (soma !== cobranca.valorCentavos) {
+  // As vendas somam o valor cobrado MAIS o desconto da cobrança.
+  const desconto = cobranca.descontoCentavos ?? 0;
+  if (soma !== cobranca.valorCentavos + desconto) {
     return {
       situacao: "CONFERIR",
-      motivo: `as vendas somam ${formatarReais(soma)} e a cobrança é de ${formatarReais(cobranca.valorCentavos)}`,
+      motivo: `as vendas somam ${formatarReais(soma)} e a cobrança é de ${formatarReais(cobranca.valorCentavos)}${desconto ? ` (com desconto de ${formatarReais(desconto)})` : ""}`,
       notas,
       observacoes,
     };
@@ -422,7 +459,14 @@ export function decidir(
       observacoes,
     };
   }
-  const ajuste = pelaValorPago(notas, cobranca, foraDaNota.length > 0);
+  const comDesconto = pelosDescontos(notas, desconto, foraDaNota.length > 0);
+  if (comDesconto.motivo) {
+    return { situacao: "CONFERIR", motivo: comDesconto.motivo, notas, observacoes };
+  }
+  if (desconto) {
+    observacoes.push(`desconto de ${formatarReais(desconto)} na cobrança: a nota sai pelo valor cobrado`);
+  }
+  const ajuste = pelaValorPago(comDesconto.notas, cobranca, foraDaNota.length > 0);
   if (ajuste.motivo) {
     return { situacao: "CONFERIR", motivo: ajuste.motivo, notas, observacoes };
   }
@@ -435,6 +479,52 @@ export function decidir(
     };
   }
   return { situacao: "PRONTA", motivo: null, notas: ajuste.notas, observacoes };
+}
+
+/**
+ * A nota de uma cobrança sem venda: o valor da cobrança, no código padrão. A
+ * discriminação é a mesma coisa que o n8n dizia ("Outros Produtos"), só que com
+ * a cobrança que se pode achar no Conexa.
+ */
+export function notaSemVenda(
+  cobranca: Pick<CobrancaLida, "id" | "valorCentavos" | "competencia">,
+  codigo: string,
+): NotaPlanejada {
+  return {
+    codigo,
+    valorCentavos: cobranca.valorCentavos,
+    descricao: `Serviços prestados — cobrança nº ${cobranca.id}`,
+    chave: chaveDaNota(cobranca.id, codigo),
+    vendas: [],
+    competencia: mesDaCompetencia(cobranca.competencia),
+  };
+}
+
+/**
+ * O desconto da cobrança tira da nota o que ele tirou do cliente: a nota sai
+ * pelo valor COBRADO, não pela soma das vendas (a de R$ 2.160 do n8n, e não os
+ * R$ 5.080 das vendas).
+ *
+ * ⚠ Só com UMA nota e nenhum item fora dela. Com dois códigos, ou com bebida
+ * fora da nota, não existe rateio honesto — o desconto pode ter sido de um item
+ * só —, e a cobrança vai para conferência com o motivo escrito.
+ */
+export function pelosDescontos(
+  notas: NotaPlanejada[],
+  descontoCentavos: number,
+  haItemFora: boolean,
+): { notas: NotaPlanejada[]; motivo: string | null } {
+  if (descontoCentavos <= 0) return { notas, motivo: null };
+  if (notas.length !== 1 || haItemFora) {
+    return {
+      notas,
+      motivo: `desconto de ${formatarReais(descontoCentavos)} em cobrança com ${notas.length > 1 ? "mais de um código" : "itens fora da nota"}: não dá para ratear`,
+    };
+  }
+  return {
+    notas: [{ ...notas[0], valorCentavos: notas[0].valorCentavos - descontoCentavos }],
+    motivo: null,
+  };
 }
 
 /** AAAA-MM de uma data AAAA-MM-DD, ou `null`. */

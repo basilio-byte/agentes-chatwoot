@@ -337,10 +337,110 @@ describe("decisão", () => {
     expect(d.motivo).toMatch(/4321/);
   });
 
-  it("cobrança sem venda nenhuma vai para conferência, não some", () => {
-    const d = decidir(cobranca({ salesIds: [] }), [], config(), "quitada");
+  it("cobrança sem venda e SEM código padrão configurado vai para conferência, não some", () => {
+    const d = decidir(cobranca({ salesIds: [] }), [], config({ codigoSemVenda: "" }), "quitada");
     expect(d.situacao).toBe("CONFERIR");
     expect(d.motivo).toBe("a cobrança veio sem vendas");
+  });
+});
+
+// Os casos REAIS de 07/10/2026, lidos no Conexa: as quatro cobranças que
+// pareciam "não somar" eram desconto, e as duas sem venda eram parcela e
+// renegociação. O n8n emitiu todas pelo valor da cobrança.
+describe("desconto da cobrança e cobrança sem venda (casos reais de 07/10)", () => {
+  const auditorio = (id: number, valorCentavos: number) =>
+    item({ id, nome: "[SEAWAY] - AUDITÓRIO", categoriaId: 10, valorCentavos });
+
+  it("⚠ #31633: 4 vendas de R$ 1.270 (R$ 5.080), desconto de R$ 2.920: UMA nota de R$ 2.160", () => {
+    const d = decidir(
+      cobranca({ amount: 2160, discountAmount: 2920, paidAmount: 2160 }),
+      [auditorio(1, 127000), auditorio(2, 127000), auditorio(3, 127000), auditorio(4, 127000)],
+      config(),
+      "quitada",
+    );
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas).toHaveLength(1);
+    expect(d.notas[0].valorCentavos).toBe(216000);
+    expect(d.observacoes.some((o) => /desconto de R\$\s?2\.920,00/.test(o))).toBe(true);
+  });
+
+  it("#31603: auditório + taxa (R$ 225), desconto de R$ 60 → nota de R$ 165", () => {
+    const d = decidir(
+      cobranca({ amount: 165, discountAmount: 60 }),
+      [auditorio(1, 16000), item({ id: 2, nome: "Taxa Reserva noite e Sábado", categoriaId: 10, valorCentavos: 6500 })],
+      config(),
+      "quitada",
+    );
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas.map((n) => n.valorCentavos)).toEqual([16500]);
+  });
+
+  it("#31604: cabine de R$ 70 com desconto de R$ 10 → nota de R$ 60", () => {
+    const d = decidir(cobranca({ amount: 60, discountAmount: 10 }), [item({ id: 1, nome: "[SEAWAY] - Cabine", categoriaId: 10, valorCentavos: 7000 })], config(), "quitada");
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas[0].valorCentavos).toBe(6000);
+  });
+
+  it("⚠ desconto com DOIS códigos não é rateado: vai para conferência, dizendo por quê", () => {
+    const d = decidir(
+      cobranca({ amount: 2158, discountAmount: 1 }),
+      [
+        item({ id: 1, nome: "Contrato: Sala 05 - Ayrton Senna", categoriaId: 3, valorCentavos: 215000 }),
+        item({ id: 2, nome: "Seabox Básico - Encomenda", categoriaId: 23, valorCentavos: 900 }),
+      ],
+      config(),
+      "quitada",
+    );
+    expect(d.situacao).toBe("CONFERIR");
+    expect(d.motivo).toMatch(/desconto de R\$\s?1,00 em cobrança com mais de um código: não dá para ratear/);
+  });
+
+  it("⚠ o desconto não esconde uma soma que continua errada", () => {
+    const d = decidir(cobranca({ amount: 160, discountAmount: 10 }), [item({ id: 1, categoriaId: 10, valorCentavos: 14900 })], config(), "quitada");
+    expect(d.situacao).toBe("CONFERIR");
+    expect(d.motivo).toMatch(/somam R\$\s?149,00 e a cobrança é de R\$\s?160,00 \(com desconto de R\$\s?10,00\)/);
+  });
+
+  it("cobrança sem o campo de desconto (gravada antes) segue como cobrança sem desconto", () => {
+    expect(cobranca({}).descontoCentavos).toBe(0);
+    expect(lerCobranca({ ...cobrancaBruta(), discountAmount: undefined })!.descontoCentavos).toBe(0);
+  });
+
+  it("⚠ #30955, parcela 2/2 sem venda ligada: uma nota de R$ 160 no código padrão de demais serviços", () => {
+    const d = decidir(cobranca({ amount: 160, salesIds: [] }), [], config(), "quitada");
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas).toHaveLength(1);
+    expect(d.notas[0]).toMatchObject({
+      codigo: "03.03.02",
+      valorCentavos: 16000,
+      chave: "conexa-900-030302",
+      vendas: [],
+      descricao: "Serviços prestados — cobrança nº 900",
+    });
+    expect(d.observacoes).toContain("sem venda ligada: nota com o código padrão 03.03.02 (demais serviços)");
+  });
+
+  it("⚠ #31434, renegociação sem venda com juros: UMA nota pelo valor pago, com os juros dentro", () => {
+    // 3 × R$ 149 vencidas, R$ 17,60 de juros: pago R$ 464,60.
+    const d = decidir(cobranca({ amount: 447, paidAmount: 464.6, salesIds: [] }), [], config(), "quitada");
+    expect(d.situacao).toBe("PRONTA");
+    expect(d.notas[0].valorCentavos).toBe(46460);
+  });
+
+  it("o código padrão da cobrança sem venda é configurável, e outro código vale", () => {
+    const d = decidir(cobranca({ amount: 160, salesIds: [] }), [], config({ codigoSemVenda: "10.05.01" }), "quitada");
+    expect(d.notas[0].codigo).toBe("10.05.01");
+  });
+
+  it("⚠ cobrança com vendas que não deram código NÃO ganha o código padrão", () => {
+    const d = decidir(cobranca({ amount: 1200 }), [item({ id: 1, categoriaId: 8, valorCentavos: 120000 })], config(), "quitada");
+    expect(d.situacao).toBe("AGUARDANDO_CLASSIFICACAO");
+  });
+
+  it("cobrança sem venda de cliente que retém ISS continua em conferência", () => {
+    const d = decidir(cobranca({ amount: 160, salesIds: [], hasISSRetention: true, ISSAmount: 8 }), [], config(), "quitada");
+    expect(d.situacao).toBe("CONFERIR");
+    expect(d.motivo).toMatch(/retém ISS/);
   });
 });
 

@@ -72,7 +72,8 @@ export type CorpoDeNota = {
     federalTaxNumber: string;
     email?: string;
     phoneNumber?: string;
-    address: {
+    /** Ausente quando o cadastro não tem CEP: a Spedy completa do cadastro dela. */
+    address?: {
       postalCode: string;
       street?: string;
       number?: string;

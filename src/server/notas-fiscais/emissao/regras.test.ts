@@ -165,8 +165,25 @@ describe("tomador", () => {
     expect(problemasDoTomador(tomador({ nome: "" }), cepOk)).toContain("o cadastro do cliente está sem nome");
     expect(problemasDoTomador(tomador({ documento: "123" }), cepOk)[0]).toMatch(/não tem 11 nem 14 dígitos/);
     expect(problemasDoTomador(tomador({ documento: "" }), cepOk)[0]).toMatch(/sem CPF ou CNPJ/);
-    expect(problemasDoTomador(tomador({ cep: "" }), { estado: "desconhecido" })).toEqual(["o cadastro está sem CEP"]);
     expect(problemasDoTomador(tomador({ cep: "590" }), { estado: "desconhecido" })[0]).toMatch(/não tem 8 dígitos/);
+  });
+
+  it("⚠ cadastro SEM CEP não segura a nota: o n8n mandou assim e a Spedy completou (07/10/2026)", () => {
+    expect(problemasDoTomador(tomador({ cep: "" }), { estado: "desconhecido" })).toEqual([]);
+    const c = montarCorpo({
+      nota,
+      tomador: tomador({ cep: "", rua: "", numero: "", bairro: "" }),
+      cep: { estado: "desconhecido" },
+      hoje: "2026-10-07",
+      enviarEmailAoCliente: true,
+    });
+    expect(c.receiver.address).toBeUndefined();
+    expect(c.receiver.federalTaxNumber).toBe("04578999483");
+  });
+
+  it("o telefone do cadastro não vai à Spedy, como no n8n", () => {
+    expect(montarCorpo({ nota, tomador: tomador(), cep: cepOk, hoje: "2026-10-07", enviarEmailAoCliente: true }).receiver)
+      .not.toHaveProperty("phoneNumber");
   });
 });
 
@@ -181,8 +198,8 @@ describe("corpo da nota", () => {
     expect(c.total.invoiceAmount).toBe(149);
     expect(c.integrationId).toBe("conexa-900-030302");
     expect(c.issue).toBe(true);
-    expect(c.receiver.address.city).toEqual({ code: 2408102, name: "Natal", state: "rn" });
-    expect(c.receiver.address.country).toBe("BRA");
+    expect(c.receiver.address!.city).toEqual({ code: 2408102, name: "Natal", state: "rn" });
+    expect(c.receiver.address!.country).toBe("BRA");
   });
 
   it("⚠ o nome do cliente é cortado em 80 caracteres, como o n8n sempre fez", () => {
@@ -200,7 +217,7 @@ describe("corpo da nota", () => {
         complemento: "C".repeat(400),
       }),
     );
-    const a = c.receiver.address;
+    const a = c.receiver.address!;
     expect(a.street).toHaveLength(100);
     expect(a.district).toHaveLength(100);
     expect(a.number).toHaveLength(10);
@@ -215,8 +232,8 @@ describe("corpo da nota", () => {
 
   it("número do endereço vazio vai como S/N; rua vazia fica de fora", () => {
     const c = corpo(tomador({ numero: "", rua: "" }));
-    expect(c.receiver.address.number).toBe("S/N");
-    expect(c.receiver.address.street).toBeUndefined();
+    expect(c.receiver.address!.number).toBe("S/N");
+    expect(c.receiver.address!.street).toBeUndefined();
   });
 
   it("⚠ e-mail grande demais NÃO é cortado (um e-mail pela metade é outro endereço): fica de fora", () => {
@@ -235,7 +252,7 @@ describe("corpo da nota", () => {
 
   it("sem a consulta do CEP, usa a cidade do cadastro e deixa a Spedy achar o código", () => {
     const c = corpo(tomador(), { estado: "desconhecido" });
-    expect(c.receiver.address.city).toEqual({ name: "Natal", state: "rn" });
+    expect(c.receiver.address!.city).toEqual({ name: "Natal", state: "rn" });
   });
 
   it("descrição longa é cortada", () => {

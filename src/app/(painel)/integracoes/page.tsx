@@ -1462,6 +1462,7 @@ export default async function IntegracoesPage({
                     inicio={configNotas.inicio ?? ""}
                     categorias={linhasDeCategoria}
                     codigoReservaDeSala={configNotas.codigoReservaDeSala}
+                    codigoSemVenda={configNotas.codigoSemVenda}
                     clientes={clientesEmTexto(configNotas)}
                     produtos={produtosEmTexto(configNotas)}
                     emissao={{

@@ -180,8 +180,12 @@ export function problemasDoTomador(t: Tomador, cep: CepLido): string[] {
   if (t.documento.length !== 11 && t.documento.length !== 14) {
     p.push(t.documento ? "o CPF/CNPJ do cadastro não tem 11 nem 14 dígitos" : "o cadastro está sem CPF ou CNPJ");
   }
+  // Sem CEP nenhum, a nota vai sem endereço (ver `montarCorpo`): o n8n mandou assim
+  // uma nota de pessoa física em 07/10/2026 e a Spedy completou do cadastro dela.
+  // CEP preenchido e torto é outra coisa: é endereço errado, e a nota não sai.
+  if (!t.cep) return p;
   if (t.cep.length !== 8) {
-    p.push(t.cep ? `o CEP do cadastro (${t.cep}) não tem 8 dígitos` : "o cadastro está sem CEP");
+    p.push(`o CEP do cadastro (${t.cep}) não tem 8 dígitos`);
     return p;
   }
   if (cep.estado === "inexistente") {
@@ -222,7 +226,6 @@ export function montarCorpo(args: {
 
   // E-mail que não cabe não é cortado: um e-mail pela metade é outro endereço.
   const email = t.email && t.email.length <= LIMITES.email && /^\S+@\S+\.\S+$/.test(t.email) ? t.email : undefined;
-  const fone = t.telefone && t.telefone.length >= 10 ? cortar(t.telefone, LIMITES.telefone) : undefined;
   const complemento = cortar(t.complemento, LIMITES.complemento);
 
   return {
@@ -236,16 +239,19 @@ export function montarCorpo(args: {
       name: cortar(t.nome, LIMITES.nome),
       federalTaxNumber: t.documento,
       email,
-      phoneNumber: fone,
-      address: {
-        postalCode: t.cep,
-        street: cortar(t.rua, LIMITES.rua) || undefined,
-        number: cortar(t.numero, LIMITES.numero) || "S/N",
-        district: cortar(t.bairro, LIMITES.bairro) || undefined,
-        additionalInformation: complemento || undefined,
-        country: "BRA",
-        city: cidade,
-      },
+      // Sem telefone, como o n8n: a nota não o usa, e um formato que a Spedy
+      // recuse seria uma nota a menos por nada.
+      address: t.cep
+        ? {
+            postalCode: t.cep,
+            street: cortar(t.rua, LIMITES.rua) || undefined,
+            number: cortar(t.numero, LIMITES.numero) || "S/N",
+            district: cortar(t.bairro, LIMITES.bairro) || undefined,
+            additionalInformation: complemento || undefined,
+            country: "BRA",
+            city: cidade,
+          }
+        : undefined,
     },
     total: { invoiceAmount: Math.round(nota.valorCentavos) / 100 },
   };

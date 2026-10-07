@@ -1688,6 +1688,28 @@ a tela na aba "Notas fiscais" de Integrações.
   o juro incidiu —, e a cobrança vai para "conferir" com o motivo escrito
   (`pelaValorPago`). A competência (`AAAA-MM`, de `competenceDate`) vai em cada
   nota; o aviso "competência ≠ pagamento" saiu, porque o desencontro é o normal.
+- ⚠ **Desconto e cobrança sem venda** (07/10/2026, casos reais). O webhook do
+  Conexa traz `discountAmount` (em REAIS), e a soma das vendas é
+  `amount + desconto`: sem somar o desconto, cobrança com desconto virava
+  "as vendas não somam" (a #31633: vendas de R$ 5.080, cobrança de R$ 2.160).
+  Com UMA nota e nenhum item fora dela, a nota sai pelo valor menos o desconto;
+  senão vai para "conferir", porque não há rateio honesto. **Cobrança sem venda
+  ligada** (parcela de venda parcelada — a venda fica na 1ª parcela — e
+  pagamento de renegociação) sai com o `codigoSemVenda`, **03.03.02** por
+  padrão, editável na tela: é o que o n8n já fazia e o Laercio tinha sinalizado.
+  Vazio, volta a ficar em "conferir".
+- **Conferido contra as notas que o n8n emitiu em 07/10/2026** (execuções do
+  fluxo "Após quitação", todas autorizadas): o valor da nota é o PAGO (R$
+  1.122,73 pagos sobre R$ 1.100 de venda), o n8n junta o nome dos produtos sem
+  separador e inclui os de R$ 0 (aqui, uma linha por item e sem os de R$ 0), e
+  **não manda telefone** nem, às vezes, endereço: pessoa física sem CEP no
+  cadastro saiu e a Spedy completou. Por isso aqui o telefone não vai, e
+  **cadastro sem CEP não segura a nota** (vai sem endereço); CEP preenchido e
+  torto, inexistente ou de outra cidade continua segurando. O n8n guarda poucas
+  execuções (as de 05 e 06/10 já tinham sido apagadas no dia 07).
+  ⚠ **Em aberto**: nas notas do n8n a Spedy mostra `effectiveDate` igual a
+  `issuedOn` (a hora da emissão). Não está provado que `effectiveDate` seja a
+  competência: a primeira emissão real confere os dois campos.
 - **A EMISSÃO (incremento 2, 07/10/2026) é outra chave e nasce DESLIGADA.** Módulos
   em `notas-fiscais/emissao/` (regras puras em `regras.ts`, rodada em `emitir.ts`,
   consulta de CEP em `cep.ts`) e o cliente em `integrations/spedy/client.ts`.
