@@ -66,6 +66,12 @@ vi.mock("@/server/integrations/conexa/sistema", () => ({
               chamadas.push(`listar:${f.status}:${f.paymentDateFrom ?? ""}:${f.customerId ?? ""}`);
               return { itens: f.status === "paid" ? pagas : emAberto, temMais: false };
             },
+            obterCobranca: async (id: number) => {
+              chamadas.push(`cobranca:${id}`);
+              const achada = [...pagas, ...emAberto].find((c) => c.chargeId === id);
+              if (!achada) throw new ConexaApiError(404, "This Charge does not exist");
+              return achada;
+            },
             obterVenda: async (id: number) => {
               chamadas.push(`venda:${id}`);
               if (id === vendaQueFalha) throw new Error("Conexa respondeu 500");
@@ -81,7 +87,7 @@ vi.mock("@/server/integrations/conexa/sistema", () => ({
       : { erro: "a integração do Conexa está desligada" },
 }));
 
-const { conferirNotasFiscais, reiniciarRelogioDasNotas, reclassificar } = await import("./conferir");
+const { conferirNotasFiscais, conferirUmaCobranca, reiniciarRelogioDasNotas, reclassificar } = await import("./conferir");
 const { lerConfigNotasFiscais } = await import("./config");
 
 const rodar = () => conferirNotasFiscais(AGORA, { esperar: true, forcar: true });
@@ -245,5 +251,94 @@ describe("notas fiscais em modo sombra", () => {
       await rodar();
       expect(linhas[0]).toMatchObject({ cobrancaId: 900, situacao: "PRONTA" });
     });
+  });
+});
+
+describe("o aviso do Conexa lê UMA cobrança", () => {
+  it("⚠ cobrança paga hoje: lê só ela e as vendas, e grava como a rodada gravaria", async () => {
+    pagas = [cobranca(900, [1, 2]), cobranca(901, [3])];
+    const r = await conferirUmaCobranca(900, AGORA);
+    expect(r).toMatchObject({ acao: "gravada", situacao: "PRONTA" });
+    expect(chamadas).toEqual(["cobranca:900", "venda:1", "produto:2970", "venda:2", "produto:2880"]);
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]).toMatchObject({
+      cobrancaId: 900,
+      evento: "quitada",
+      situacao: "PRONTA",
+      notas: [expect.objectContaining({ chave: "conexa-900-030302", valorCentavos: 14900 })],
+    });
+  });
+
+  it("⚠ o resultado é o mesmo que a rodada de 30 min daria para a mesma cobrança", async () => {
+    pagas = [cobranca(900, [1, 2])];
+    await conferirUmaCobranca(900, AGORA);
+    const doAviso = linhas[0];
+    linhas = [];
+    reiniciarRelogioDasNotas();
+    await rodar();
+    expect(linhas[0]).toMatchObject({
+      evento: doAviso.evento,
+      situacao: doAviso.situacao,
+      valorCentavos: doAviso.valorCentavos,
+      notas: doAviso.notas,
+    });
+  });
+
+  it("cobrança já registrada não é lida de novo", async () => {
+    pagas = [cobranca(900, [1])];
+    await conferirUmaCobranca(900, AGORA);
+    chamadas = [];
+    const r = await conferirUmaCobranca(900, AGORA);
+    expect(r.acao).toBe("ja vista");
+    expect(chamadas).toEqual([]);
+  });
+
+  it("⚠ o aviso pode chegar antes: cobrança ainda em aberto na API não é registrada, e diz que não está paga", async () => {
+    emAberto = [cobranca(910, [1], { status: "unpaid", paidAmount: null, paymentDate: null })];
+    const r = await conferirUmaCobranca(910, AGORA);
+    expect(r).toMatchObject({ acao: "ignorada", naoPaga: true });
+    expect(linhas).toHaveLength(0);
+    expect(chamadas).toEqual(["cobranca:910"]);
+  });
+
+  it("cliente 'antes' com cobrança gerada na janela: grava como 'gerada'", async () => {
+    config = { ...config, inicio: "2026-10-01", clientes: [{ clienteId: 980, regra: "antes" }] };
+    emAberto = [
+      cobranca(920, [1], { customerId: 980, status: "unpaid", paidAmount: null, paymentDate: null, createdAt: "2026-10-05T09:00:00-03:00" }),
+    ];
+    const r = await conferirUmaCobranca(920, AGORA);
+    expect(r).toMatchObject({ acao: "gravada" });
+    expect(linhas[0]).toMatchObject({ cobrancaId: 920, evento: "gerada" });
+  });
+
+  it("pagamento anterior à janela da conferência é ignorado", async () => {
+    pagas = [cobranca(930, [1], { paymentDate: "2026-09-01" })];
+    const r = await conferirUmaCobranca(930, AGORA);
+    expect(r.acao).toBe("ignorada");
+    expect(r.detalhe).toMatch(/anterior à janela/);
+    expect(linhas).toHaveLength(0);
+  });
+
+  it("número que o Conexa não conhece é ignorado, sem erro", async () => {
+    const r = await conferirUmaCobranca(99999, AGORA);
+    expect(r).toMatchObject({ acao: "ignorada" });
+    expect(r.detalhe).toMatch(/não conhece/);
+  });
+
+  it("integração desligada ou Conexa fora: não lê nada", async () => {
+    ligada = false;
+    expect((await conferirUmaCobranca(900, AGORA)).acao).toBe("desligada");
+    ligada = true;
+    conexaAberto = false;
+    expect((await conferirUmaCobranca(900, AGORA)).acao).toBe("sem conexa");
+    expect(chamadas).toEqual([]);
+  });
+
+  it("⚠ falha ao ler uma venda não grava a cobrança pela metade", async () => {
+    pagas = [cobranca(900, [1, 2])];
+    vendaQueFalha = 2;
+    const r = await conferirUmaCobranca(900, AGORA);
+    expect(r.acao).toBe("falhou");
+    expect(linhas).toHaveLength(0);
   });
 });

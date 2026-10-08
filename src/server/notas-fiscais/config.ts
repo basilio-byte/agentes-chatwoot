@@ -159,6 +159,21 @@ export const notasFiscaisConfigSchema = z.object({
     cautela: 3,
     pausadaMotivo: null,
   }),
+  /**
+   * O aviso do Conexa (`/api/webhooks/conexa/<token>`): a nota sai na hora do
+   * pagamento. Guardamos SÓ o hash do token — o endereço inteiro aparece uma vez,
+   * quando é gerado. Nulo = o endereço ainda não foi gerado.
+   */
+  aviso: z
+    .object({
+      tokenHash: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .nullable()
+        .default(null),
+      geradoEm: z.string().nullable().default(null),
+    })
+    .default({ tokenHash: null, geradoEm: null }),
 });
 
 export type NotasFiscaisConfig = z.infer<typeof notasFiscaisConfigSchema>;

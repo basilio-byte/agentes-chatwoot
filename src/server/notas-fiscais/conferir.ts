@@ -167,10 +167,7 @@ async function rodar(agora: Date, config: NotasFiscaisConfig): Promise<RodadaFis
   let falhas = 0;
   for (const { cobranca, evento } of lote) {
     try {
-      const fora = motivoParaFicarFora(cobranca, config, evento);
-      const itens = fora ? [] : await lerItens(cliente, cobranca, produtos);
-      const decisao = fora ? decisaoDeFora(cobranca, fora) : decidir(cobranca, itens, config, evento);
-      await gravar(cobranca, evento, itens, decisao);
+      await registrarCobranca(cliente, cobranca, evento, config, produtos);
       registradas++;
     } catch (erro) {
       if (ehConflitoDeUnique(erro)) continue;
@@ -195,10 +192,105 @@ async function rodar(agora: Date, config: NotasFiscaisConfig): Promise<RodadaFis
 
 const quando = (c: Candidata) => c.cobranca.quitadaEm ?? c.cobranca.criadaEm ?? "";
 
+type ProdutosLidos = Map<number, { categoriaId: number | null } | null>;
+
+/**
+ * Lê as vendas, decide e grava UMA cobrança. É o miolo que a rodada de 30 min e
+ * o aviso do Conexa compartilham: uma só classificação, para o aviso nunca
+ * decidir diferente do relógio. Lança se alguma leitura falhar (nada é gravado).
+ */
+async function registrarCobranca(
+  cliente: ConexaClient,
+  cobranca: CobrancaLida,
+  evento: Evento,
+  config: NotasFiscaisConfig,
+  produtos: ProdutosLidos,
+): Promise<Decisao> {
+  const fora = motivoParaFicarFora(cobranca, config, evento);
+  const itens = fora ? [] : await lerItens(cliente, cobranca, produtos);
+  const decisao = fora ? decisaoDeFora(cobranca, fora) : decidir(cobranca, itens, config, evento);
+  await gravar(cobranca, evento, itens, decisao);
+  return decisao;
+}
+
+export type CobrancaDoAviso = {
+  acao: "gravada" | "ja vista" | "ignorada" | "desligada" | "sem conexa" | "falhou";
+  detalhe: string;
+  situacao?: string;
+  /** A API do Conexa ainda não mostra a cobrança paga (o aviso pode chegar antes). */
+  naoPaga?: boolean;
+};
+
+/**
+ * O aviso do Conexa chegou: lê ESTA cobrança pela API e a registra como a
+ * rodada de 30 min registraria. ⚠ Nada do corpo do aviso entra aqui, só o id: o
+ * valor, os itens e o cliente vêm da API. Cobrança que a API ainda não mostra
+ * paga (o aviso pode chegar antes) fica para o relógio.
+ */
+export async function conferirUmaCobranca(cobrancaId: number, agora = new Date()): Promise<CobrancaDoAviso> {
+  const linha = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.NOTAS_FISCAIS },
+    select: { enabled: true, config: true },
+  });
+  if (!linha?.enabled) return { acao: "desligada", detalhe: "a integração de notas fiscais está desligada" };
+  const config = lerConfigNotasFiscais(linha.config);
+
+  const vista = await db.cobrancaFiscal.findMany({
+    where: { cobrancaId: { in: [cobrancaId] } },
+    select: { cobrancaId: true },
+  });
+  if (vista.length) return { acao: "ja vista", detalhe: "a cobrança já está registrada" };
+
+  const aberto = await abrirConexa("notas-fiscais");
+  if ("erro" in aberto) return { acao: "sem conexa", detalhe: aberto.erro };
+
+  let bruta: Record<string, unknown>;
+  try {
+    bruta = await aberto.cliente.obterCobranca(cobrancaId);
+  } catch (erro) {
+    if (erro instanceof ConexaApiError && erro.status === 404) {
+      return { acao: "ignorada", detalhe: "o Conexa não conhece essa cobrança" };
+    }
+    return { acao: "falhou", detalhe: `não consegui ler a cobrança no Conexa: ${mensagemDe(erro)}` };
+  }
+  const cobranca = lerCobranca(bruta);
+  if (!cobranca) return { acao: "ignorada", detalhe: "a cobrança veio sem os campos necessários" };
+
+  const desde = desdeQuando(diaEmSaoPaulo(agora), config.inicio);
+  let evento: Evento;
+  if (cobranca.status === "paid") {
+    if (!cobranca.quitadaEm || cobranca.quitadaEm < desde) {
+      return { acao: "ignorada", detalhe: "o pagamento é anterior à janela da conferência" };
+    }
+    evento = "quitada";
+  } else if (
+    cobranca.status === "unpaid" &&
+    config.clientes.some((c) => c.regra === "antes" && c.clienteId === cobranca.clienteId) &&
+    cobranca.criadaEm &&
+    cobranca.criadaEm >= desde
+  ) {
+    evento = "gerada";
+  } else {
+    return {
+      acao: "ignorada",
+      detalhe: `a cobrança está "${cobranca.status ?? "sem situação"}" no Conexa`,
+      naoPaga: cobranca.status === "unpaid",
+    };
+  }
+
+  try {
+    const decisao = await registrarCobranca(aberto.cliente, cobranca, evento, config, new Map());
+    return { acao: "gravada", detalhe: decisao.motivo ?? `evento ${evento}`, situacao: decisao.situacao };
+  } catch (erro) {
+    if (ehConflitoDeUnique(erro)) return { acao: "ja vista", detalhe: "gravada por outra rodada ao mesmo tempo" };
+    return { acao: "falhou", detalhe: mensagemDe(erro) };
+  }
+}
+
 async function lerItens(
   cliente: ConexaClient,
   cobranca: CobrancaLida,
-  produtos: Map<number, { categoriaId: number | null } | null>,
+  produtos: ProdutosLidos,
 ): Promise<ItemClassificado[]> {
   const itens: ItemClassificado[] = [];
   for (const vendaId of cobranca.vendasIds) {

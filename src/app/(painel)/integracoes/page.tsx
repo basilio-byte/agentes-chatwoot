@@ -22,6 +22,7 @@ import {
   NotasFiscaisConfigForm,
   type LinhaDeCategoria,
 } from "@/components/notas-fiscais-config";
+import { AvisoDoConexa } from "@/components/aviso-do-conexa";
 import {
   clientesEmTexto,
   lerConfigNotasFiscais,
@@ -285,6 +286,12 @@ export default async function IntegracoesPage({
   });
   const resumoFiscal = await resumoDasCobrancas();
   const notasEmitidas = await resumoDasNotas();
+  const entregasDoAvisoDoConexa = await db.webhookEvent.findMany({
+    where: { provider: "CONEXA_AVISO" },
+    orderBy: { createdAt: "desc" },
+    take: 15,
+    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
+  });
   const chavesDaSpedy = chavesDaSpedyNoServidor();
   const emitindo = !!notasFiscais?.enabled && configNotas.emissao.ligada;
   const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
@@ -1479,6 +1486,13 @@ export default async function IntegracoesPage({
                     somenteLeitura={!editavel}
                   />
                 </Card>
+
+                <AvisoDoConexa
+                  urlBase={`${origem}/api/webhooks/conexa`}
+                  geradoEm={configNotas.aviso.geradoEm}
+                  entregas={entregasDoAvisoDoConexa}
+                  podeGerar={sessao.user.role === UserRole.OWNER}
+                />
 
                 <Card className="space-y-3">
                   <h3 className="font-medium">Notas emitidas na Spedy</h3>

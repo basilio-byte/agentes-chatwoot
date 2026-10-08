@@ -1782,6 +1782,32 @@ a tela na aba "Notas fiscais" de Integrações.
     do n8n ser desligada, entram em `NotaFiscalEmitida` como `AUTORIZADA` com
     motivo `emitida pelo n8n …` (`MARCA_DO_N8N`): `enviarNota` as vê como
     "já existe", e `contarAutorizadas` NÃO as conta como nossas na cautela.
+  - ⚠ **O aviso do Conexa: a nota sai na hora do pagamento** (`aviso.ts`, rota
+    `/api/webhooks/conexa/<token>`, 08/10/2026). Sem ele a nota levava de 5 a 35
+    min (a leitura de pagamentos é de 30 em 30 e a emissão olha de 5 em 5). O
+    Conexa aceita vários endereços para o mesmo evento, então o n8n segue
+    recebendo o aviso como registro. **Só o número da cobrança do corpo é
+    aproveitado** (`idDaCobrancaNoAviso`): valor, itens e cliente vêm da API,
+    relida na hora (`conferirUmaCobranca`, a MESMA classificação da rodada de 30
+    min — `registrarCobranca` é compartilhada, e um teste trava que as duas dão o
+    mesmo resultado). O corpo forjado, no pior caso, faz reler uma cobrança que
+    existe; corte, cautela e reserva antes de enviar decidem se emite. O corpo
+    também NÃO fica guardado na entrega (traz nome e e-mail de cliente, e a lista
+    é lida pela equipe toda): só `{cobrancaId, status}`.
+    - **Token no endereço, só o hash guardado** (`config.aviso.tokenHash`, sha256,
+      como o do MCP); o endereço inteiro aparece UMA vez, ao gerar (só
+      Proprietário). Gerar outro derruba o cadastrado no Conexa.
+    - **Responde 200 na hora e trabalha depois** (`after`): o Conexa trata
+      resposta lenta como falha e reenvia. Só 401/404 são erro de protocolo.
+    - **Aviso repetido em menos de 1 min é ignorado**; aviso que chega ANTES de a
+      API mostrar o pagamento espera 15 s e 30 s e olha de novo, e depois disso
+      fica para a leitura de 30 min, que continua como rede de segurança. A
+      emissão disparada pelo aviso espera a rodada em andamento (até 4 × 5 s).
+    - **Serve aos dois eventos** (paga e gerada): quem decide é a cobrança relida
+      (`paid` → quitada; `unpaid` de cliente "antes" na janela → gerada).
+    - **Deixa rastro**: cada entrega é um `WebhookEvent` (`CONEXA_AVISO`) com o
+      desfecho (`emitida`, `registrada`, `ignorado`, `falhou`, `rejeitado`),
+      listado em Integrações → Notas fiscais.
   - **O que o n8n fazia e foi mantido:** `sendEmailToCustomer: true` (o cliente
     recebe a nota por e-mail da Spedy; padrão `enviarEmailAoCliente: true`).
   - **Acompanha mesmo com a emissão desligada**: nota que já saiu precisa terminar

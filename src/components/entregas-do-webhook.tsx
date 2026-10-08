@@ -18,6 +18,10 @@ const TOM: Record<string, "success" | "danger" | "neutral" | "accent"> = {
   // então nada muda no uso atual.
   executado: "success",
   falhou: "danger",
+  // Vocabulário do aviso do Conexa (nota fiscal na hora do pagamento).
+  emitida: "success",
+  registrada: "neutral",
+  recebido: "accent",
 };
 
 const TEXTO_VAZIO_PADRAO = (
@@ -69,7 +73,7 @@ export function EntregasDoWebhook({
     ultimaRecusa >= 0 &&
     entregas
       .slice(0, ultimaRecusa)
-      .some((e) => e.resultado === "agendado" || e.resultado === "ignorado");
+      .some((e) => ["agendado", "ignorado", "emitida", "registrada"].includes(e.resultado ?? ""));
   const secretQuebrado = ultimaRecusa >= 0 && !aceitaDepois;
 
   const corpo = (
