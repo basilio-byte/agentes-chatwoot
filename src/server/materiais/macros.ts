@@ -26,6 +26,9 @@ export const PREFIXOS_PADRAO = ["[SR]", "[SA]", "[CA]", "[A]", "-[SA] Promoção
 /** Teto de arquivos por envio: um material de sala tem duas imagens. */
 export const MAX_ARQUIVOS = 6;
 
+/** Teto de textos por envio: o catálogo de preços tem um, o de formatos tem um. */
+export const MAX_TEXTOS = 3;
+
 export type ArquivoDoMaterial = {
   blobId: number;
   nome: string;
@@ -33,10 +36,21 @@ export type ArquivoDoMaterial = {
   url: string;
 };
 
+/**
+ * Um passo do macro, na ordem em que a equipe o montou: o texto (`send_message`)
+ * e as imagens (`send_attachment`). O catálogo de preços manda o texto com os
+ * pacotes de horas e DEPOIS a imagem da tabela; mandar só a imagem perde o texto.
+ */
+export type Passo =
+  | { tipo: "texto"; texto: string }
+  | { tipo: "arquivo"; arquivo: ArquivoDoMaterial };
+
 export type Material = {
   id: number;
   nome: string;
   arquivos: ArquivoDoMaterial[];
+  /** Texto e imagens do macro, na ordem das ações. */
+  passos: Passo[];
 };
 
 /** Sem acento, sem caixa, espaços únicos: "Reunião  02" casa com "reuniao 02". */
@@ -84,27 +98,63 @@ function palavras(texto: string): string[] {
  * cada um mora.
  */
 export function arquivosDoMacro(macro: MacroChatwoot): ArquivoDoMaterial[] {
-  const porBlob = new Map((macro.files ?? []).map((f) => [f.blob_id, f]));
-  const ids = (macro.actions ?? [])
-    .filter((a) => a.action_name === "send_attachment")
-    .flatMap((a) => a.action_params ?? [])
-    .map(Number)
-    .filter((id) => Number.isInteger(id) && id > 0);
+  return passosDoMacro(macro).flatMap((p) => (p.tipo === "arquivo" ? [p.arquivo] : []));
+}
 
+/**
+ * Os passos que o macro executa HOJE, na ordem das ações: o texto de cada
+ * `send_message` e os arquivos de cada `send_attachment` (mesma regra de
+ * `arquivosDoMacro`: valem os ids das ações, nunca a lista `files`).
+ *
+ * Só texto e arquivo: as outras ações (atribuir, etiquetar, mudar status) NÃO
+ * são passos — o macro não é executado, só o que o cliente enxerga sai.
+ */
+export function passosDoMacro(macro: MacroChatwoot): Passo[] {
+  const porBlob = new Map((macro.files ?? []).map((f) => [f.blob_id, f]));
   const vistos = new Set<number>();
-  const arquivos: ArquivoDoMaterial[] = [];
-  for (const id of ids) {
-    const arquivo = porBlob.get(id);
-    if (!arquivo || vistos.has(id)) continue;
-    vistos.add(id);
-    arquivos.push({
-      blobId: id,
-      nome: arquivo.filename?.trim() || `arquivo-${id}`,
-      tipo: arquivo.file_type?.trim() || "application/octet-stream",
-      url: arquivo.file_url,
-    });
+  const passos: Passo[] = [];
+  for (const acao of macro.actions ?? []) {
+    if (acao.action_name === "send_message") {
+      const texto = String(acao.action_params?.[0] ?? "").trim();
+      if (texto) passos.push({ tipo: "texto", texto });
+      continue;
+    }
+    if (acao.action_name !== "send_attachment") continue;
+    for (const id of (acao.action_params ?? []).map(Number)) {
+      if (!Number.isInteger(id) || id <= 0) continue;
+      const arquivo = porBlob.get(id);
+      if (!arquivo || vistos.has(id)) continue;
+      vistos.add(id);
+      passos.push({
+        tipo: "arquivo",
+        arquivo: {
+          blobId: id,
+          nome: arquivo.filename?.trim() || `arquivo-${id}`,
+          tipo: arquivo.file_type?.trim() || "application/octet-stream",
+          url: arquivo.file_url,
+        },
+      });
+    }
   }
-  return arquivos;
+  return passos;
+}
+
+/**
+ * O texto do macro usa variável do Chatwoot (`{{ contact.name }}`)? Quem manda
+ * pelo robô não tem como preenchê-la, e o cliente leria as chaves.
+ */
+export function textoComVariavel(texto: string): boolean {
+  return /\{\{[^}]*\}\}/.test(texto);
+}
+
+/** Respeita os tetos de arquivos e de textos, mantendo a ordem do macro. */
+export function limitarPassos(passos: Passo[]): Passo[] {
+  let arquivos = 0;
+  let textos = 0;
+  return passos.filter((p) => {
+    if (p.tipo === "arquivo") return ++arquivos <= MAX_ARQUIVOS;
+    return ++textos <= MAX_TEXTOS;
+  });
 }
 
 /**
@@ -121,7 +171,12 @@ export function materiaisDisponiveis(
   return macros
     .filter((m) => (m.visibility ?? "").toLowerCase() === "global")
     .filter((m) => liberado(m.name, prefixos))
-    .map((m) => ({ id: m.id, nome: m.name.trim(), arquivos: arquivosDoMacro(m) }))
+    .map((m) => ({
+      id: m.id,
+      nome: m.name.trim(),
+      arquivos: arquivosDoMacro(m),
+      passos: passosDoMacro(m),
+    }))
     .filter((m) => m.arquivos.length > 0)
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 }

@@ -8,9 +8,10 @@ import { baixarArquivo, mesmaOrigem } from "../openai/client";
 import {
   escolherMaterial,
   lerPrefixos,
+  limitarPassos,
   materiaisDisponiveis,
-  MAX_ARQUIVOS,
   PREFIXOS_PADRAO,
+  textoComVariavel,
   type Material,
 } from "@/server/materiais/macros";
 
@@ -100,7 +101,7 @@ export const materiaisIntegration: IntegrationDefinition = {
       name: "materiais_enviar",
       categoria: "Materiais",
       description:
-        "Manda ao cliente, no WhatsApp, as imagens (ou o arquivo) de um material pronto da equipe: capa e fotos de cada sala, formatos do auditório, catálogo de valores. Chame SEM material para ver a lista do que existe; depois, com o nome. As imagens saem na hora, antes do seu texto — no texto, só comente o que foi enviado. Não mande de novo o que já foi enviado nesta conversa.",
+        "Manda ao cliente, no WhatsApp, as imagens (ou o arquivo) de um material pronto da equipe: capa e fotos de cada sala, formatos do auditório, catálogo de valores. Chame SEM material para ver a lista do que existe; depois, com o nome. Sai também o texto que a equipe escreveu no macro (ex.: pacotes de horas do catálogo): não o repita nem refaça os valores. Tudo sai na hora, antes do seu texto — no texto, só comente o que foi enviado. Não mande de novo o que já foi enviado nesta conversa.",
       requiresConfirmation: true,
       inputSchema: z.object({
         material: z
@@ -158,8 +159,10 @@ export const materiaisIntegration: IntegrationDefinition = {
         }
 
         const escolhido = escolha.material;
-        const arquivos = escolhido.arquivos.slice(0, MAX_ARQUIVOS);
+        const passos = limitarPassos(escolhido.passos);
+        const arquivos = passos.flatMap((p) => (p.tipo === "arquivo" ? [p.arquivo] : []));
         const nomes = arquivos.map((a) => a.nome);
+        const textos = passos.flatMap((p) => (p.tipo === "texto" ? [p.texto] : []));
 
         const forma = ondeManda(ctx);
         if (forma === "simular") {
@@ -168,8 +171,9 @@ export const materiaisIntegration: IntegrationDefinition = {
             simulacao: true,
             material: escolhido.nome,
             arquivos: nomes,
+            ...(textos.length ? { textos } : {}),
             observacao:
-              "No playground nada é enviado. Num atendimento, estas imagens chegariam ao cliente agora, antes do seu texto.",
+              "No playground nada é enviado. Num atendimento, estas imagens (e o texto da equipe, se houver) chegariam ao cliente agora, antes do seu texto.",
           };
         }
         if (forma === "semConversa") {
@@ -213,7 +217,38 @@ export const materiaisIntegration: IntegrationDefinition = {
         }
 
         const enviados: string[] = [];
-        for (const arquivo of arquivos) {
+        let textosEnviados = 0;
+        const textosPulados: string[] = [];
+        // Na ordem do macro: é assim que a equipe manda (o catálogo abre com o
+        // texto dos pacotes e fecha com a imagem da tabela).
+        for (const passo of passos) {
+          if (passo.tipo === "texto") {
+            // ⚠ Texto com variável do Chatwoot sairia com as chaves à mostra.
+            if (textoComVariavel(passo.texto)) {
+              textosPulados.push(passo.texto.slice(0, 60));
+              continue;
+            }
+            try {
+              await robo.enviarMensagem(conversa, passo.texto);
+              textosEnviados++;
+              if (ctx.sinais) ctx.sinais.avisouCliente = true;
+            } catch (erro) {
+              const motivo = erro instanceof Error ? erro.message : String(erro);
+              if (enviados.length || textosEnviados) jaEnviados.push(escolhido.id);
+              return {
+                enviado: enviados.length > 0 || textosEnviados > 0,
+                material: escolhido.nome,
+                ...(enviados.length ? { enviados } : {}),
+                erro: `Falhei ao mandar o texto do macro: ${motivo.slice(0, 200)}`,
+                comoSeguir:
+                  enviados.length || textosEnviados
+                    ? "Parte do material chegou ao cliente. Não chame de novo; diga que a equipe manda o resto se ele precisar."
+                    : "Nada chegou ao cliente. Não tente de novo agora; siga sem o material.",
+              };
+            }
+            continue;
+          }
+          const arquivo = passo.arquivo;
           try {
             // O endereço vem do macro, mas só se baixa da própria instância.
             if (!mesmaOrigem(arquivo.url, robo.baseUrl)) {
@@ -231,15 +266,16 @@ export const materiaisIntegration: IntegrationDefinition = {
             if (ctx.sinais) ctx.sinais.avisouCliente = true;
           } catch (erro) {
             const motivo = erro instanceof Error ? erro.message : String(erro);
-            if (enviados.length) jaEnviados.push(escolhido.id);
+            if (enviados.length || textosEnviados) jaEnviados.push(escolhido.id);
             return {
-              enviado: enviados.length > 0,
+              enviado: enviados.length > 0 || textosEnviados > 0,
               material: escolhido.nome,
               ...(enviados.length ? { enviados } : {}),
               erro: `Falhei ao mandar "${arquivo.nome}": ${motivo.slice(0, 200)}`,
-              comoSeguir: enviados.length
-                ? "Parte das imagens chegou ao cliente. Não chame de novo; diga que a equipe manda o resto se ele precisar."
-                : "Nada chegou ao cliente. Não tente de novo agora; siga sem as imagens.",
+              comoSeguir:
+                enviados.length || textosEnviados
+                  ? "Parte do material chegou ao cliente. Não chame de novo; diga que a equipe manda o resto se ele precisar."
+                  : "Nada chegou ao cliente. Não tente de novo agora; siga sem as imagens.",
             };
           }
         }
@@ -249,8 +285,13 @@ export const materiaisIntegration: IntegrationDefinition = {
           enviado: true,
           material: escolhido.nome,
           enviados,
-          observacao:
-            "As imagens já chegaram ao cliente, antes do seu texto. No texto, comente em uma linha o que foi enviado; não chame de novo para o mesmo material.",
+          ...(textosEnviados ? { textosEnviados } : {}),
+          ...(textosPulados.length
+            ? { textosPulados, avisoDosTextos: "Parte do texto do macro não saiu (tem variável do Chatwoot). Não invente o conteúdo: diga que a equipe confirma o restante." }
+            : {}),
+          observacao: textosEnviados
+            ? "As imagens e o texto da equipe já chegaram ao cliente, antes do seu texto. Não repita nem refaça os valores; no texto, comente em uma linha o que foi enviado. Não chame de novo para o mesmo material."
+            : "As imagens já chegaram ao cliente, antes do seu texto. No texto, comente em uma linha o que foi enviado; não chame de novo para o mesmo material.",
         };
       },
     },

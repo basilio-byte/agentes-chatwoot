@@ -18,7 +18,10 @@ let aoVivo: { status: string; assigneeId: number | null; assigneeTipo: string | 
   assigneeTipo: null,
 };
 let enviados: Array<{ conversa: number; nome: string; tipo: string; tamanho: number }> = [];
+/** Tudo que o robô mandou, na ordem: o texto do macro e cada imagem. */
+let saida: string[] = [];
 let falharEnvioNumero: number | null = null;
+let falharTexto = false;
 let semLeitura = false;
 
 vi.mock("../chatwoot/credenciais", () => {
@@ -30,7 +33,13 @@ vi.mock("../chatwoot/credenciais", () => {
     enviarArquivo: async (conversa: number, a: { nome: string; tipo: string; bytes: Buffer }) => {
       if (falharEnvioNumero === enviados.length + 1) throw new Error("Chatwoot respondeu 500");
       enviados.push({ conversa, nome: a.nome, tipo: a.tipo, tamanho: a.bytes.length });
+      saida.push(`imagem: ${a.nome}`);
       return { id: 900 + enviados.length };
+    },
+    enviarMensagem: async (_conversa: number, texto: string) => {
+      if (falharTexto) throw new Error("Chatwoot respondeu 500");
+      saida.push(`texto: ${texto}`);
+      return { id: 800 + saida.length };
     },
   };
   return {
@@ -64,6 +73,17 @@ const sala02: MacroChatwoot = {
     { blob_id: 31123, file_url: url(31123), file_type: "image/png", filename: "Sala de Reunião 02 — Fotos.png" },
   ],
 };
+/** Como o macro real é montado: o texto dos pacotes primeiro, a imagem da tabela depois. */
+const catalogoSR: MacroChatwoot = {
+  id: 15,
+  name: "[SR] Catálogo (Preços)",
+  visibility: "global",
+  actions: [
+    { action_name: "send_message", action_params: ["Seguem as informações sobre os valores! ✅\n\nO pacote de 10h tem a hora a R$49."] },
+    { action_name: "send_attachment", action_params: [41001] },
+  ],
+  files: [{ blob_id: 41001, file_url: url(41001), file_type: "image/png", filename: "Contracapa — Valores.png" }],
+};
 const passagem: MacroChatwoot = {
   id: 91,
   name: "[C] Passagem para Lucas",
@@ -90,7 +110,9 @@ beforeEach(() => {
   macros = [sala02, passagem];
   aoVivo = { status: "open", assigneeId: null, assigneeTipo: null };
   enviados = [];
+  saida = [];
   falharEnvioNumero = null;
+  falharTexto = false;
   semLeitura = false;
 });
 
@@ -180,6 +202,61 @@ describe("materiais_enviar", () => {
     const r = await enviar("reunião 02", ctx({ config: { prefixos: [] } }));
     expect(String(r.erro)).toContain("Nenhum material está liberado");
     expect(enviados).toEqual([]);
+  });
+
+  describe("o texto que a equipe escreveu no macro", () => {
+    beforeEach(() => {
+      macros = [sala02, catalogoSR, passagem];
+    });
+
+    it("⚠ o catálogo manda o texto dos pacotes E a imagem, na ordem do macro", async () => {
+      const sinais: SinaisDoTurno = {};
+      const r = await enviar("[SR] Catálogo (Preços)", ctx({ sinais }));
+
+      expect(r).toMatchObject({ enviado: true, enviados: ["Contracapa — Valores.png"], textosEnviados: 1 });
+      expect(saida).toEqual([
+        "texto: Seguem as informações sobre os valores! ✅\n\nO pacote de 10h tem a hora a R$49.",
+        "imagem: Contracapa — Valores.png",
+      ]);
+      expect(sinais.avisouCliente).toBe(true);
+      expect(String(r.observacao)).toContain("Não repita nem refaça os valores");
+    });
+
+    it("material sem texto continua mandando só as imagens", async () => {
+      const r = await enviar("reunião 02");
+      expect(r.textosEnviados).toBeUndefined();
+      expect(saida.every((s) => s.startsWith("imagem:"))).toBe(true);
+    });
+
+    it("⚠ texto com variável do Chatwoot não sai com as chaves à mostra: pula e avisa", async () => {
+      macros = [
+        {
+          ...catalogoSR,
+          actions: [
+            { action_name: "send_message", action_params: ["Olá {{ contact.name }}, seguem os valores"] },
+            { action_name: "send_attachment", action_params: [41001] },
+          ],
+        },
+      ];
+      const r = await enviar("[SR] Catálogo (Preços)");
+      expect(saida).toEqual(["imagem: Contracapa — Valores.png"]);
+      expect(r).toMatchObject({ enviado: true, textosPulados: [expect.stringContaining("Olá")] });
+      expect(String(r.avisoDosTextos)).toContain("a equipe confirma");
+    });
+
+    it("falha ao mandar o texto: nada chegou, e a recusa diz para não tentar de novo", async () => {
+      falharTexto = true;
+      const r = await enviar("[SR] Catálogo (Preços)");
+      expect(r.enviado).toBe(false);
+      expect(String(r.comoSeguir)).toContain("Nada chegou ao cliente");
+      expect(saida).toEqual([]);
+    });
+
+    it("o playground só simula, e mostra o texto que iria", async () => {
+      const r = await enviar("[SR] Catálogo (Preços)", ctx({ source: RunSource.PLAYGROUND, chatwootConversationId: undefined }));
+      expect(r).toMatchObject({ simulacao: true, textos: [expect.stringContaining("pacote de 10h")] });
+      expect(saida).toEqual([]);
+    });
   });
 
   it("sem o token de leitura, explica em vez de fingir que não há material", async () => {

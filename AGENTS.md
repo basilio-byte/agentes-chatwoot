@@ -1467,6 +1467,19 @@ equipe: formatos, capacidades e "se possível foto"). Regras puras e testadas em
   prazos, NPS e janela — e rodaria o resto do macro (atribuir, etiquetar,
   mandar texto). Só os arquivos saem, pelo robô da conversa, um por mensagem,
   como a execução do macro faz.
+- ⚠ **O TEXTO do macro também sai** (08/10/2026, pedido do Diego: o agente dizia
+  que só informava valor depois da reserva). Os catálogos de preço de sala de
+  reunião, atendimento e cabine abrem com um `send_message` — as condições de
+  pacote de horas, com valores DIFERENTES por espaço — e fecham com a imagem da
+  tabela; mandar só a imagem perdia o texto. `passosDoMacro` devolve texto e
+  imagem NA ORDEM DAS AÇÕES, e a ferramenta manda na mesma ordem. Só
+  `send_message` e `send_attachment` são passos: atribuir, etiquetar e mudar
+  status continuam não executados. **Texto com variável do Chatwoot**
+  (`{{ contact.name }}`) NÃO sai (o cliente leria as chaves): é pulado, e o
+  retorno diz ao agente para não inventar o resto. O texto vem do macro, nunca do
+  prompt: a equipe edita o preço no Chatwoot e o agente passa a mandar o novo.
+- ⚠ **Macro PESSOAL não é material.** O "[CA] Cabine (Preços)" nasceu pessoal em
+  08/10/2026 e o agente não o enxergava até alguém torná-lo global no Chatwoot.
 - ⚠ **Os arquivos são os das AÇÕES, não os de `files`.** `files` guarda também
   versões antigas (o macro da Sala 01 ainda carrega a foto de antes da capa
   nova); o que o macro manda hoje são os ids em `send_attachment`.

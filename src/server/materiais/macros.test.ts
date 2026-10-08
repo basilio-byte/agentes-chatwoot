@@ -5,8 +5,11 @@ import {
   escolherMaterial,
   lerPrefixos,
   liberado,
+  limitarPassos,
   materiaisDisponiveis,
+  passosDoMacro,
   PREFIXOS_PADRAO,
+  textoComVariavel,
 } from "./macros";
 
 const BASE = "https://chatwoot.test/rails/active_storage/blobs/redirect";
@@ -176,5 +179,67 @@ describe("lerPrefixos", () => {
 
   it("lista vazia gravada é vazia — desligar tudo é escolha de quem configura", () => {
     expect(lerPrefixos([])).toEqual([]);
+  });
+});
+
+describe("os passos do macro (texto e imagem, na ordem)", () => {
+  const macro = (acoes: MacroChatwoot["actions"]): MacroChatwoot => ({
+    id: 1,
+    name: "[SR] Catálogo (Preços)",
+    visibility: "global",
+    actions: acoes,
+    files: [
+      { blob_id: 7, file_url: "https://c/7.png", file_type: "image/png", filename: "a.png" },
+      { blob_id: 8, file_url: "https://c/8.png", file_type: "image/png", filename: "b.png" },
+    ],
+  });
+
+  it("segue a ordem das ações: o texto antes da imagem, como a equipe monta", () => {
+    const passos = passosDoMacro(
+      macro([
+        { action_name: "send_message", action_params: ["  Seguem os valores  "] },
+        { action_name: "send_attachment", action_params: [7] },
+      ]),
+    );
+    expect(passos.map((p) => p.tipo)).toEqual(["texto", "arquivo"]);
+    expect(passos[0]).toEqual({ tipo: "texto", texto: "Seguem os valores" });
+  });
+
+  it("⚠ atribuir, etiquetar e mudar status NÃO são passos: o macro não é executado", () => {
+    const passos = passosDoMacro(
+      macro([
+        { action_name: "assign_agent", action_params: [28] },
+        { action_name: "add_label", action_params: ["x"] },
+        { action_name: "send_attachment", action_params: [7] },
+      ]),
+    );
+    expect(passos).toHaveLength(1);
+    expect(passos[0].tipo).toBe("arquivo");
+  });
+
+  it("texto vazio e arquivo repetido ou desconhecido ficam de fora", () => {
+    const passos = passosDoMacro(
+      macro([
+        { action_name: "send_message", action_params: ["   "] },
+        { action_name: "send_attachment", action_params: [7] },
+        { action_name: "send_attachment", action_params: [7, 999] },
+      ]),
+    );
+    expect(passos).toHaveLength(1);
+  });
+
+  it("reconhece variável do Chatwoot no texto", () => {
+    expect(textoComVariavel("Olá {{ contact.name }}")).toBe(true);
+    expect(textoComVariavel("Pacote de 10h: R$49")).toBe(false);
+  });
+
+  it("respeita os tetos sem trocar a ordem", () => {
+    const muitos = Array.from({ length: 9 }, (_, i) => ({
+      tipo: "arquivo" as const,
+      arquivo: { blobId: i + 1, nome: `${i}.png`, tipo: "image/png", url: "u" },
+    }));
+    const limitados = limitarPassos([{ tipo: "texto", texto: "oi" }, ...muitos]);
+    expect(limitados.filter((p) => p.tipo === "arquivo")).toHaveLength(6);
+    expect(limitados[0].tipo).toBe("texto");
   });
 });
