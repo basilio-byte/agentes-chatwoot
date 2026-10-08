@@ -1761,6 +1761,27 @@ a tela na aba "Notas fiscais" de Integrações.
     emissor nacional e declara usar o item da LC 116 e o código municipal; as
     notas atuais do n8n saem com esses campos VAZIOS e o NBS padrão, e foram
     autorizadas. **Se o Natal aceita o `030302` só a primeira emissão real diz.**
+  - ⚠ **Cautela: as primeiras notas saem uma de cada vez e problema desliga a
+    emissão SOZINHA** (`emissao.cautela`, 3 por padrão; pedido do usuário em
+    08/10/2026, para ligar ao vivo com o n8n já sem emitir). Enquanto menos de
+    `cautela` notas NOSSAS tiverem sido autorizadas, a próxima só sai depois de a
+    anterior terminar (`vagasNaCautela`); depois de enviar, a rodada confere na
+    hora, 3 s depois, em vez de esperar os 5 min. Desliga (`ligada=false` e
+    `pausadaMotivo` à vista na tela) quando: a prefeitura **rejeita**; a Spedy
+    **recusa** (4xx que não é de cadastro); ou o **valor registrado difere do
+    planejado** (`divergenciaDeValor`, mesmo com a nota autorizada). Na cautela
+    UM problema basta; passada a cautela, três na mesma rodada — rejeição por
+    cadastro de um cliente não pode parar o resto. Cadastro ruim nunca desliga:
+    não gasta número e não é defeito nosso. Salvar a tela apaga o aviso: é a
+    pessoa dizendo que viu. A conferência das notas já enviadas vale ANTES de
+    mandar mais. Cada nota autorizada deixa no log `nota autorizada` com número,
+    valor, `effectiveDate` e `issuedOn` (é por ali que se prova o ponto em aberto
+    da data).
+  - **Corte sem nota em dobro:** o que o n8n já emitiu antes de ser desligado não
+    pode ser emitido de novo. As cobranças pagas no dia do corte, antes de a saída
+    do n8n ser desligada, entram em `NotaFiscalEmitida` como `AUTORIZADA` com
+    motivo `emitida pelo n8n …` (`MARCA_DO_N8N`): `enviarNota` as vê como
+    "já existe", e `contarAutorizadas` NÃO as conta como nossas na cautela.
   - **O que o n8n fazia e foi mantido:** `sendEmailToCustomer: true` (o cliente
     recebe a nota por e-mail da Spedy; padrão `enviarEmailAoCliente: true`).
   - **Acompanha mesmo com a emissão desligada**: nota que já saiu precisa terminar

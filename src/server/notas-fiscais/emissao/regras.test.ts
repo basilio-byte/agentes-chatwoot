@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { notasFiscaisConfigSchema } from "../config";
 import {
   codigoNacional,
+  divergenciaDeValor,
+  motivoParaPausar,
+  vagasNaCautela,
   cortar,
   dataDeCompetencia,
   LIMITES,
@@ -337,5 +340,32 @@ describe("o que a Spedy respondeu", () => {
       "E0240: O CEP informado não existe.",
     );
     expect(motivoDaRecusa(null)).toMatch(/sem dizer o motivo/);
+  });
+});
+
+describe("a cautela (regras puras)", () => {
+  it("na cautela é uma nota por vez; passada a cautela não há limite", () => {
+    expect(vagasNaCautela({ cautela: 3, autorizadas: 0, emVoo: 0 })).toBe(1);
+    expect(vagasNaCautela({ cautela: 3, autorizadas: 2, emVoo: 1 })).toBe(0);
+    expect(vagasNaCautela({ cautela: 3, autorizadas: 3, emVoo: 5 })).toBe(Number.POSITIVE_INFINITY);
+    expect(vagasNaCautela({ cautela: 0, autorizadas: 0, emVoo: 5 })).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("valor registrado diferente do planejado é divergência; igual, ou não informado, não é", () => {
+    expect(divergenciaDeValor({ cobrancaId: 7, valorCentavos: 14900, valorNaSpedy: 149 })).toBeNull();
+    expect(divergenciaDeValor({ cobrancaId: 7, valorCentavos: 112273, valorNaSpedy: 1122.73 })).toBeNull();
+    expect(divergenciaDeValor({ cobrancaId: 7, valorCentavos: 14900, valorNaSpedy: undefined })).toBeNull();
+    expect(divergenciaDeValor({ cobrancaId: 7, valorCentavos: 14900, valorNaSpedy: 148.99 })).toMatch(
+      /cobrança 7.*R\$ 148,99.*R\$ 149,00/,
+    );
+  });
+
+  it("na cautela um problema desliga; depois dela, só três na mesma rodada", () => {
+    expect(motivoParaPausar({ emCautela: true, problemas: [] })).toBeNull();
+    expect(motivoParaPausar({ emCautela: true, problemas: ["a"] })).toMatch(/nas primeiras notas: a/);
+    expect(motivoParaPausar({ emCautela: false, problemas: ["a", "b"] })).toBeNull();
+    expect(motivoParaPausar({ emCautela: false, problemas: ["a", "b", "c", "d"] })).toMatch(
+      /4 problemas numa rodada: a \| b \| c \(\+1\)/,
+    );
   });
 });

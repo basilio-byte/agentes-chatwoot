@@ -49,6 +49,9 @@ export function NotasFiscaisConfigForm({
     aPartirDe: string;
     enviarEmailAoCliente: boolean;
     emailsDeAviso: string;
+    cautela: string;
+    /** Por que o sistema desligou a emissão sozinho (nulo = não desligou). */
+    pausadaMotivo: string | null;
   };
   /** Se a chave de cada empresa está no servidor (nunca o valor). */
   chaves: Record<string, boolean>;
@@ -75,6 +78,7 @@ export function NotasFiscaisConfigForm({
   const [corte, setCorte] = useState(emissao.aPartirDe);
   const [emailAoCliente, setEmailAoCliente] = useState(emissao.enviarEmailAoCliente);
   const [avisos, setAvisos] = useState(emissao.emailsDeAviso);
+  const [cautela, setCautela] = useState(emissao.cautela);
 
   const enviar = (evento: React.FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
@@ -221,6 +225,13 @@ export function NotasFiscaisConfigForm({
           libere só as cobranças que ele <strong>não</strong> vai emitir, senão a nota sai em dobro.
         </Aviso>
 
+        {emissao.pausadaMotivo ? (
+          <Aviso tone="danger">
+            <strong>O sistema desligou a emissão sozinho:</strong> {emissao.pausadaMotivo}. Confira a lista de
+            notas abaixo, resolva a causa e só então ligue de novo (salvar esta tela apaga este aviso).
+          </Aviso>
+        ) : null}
+
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
           {Object.entries(chaves).map(([empresa, presente]) => (
             <span key={empresa} className={presente ? "" : "text-danger"}>
@@ -291,6 +302,22 @@ export function NotasFiscaisConfigForm({
           />
           Spedy envia a nota por e-mail ao cliente (o n8n já faz isso)
         </label>
+
+        <Field
+          label="Cautela: primeiras notas conferidas uma a uma"
+          hint="Enquanto menos que este número de notas nossas tiverem sido autorizadas, elas saem uma de cada vez, e qualquer problema (rejeição, recusa ou valor diferente do planejado) desliga a emissão sozinha. 0 = sem cautela."
+        >
+          <Input
+            type="number"
+            name="cautela"
+            min={0}
+            max={50}
+            value={cautela}
+            onChange={(e) => setCautela(e.target.value)}
+            disabled={somenteLeitura}
+            className="w-24 tabular-nums"
+          />
+        </Field>
 
         <Field
           label="Avisar por e-mail quando uma nota der problema"

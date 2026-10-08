@@ -58,6 +58,11 @@ export type NotaDaSpedy = {
   status: string;
   number: number | null;
   processingDetail: { status?: string; message?: string; code?: string } | null;
+  /** Valor da nota em reais, como a Spedy registrou (para conferir contra o que planejamos). */
+  amount?: number | null;
+  /** Data de competência/efetivação e data de emissão, como a Spedy devolve. */
+  effectiveDate?: string | null;
+  issuedOn?: string | null;
 };
 
 export type CorpoDeNota = {
@@ -150,6 +155,9 @@ function lerNota(bruto: unknown): NotaDaSpedy {
     integrationId: typeof n.integrationId === "string" ? n.integrationId : null,
     status: String(n.status ?? ""),
     number: typeof n.number === "number" && n.number > 0 ? n.number : null,
+    amount: typeof n.amount === "number" ? n.amount : null,
+    effectiveDate: typeof n.effectiveDate === "string" ? n.effectiveDate : null,
+    issuedOn: typeof n.issuedOn === "string" ? n.issuedOn : null,
     processingDetail: detalhe
       ? {
           status: typeof detalhe.status === "string" ? detalhe.status : undefined,

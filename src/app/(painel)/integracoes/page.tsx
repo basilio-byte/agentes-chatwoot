@@ -1471,6 +1471,8 @@ export default async function IntegracoesPage({
                       aPartirDe: configNotas.emissao.aPartirDe ?? "",
                       enviarEmailAoCliente: configNotas.emissao.enviarEmailAoCliente,
                       emailsDeAviso: configNotas.emissao.emailsDeAviso.join(" "),
+                      cautela: String(configNotas.emissao.cautela),
+                      pausadaMotivo: configNotas.emissao.pausadaMotivo,
                     }}
                     chaves={chavesDaSpedy}
                     emailNoServidor={emailNoServidor()}

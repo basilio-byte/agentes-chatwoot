@@ -1,4 +1,5 @@
 import { IntegrationProvider, SituacaoDaNota } from "@/generated/prisma/enums";
+import type { Prisma } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { diaEmSaoPaulo } from "@/lib/tempo";
@@ -17,7 +18,10 @@ import { lerConfigNotasFiscais, type NotasFiscaisConfig } from "../config";
 import type { NotaPlanejada } from "../regras";
 import { consultarCep } from "./cep";
 import {
+  divergenciaDeValor,
   lerTomador,
+  motivoParaPausar,
+  vagasNaCautela,
   montarCorpo,
   montarAviso,
   motivoDaRecusa,
@@ -57,6 +61,8 @@ const NOVAS_POR_RODADA = 10;
 const ACOMPANHADAS_POR_RODADA = 50;
 const PAUSA_ENTRE_ENVIOS_MS = 1_000;
 const PREFIXO_DE_CADASTRO = "Cadastro do cliente:";
+/** Linha que só existe para barrar a nota em dobro de cobrança que o n8n já emitiu. */
+export const MARCA_DO_N8N = "emitida pelo n8n";
 
 export type LinhaDaNota = {
   chave: string;
@@ -82,6 +88,10 @@ export type Repositorio = {
   /** Rejeitadas e com falha que ainda não foram levadas a uma pessoa. */
   aAvisar(limite: number): Promise<LinhaDaNota[]>;
   marcarAvisadas(chaves: string[], quando: Date): Promise<void>;
+  /** Notas NOSSAS autorizadas (as que o n8n já tinha emitido não contam). */
+  contarAutorizadas(): Promise<number>;
+  /** Enviadas à Spedy e ainda sem resposta da prefeitura. */
+  contarEmVoo(): Promise<number>;
 };
 
 export type ResultadoDoAviso = "enviado" | "sem provedor" | "falhou";
@@ -98,6 +108,25 @@ export type Dependencias = {
   agora: () => Date;
   /** Leva o problema a uma pessoa. `sem provedor`: falta a Resend no servidor. */
   avisar: (notas: NotaComProblema[], destinos: string[]) => Promise<ResultadoDoAviso>;
+  /**
+   * Onde o envio e o acompanhamento anotam o que deve fazer a rodada desligar a
+   * emissão (rejeição, recusa da Spedy, valor diferente). A rodada esvazia e lê.
+   */
+  alertas?: string[];
+  /** Desliga a emissão e guarda o motivo à vista na tela. */
+  desligar?: (motivo: string) => Promise<void>;
+  /** As cobranças prontas, na ordem de chegada. Sem isso, lê do banco. */
+  prontas?: () => Promise<LinhaPronta[]>;
+};
+
+export type LinhaPronta = {
+  cobrancaId: number;
+  empresaId: number;
+  clienteId: number;
+  situacao: string;
+  quitadaEm: string | null;
+  cobranca: unknown;
+  notas: unknown;
 };
 
 export type ResultadoDoEnvio =
@@ -167,7 +196,7 @@ export async function enviarNota(
     if (jaTentou) {
       const achada = await spedy.buscarPorIntegrationId(nota.chave);
       if (achada) {
-        await aplicar(dep, nota.chave, achada);
+        await aplicar(dep, nota.chave, achada, { cobrancaId: args.cobrancaId, valorCentavos: nota.valorCentavos });
         return "enviada";
       }
     }
@@ -179,11 +208,12 @@ export async function enviarNota(
       enviarEmailAoCliente: args.enviarEmailAoCliente,
     });
     const criada = await spedy.criarNota(corpo);
-    await aplicar(dep, nota.chave, criada);
+    await aplicar(dep, nota.chave, criada, { cobrancaId: args.cobrancaId, valorCentavos: nota.valorCentavos });
     return "enviada";
   } catch (erro) {
     if (ehRecusaDefinitiva(erro)) {
       await dep.repo.atualizar(nota.chave, { situacao: SituacaoDaNota.FALHOU, motivo: erro.message.slice(0, 500) });
+      dep.alertas?.push(`cobrança ${args.cobrancaId}: a Spedy recusou a nota (${erro.message.slice(0, 120)})`);
       return "falhou";
     }
     if (erro instanceof SpedyApiError && (erro.status === 429 || erro.status === 408)) {
@@ -214,14 +244,36 @@ function reserva(a: { nota: NotaPlanejada; cobrancaId: number; empresa: string }
 }
 
 /** O que a Spedy disse sobre a nota, na nossa linha. */
-async function aplicar(dep: Dependencias, chave: string, nota: NotaDaSpedy) {
+async function aplicar(
+  dep: Dependencias,
+  chave: string,
+  nota: NotaDaSpedy,
+  esperado: { cobrancaId: number; valorCentavos: number },
+) {
   const situacao = situacaoDoStatus(nota.status);
+  const motivo = situacao === "REJEITADA" ? motivoDaRecusa(nota.processingDetail) : null;
   await dep.repo.atualizar(chave, {
     situacao: SituacaoDaNota[situacao],
     spedyId: nota.id || null,
     numero: nota.number,
-    motivo: situacao === "REJEITADA" ? motivoDaRecusa(nota.processingDetail) : null,
+    motivo,
   });
+  if (situacao === "REJEITADA") {
+    dep.alertas?.push(`cobrança ${esperado.cobrancaId}: rejeitada pela prefeitura (${(motivo ?? "sem motivo").slice(0, 120)})`);
+  }
+  const divergencia = divergenciaDeValor({
+    cobrancaId: esperado.cobrancaId,
+    valorCentavos: esperado.valorCentavos,
+    valorNaSpedy: nota.amount,
+  });
+  if (divergencia) dep.alertas?.push(divergencia);
+  if (situacao === "AUTORIZADA") {
+    // Fica no log para conferir a data: nas notas do n8n `effectiveDate` == `issuedOn`.
+    logger.info(
+      { chave, cobrancaId: esperado.cobrancaId, numero: nota.number, valor: nota.amount, competencia: nota.effectiveDate, emitidaEm: nota.issuedOn },
+      "notas fiscais: nota autorizada",
+    );
+  }
 }
 
 export type Acompanhamento = { autorizadas: number; rejeitadas: number; naFila: number; falhas: number };
@@ -240,7 +292,7 @@ export async function acompanharNotas(dep: Dependencias): Promise<Acompanhamento
         r.naFila++;
         continue;
       }
-      await aplicar(dep, linha.chave, nota);
+      await aplicar(dep, linha.chave, nota, { cobrancaId: linha.cobrancaId, valorCentavos: linha.valorCentavos });
       const s = situacaoDoStatus(nota.status);
       if (s === "AUTORIZADA") r.autorizadas++;
       else if (s === "REJEITADA") r.rejeitadas++;
@@ -295,6 +347,10 @@ export type RodadaDeEmissao = {
   acompanhamento?: Acompanhamento;
   aviso?: Aviso;
   erro?: string;
+  /** Por que a emissão foi DESLIGADA nesta rodada. */
+  pausada?: string;
+  /** Há uma nota esperando a prefeitura (cautela): a seguinte só sai depois. */
+  aguardando?: boolean;
 };
 
 let ultima = 0;
@@ -322,7 +378,7 @@ export async function emitirNotasFiscais(
   rodando = true;
   try {
     const dep = opcoes.dependencias ?? dependenciasReais();
-    return await rodar(dep, config, opcoes.pausar ?? pausa);
+    return await rodarEmissao(dep, config, opcoes.pausar ?? pausa);
   } catch (erro) {
     logger.error({ erro: mensagemDe(erro) }, "notas fiscais: a emissão falhou");
     return { acao: "emitido", erro: mensagemDe(erro) };
@@ -337,12 +393,18 @@ export function reiniciarRelogioDaEmissao() {
   rodando = false;
 }
 
-async function rodar(
+/** Depois de enviar na cautela, dá um instante à prefeitura antes de conferir. */
+const ESPERA_DA_CONFERENCIA_MS = 3_000;
+
+export async function rodarEmissao(
   dep: Dependencias,
   config: NotasFiscaisConfig,
   pausar: (ms: number) => Promise<void>,
 ): Promise<RodadaDeEmissao> {
   const r: RodadaDeEmissao = { acao: "emitido", enviadas: 0, falhas: 0, incertas: 0, adiadas: 0, semChave: [] };
+  const alertas: string[] = [];
+  dep.alertas = alertas;
+  const cautela = config.emissao.cautela;
 
   // Acompanhar vale mesmo com a emissão desligada: nota que já saiu precisa
   // terminar de ser lida, e ler não escreve nada na Spedy.
@@ -352,16 +414,34 @@ async function rodar(
     return r;
   }
 
-  const prontas = await db.cobrancaFiscal.findMany({
-    where: { situacao: "PRONTA" },
-    orderBy: { criadaEm: "asc" },
-    take: 200,
-    select: { cobrancaId: true, empresaId: true, clienteId: true, situacao: true, quitadaEm: true, cobranca: true, notas: true },
-  });
+  /** Se há motivo para parar, desliga a emissão e diz por quê. */
+  const deveParar = async (): Promise<boolean> => {
+    if (!alertas.length) return false;
+    const autorizadas = cautela > 0 ? await dep.repo.contarAutorizadas() : 0;
+    const motivo = motivoParaPausar({ emCautela: cautela > 0 && autorizadas < cautela, problemas: alertas });
+    if (!motivo) return false;
+    r.pausada = motivo;
+    logger.error({ motivo }, "notas fiscais: emissão DESLIGADA sozinha");
+    try {
+      await dep.desligar?.(motivo);
+    } catch (erro) {
+      logger.error({ erro: mensagemDe(erro) }, "notas fiscais: não consegui gravar o desligamento");
+    }
+    return true;
+  };
+
+  // O que a conferência das notas já enviadas achou vale ANTES de mandar mais.
+  if (await deveParar()) {
+    r.aviso = await avisarSemLancar(dep, config);
+    return r;
+  }
+
+  const prontas = await (dep.prontas ? dep.prontas() : prontasDoBanco());
 
   let novas = 0;
+  let parar = false;
   for (const linha of prontas) {
-    if (novas >= NOVAS_POR_RODADA) break;
+    if (parar || novas >= NOVAS_POR_RODADA) break;
     const cobranca = linha.cobranca as { criadaEm?: string | null } | null;
     const referencia = linha.quitadaEm ?? cobranca?.criadaEm ?? null;
     const pode = podeEmitir(config, {
@@ -375,6 +455,24 @@ async function rodar(
 
     for (const nota of linha.notas as unknown as NotaPlanejada[]) {
       if (novas >= NOVAS_POR_RODADA) break;
+      const existente = await dep.repo.obter(nota.chave);
+      if (existente && !reenviavel(existente)) continue;
+
+      // Cautela: uma por vez, e a próxima só depois de a anterior terminar.
+      let vagas = Number.POSITIVE_INFINITY;
+      if (cautela > 0) {
+        vagas = vagasNaCautela({
+          cautela,
+          autorizadas: await dep.repo.contarAutorizadas(),
+          emVoo: await dep.repo.contarEmVoo(),
+        });
+        if (vagas < 1) {
+          r.aguardando = true;
+          parar = true;
+          break;
+        }
+      }
+
       const resultado = await enviarNota(dep, {
         nota,
         cobrancaId: linha.cobrancaId,
@@ -389,14 +487,44 @@ async function rodar(
       else if (resultado === "incerta") r.incertas = (r.incertas ?? 0) + 1;
       else if (resultado === "adiada") r.adiadas = (r.adiadas ?? 0) + 1;
       else if (resultado === "sem chave" && !r.semChave?.includes(empresa)) r.semChave?.push(empresa);
-      if (resultado === "enviada") await pausar(PAUSA_ENTRE_ENVIOS_MS);
+
+      if (resultado === "enviada") {
+        if (Number.isFinite(vagas)) {
+          // Na cautela, confere já: é a conferência que libera a próxima nota.
+          await pausar(ESPERA_DA_CONFERENCIA_MS);
+          somar(r.acompanhamento, await acompanharNotas(dep));
+        } else {
+          await pausar(PAUSA_ENTRE_ENVIOS_MS);
+        }
+      }
+      if (await deveParar()) {
+        parar = true;
+        break;
+      }
     }
   }
   r.aviso = await avisarSemLancar(dep, config);
-  if (r.enviadas || r.falhas || r.incertas || r.semChave?.length || r.aviso.avisadas) {
+  if (r.enviadas || r.falhas || r.incertas || r.semChave?.length || r.aviso.avisadas || r.pausada) {
     logger.info(r, "notas fiscais: rodada de emissão");
   }
   return r;
+}
+
+function somar(a: Acompanhamento | undefined, b: Acompanhamento) {
+  if (!a) return;
+  a.autorizadas += b.autorizadas;
+  a.rejeitadas += b.rejeitadas;
+  a.naFila += b.naFila;
+  a.falhas += b.falhas;
+}
+
+async function prontasDoBanco(): Promise<LinhaPronta[]> {
+  return db.cobrancaFiscal.findMany({
+    where: { situacao: "PRONTA" },
+    orderBy: { criadaEm: "asc" },
+    take: 200,
+    select: { cobrancaId: true, empresaId: true, clienteId: true, situacao: true, quitadaEm: true, cobranca: true, notas: true },
+  });
 }
 
 /** Falha no aviso nunca derruba a rodada: o problema fica pendente e volta na próxima. */
@@ -450,6 +578,20 @@ export function repositorioReal(): Repositorio {
     async marcarAvisadas(chaves, quando) {
       await db.notaFiscalEmitida.updateMany({ where: { chave: { in: chaves } }, data: { avisadaEm: quando } });
     },
+    async contarAutorizadas() {
+      return db.notaFiscalEmitida.count({
+        where: {
+          situacao: SituacaoDaNota.AUTORIZADA,
+          // As que o n8n já tinha emitido entram na tabela só para barrar o duplicado.
+          NOT: { motivo: { startsWith: MARCA_DO_N8N } },
+        },
+      });
+    },
+    async contarEmVoo() {
+      return db.notaFiscalEmitida.count({
+        where: { situacao: { in: [SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA] } },
+      });
+    },
     async aAcompanhar(limite) {
       const linhas = await db.notaFiscalEmitida.findMany({
         where: { situacao: { in: [SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA] } },
@@ -490,6 +632,7 @@ export function dependenciasReais(): Dependencias {
     },
     cep: (cep) => consultarCep(cep),
     agora: () => new Date(),
+    desligar: desligarEmissao,
     async avisar(notas, destinos) {
       const email = configuracaoDeEmail();
       if (!email) return "sem provedor";
@@ -505,4 +648,22 @@ export function dependenciasReais(): Dependencias {
       }
     },
   };
+}
+
+/**
+ * Desliga a emissão e deixa o motivo à vista na tela. Mexe só em `ligada` e
+ * `pausadaMotivo`: o resto da config fica exatamente como estava.
+ */
+async function desligarEmissao(motivo: string): Promise<void> {
+  const provider = IntegrationProvider.NOTAS_FISCAIS;
+  const linha = await db.integration.findUnique({ where: { provider }, select: { config: true } });
+  const config = (linha?.config ?? {}) as Record<string, unknown>;
+  const emissao = (config.emissao ?? {}) as Record<string, unknown>;
+  const quando = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date());
+  const novo = { ...config, emissao: { ...emissao, ligada: false, pausadaMotivo: `${quando} — ${motivo}`.slice(0, 500) } };
+  await db.integration.update({ where: { provider }, data: { config: novo as unknown as Prisma.InputJsonValue } });
 }

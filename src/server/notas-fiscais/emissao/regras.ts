@@ -361,3 +361,57 @@ export const MINUTOS_NA_FILA = 30;
 export function resumoDaNota(n: { codigo: string; valorCentavos: number; chave: string }): string {
   return `${n.chave} (${n.codigo}, ${formatarReais(n.valorCentavos)})`;
 }
+
+// ---------------------------------------------------------------------------
+// A cautela: as primeiras notas saem uma de cada vez, e problema desliga tudo
+// ---------------------------------------------------------------------------
+
+/**
+ * Quantas notas NOVAS podem sair agora. Na cautela (menos de `cautela` notas
+ * nossas autorizadas) é uma por vez: a próxima só depois de a anterior terminar
+ * — autorizada, e conferida. Passada a cautela, sem limite além do da rodada.
+ *
+ * ⚠ "Em voo" é nota enviada que a prefeitura ainda não respondeu. Nota que
+ * voltou para "tente depois" não conta: ela nunca saiu, e contá-la travaria a
+ * fila inteira para sempre.
+ */
+export function vagasNaCautela(args: { cautela: number; autorizadas: number; emVoo: number }): number {
+  if (args.cautela <= 0 || args.autorizadas >= args.cautela) return Number.POSITIVE_INFINITY;
+  return args.emVoo > 0 ? 0 : 1;
+}
+
+/**
+ * O que a Spedy registrou contra o que planejamos. Valor diferente é a única
+ * divergência que desliga: é dinheiro e é nota fiscal. `null` = conferido, ou a
+ * Spedy não disse o valor (não dá para concluir nada).
+ */
+export function divergenciaDeValor(args: {
+  cobrancaId: number;
+  valorCentavos: number;
+  valorNaSpedy: number | null | undefined;
+}): string | null {
+  if (args.valorNaSpedy == null) return null;
+  if (Math.round(args.valorNaSpedy * 100) === args.valorCentavos) return null;
+  return (
+    `cobrança ${args.cobrancaId}: a Spedy registrou R$ ${args.valorNaSpedy.toFixed(2).replace(".", ",")}` +
+    ` e o planejado era R$ ${(args.valorCentavos / 100).toFixed(2).replace(".", ",")}`
+  );
+}
+
+/** Problemas desta rodada que ainda não são desligamento: ficam à vista. */
+export const PROBLEMAS_ATE_DESLIGAR = 3;
+
+/**
+ * Se a emissão deve ser desligada, e por quê (frase para quem vai ler na tela).
+ * Na cautela, UM problema basta. Depois dela, três na mesma rodada: uma
+ * rejeição por cadastro de cliente não pode parar o resto, mas três seguidas
+ * dizem que algo está errado em nós. Cadastro ruim nem chega aqui: não gasta
+ * número e não é defeito nosso.
+ */
+export function motivoParaPausar(args: { emCautela: boolean; problemas: string[] }): string | null {
+  const limite = args.emCautela ? 1 : PROBLEMAS_ATE_DESLIGAR;
+  if (args.problemas.length < limite) return null;
+  const quais = args.problemas.slice(0, 3).join(" | ");
+  const resto = args.problemas.length > 3 ? ` (+${args.problemas.length - 3})` : "";
+  return `${args.emCautela ? "nas primeiras notas" : `${args.problemas.length} problemas numa rodada`}: ${quais}${resto}`.slice(0, 450);
+}

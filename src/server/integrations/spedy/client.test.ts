@@ -70,6 +70,8 @@ describe("cliente da Spedy", () => {
   });
 
   it("a chave vem da variável do servidor, por empresa", () => {
+    // A máquina de quem desenvolve pode ter a chave de verdade: o teste não depende disso.
+    vi.stubEnv("SPEDY_KEY_SEAHUB", "");
     vi.stubEnv("SPEDY_KEY_SEATECH", "  abc ");
     expect(chaveDaSpedy("SEATECH")).toBe("abc");
     expect(chaveDaSpedy("SEAHUB")).toBeNull();

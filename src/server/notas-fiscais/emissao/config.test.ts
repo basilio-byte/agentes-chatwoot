@@ -18,6 +18,8 @@ describe("config da emissão", () => {
       aPartirDe: null,
       enviarEmailAoCliente: true,
       emailsDeAviso: [],
+      cautela: 3,
+      pausadaMotivo: null,
     });
     // 3 = SEAHUB COWORKING e 4 = SEATECH (conferido na configuração do Conexa).
     expect(antiga.empresas).toEqual({ "3": "SEAHUB", "4": "SEATECH" });

@@ -65,6 +65,15 @@ export const emissaoSchema = z.object({
    * não sai e o problema só aparece na lista da tela.
    */
   emailsDeAviso: z.array(z.string().email().max(120)).max(5).default([]),
+  /**
+   * CAUTELA: enquanto menos de `cautela` notas NOSSAS tiverem sido autorizadas,
+   * as notas saem uma de cada vez — a próxima só depois de a anterior terminar —
+   * e qualquer problema (rejeição, recusa da Spedy, valor diferente do
+   * planejado) DESLIGA a emissão sozinha. 0 = sem cautela.
+   */
+  cautela: z.number().int().min(0).max(50).default(3),
+  /** Por que a emissão foi desligada sozinha. Salvar a tela apaga: é a pessoa dizendo que viu. */
+  pausadaMotivo: z.string().max(500).nullable().default(null),
 });
 
 export type EmissaoConfig = z.infer<typeof emissaoSchema>;
@@ -147,6 +156,8 @@ export const notasFiscaisConfigSchema = z.object({
     aPartirDe: null,
     enviarEmailAoCliente: true,
     emailsDeAviso: [],
+    cautela: 3,
+    pausadaMotivo: null,
   }),
 });
 
@@ -341,7 +352,12 @@ export function configDoFormulario(
     soCobrancas: cobrancas.ids,
     aPartirDe: valor("aPartirDe") || null,
     enviarEmailAoCliente: campos.enviarEmailAoCliente === "on",
+    cautela: valor("cautela") === "" ? 3 : Number(valor("cautela")),
+    pausadaMotivo: null,
   };
+  if (!Number.isInteger(emissao.cautela) || emissao.cautela < 0 || emissao.cautela > 50) {
+    return { erro: "Cautela: informe um número inteiro de 0 a 50 (0 = sem cautela)." };
+  }
   if (emissao.ligada && !emissao.soCobrancas.length && !emissao.aPartirDe) {
     return {
       erro: "Emissão ligada: informe as cobranças liberadas OU o dia do corte com o n8n. Sem nenhum dos dois nada seria emitido.",
