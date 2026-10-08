@@ -150,9 +150,13 @@ describe("tomador", () => {
     expect(problemasDoTomador(tomador(), { estado: "inexistente" })).toEqual(["o CEP 59056000 do cadastro não existe"]);
   });
 
-  it("⚠ CEP de outra cidade que a do cadastro também", () => {
-    const p = problemasDoTomador(tomador({ cidade: "Parnamirim" }), cepOk);
-    expect(p[0]).toMatch(/é de Natal, mas o cadastro diz Parnamirim/);
+  it("⚠ cidade do cadastro diferente da do CEP NÃO segura a nota: vale a cidade do CEP (08/10/2026)", () => {
+    // Cadastro real: endereço do prédio em Natal com "Acari" no campo cidade.
+    const t = tomador({ cidade: "Acari" });
+    expect(problemasDoTomador(t, cepOk)).toEqual([]);
+    const c = montarCorpo({ nota, tomador: t, cep: cepOk, hoje: "2026-10-07", enviarEmailAoCliente: true });
+    expect(c.receiver.address!.city).toEqual({ code: 2408102, name: "Natal", state: "rn" });
+    expect(c.receiver.address!.postalCode).toBe("59056000");
   });
 
   it("nome da cidade com acento e caixa diferentes não é divergência", () => {

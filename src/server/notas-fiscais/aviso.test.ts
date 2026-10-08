@@ -164,6 +164,15 @@ describe("processar o aviso", () => {
     expect(r.resultado).toBe("emitida");
   });
 
+  it("⚠ nota parada por cadastro aparece como 'falhou' com o motivo — não como 'emitida'", async () => {
+    const dep = montar({
+      notasDaCobranca: vi.fn(async () => [{ situacao: "FALHOU", numero: null, motivo: "Cadastro do cliente: o CEP 590 não tem 8 dígitos" }]),
+    });
+    const r = await processarAviso(31598, { dependencias: dep });
+    expect(r.resultado).toBe("falhou");
+    expect(r.detalhe).toMatch(/nota parada: Cadastro do cliente: o CEP 590/);
+  });
+
   it("emissão desligada ou pausada: diz por que a nota não saiu", async () => {
     const dep = montar({
       emitir: vi.fn(async () => rodada({ pausada: "nas primeiras notas: cobrança 9 rejeitada" })),

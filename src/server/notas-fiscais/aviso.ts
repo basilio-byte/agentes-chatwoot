@@ -57,7 +57,7 @@ export type DependenciasDoAviso = {
   conferir: (cobrancaId: number) => Promise<CobrancaDoAviso>;
   emitir: () => Promise<RodadaDeEmissao>;
   /** O que ficou gravado para a cobrança depois da emissão. */
-  notasDaCobranca: (cobrancaId: number) => Promise<Array<{ situacao: string; numero: number | null }>>;
+  notasDaCobranca: (cobrancaId: number) => Promise<Array<{ situacao: string; numero: number | null; motivo?: string | null }>>;
   pausar: (ms: number) => Promise<void>;
   agora: () => number;
 };
@@ -134,6 +134,12 @@ async function emitirEContar(dep: DependenciasDoAviso, cobrancaId: number, antes
   }
   const notas = await dep.notasDaCobranca(cobrancaId);
   if (notas.length) {
+    // Nota parada (cadastro do cliente, recusa, rejeição) não é "emitida": a lista
+    // diz "falhou" e o motivo, que é o que a equipe precisa para corrigir.
+    const paradas = notas.filter((n) => n.situacao === "FALHOU" || n.situacao === "REJEITADA");
+    if (paradas.length === notas.length) {
+      return { resultado: "falhou", detalhe: `${antes}; nota parada: ${paradas[0].motivo ?? paradas[0].situacao.toLowerCase()}`.slice(0, 500) };
+    }
     const quais = notas.map((n) => `${n.situacao.toLowerCase()}${n.numero ? ` nº ${n.numero}` : ""}`).join(", ");
     return { resultado: "emitida", detalhe: `${antes}; nota(s): ${quais}` };
   }
@@ -145,7 +151,7 @@ async function emitirEContar(dep: DependenciasDoAviso, cobrancaId: number, antes
 async function notasDaCobrancaNoBanco(cobrancaId: number) {
   return db.notaFiscalEmitida.findMany({
     where: { cobrancaId },
-    select: { situacao: true, numero: true },
+    select: { situacao: true, numero: true, motivo: true },
   });
 }
 

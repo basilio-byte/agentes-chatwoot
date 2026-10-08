@@ -158,14 +158,6 @@ export type CepLido =
   | { estado: "inexistente" }
   | { estado: "desconhecido" };
 
-const semAcento = (t: string) =>
-  t
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-
 /**
  * Tudo que impede a nota de sair, ANTES de gastar número. Cada item é uma frase
  * para quem vai corrigir o cadastro no Conexa.
@@ -188,10 +180,13 @@ export function problemasDoTomador(t: Tomador, cep: CepLido): string[] {
     p.push(`o CEP do cadastro (${t.cep}) não tem 8 dígitos`);
     return p;
   }
+  // ⚠ Cidade do cadastro diferente da do CEP NÃO segura a nota (08/10/2026): o
+  // corpo manda a cidade DO CEP (com o código IBGE dele), então CEP e cidade vão
+  // coerentes — que é o que a prefeitura confere (E0240). O caso real foi um
+  // cadastro com o endereço do prédio em Natal e "Acari" digitado no campo cidade;
+  // muitos clientes de endereço fiscal usam o CEP do prédio.
   if (cep.estado === "inexistente") {
     p.push(`o CEP ${t.cep} do cadastro não existe`);
-  } else if (cep.estado === "ok" && t.cidade && semAcento(cep.cidade) !== semAcento(t.cidade)) {
-    p.push(`o CEP ${t.cep} é de ${cep.cidade}, mas o cadastro diz ${t.cidade}`);
   }
   return p;
 }
