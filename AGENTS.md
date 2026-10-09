@@ -1817,12 +1817,25 @@ a tela na aba "Notas fiscais" de Integrações.
     operação** (`tpOper`, NT 2025.002 da Reforma Tributária), que na Spedy é
     `ibsCbs.operationType` com 5 valores (`supplyWithSubsequentPayment`,
     `paymentReceivedAfterSupply`, `supplyWithPriorPayment`,
-    `paymentReceivedBeforeSupply`, `simultaneousSupplyAndPayment`). ⚠ **Qual vale
-    é decisão FISCAL** (Laércio/contador) e NÃO está no código: o corpo da nota
-    ainda não manda `ibsCbs`. A cobrança retida continua PRONTA e sai sozinha na
-    rodada seguinte à retirada do código da lista. ⚠ Liberar com "Tentar de novo"
-    uma nota cujo código está em espera NÃO a envia: a espera vale primeiro.
-    Formulário de versão antiga, sem o campo, NÃO apaga a lista.
+    `paymentReceivedBeforeSupply`, `simultaneousSupplyAndPayment`). A cobrança
+    retida continua PRONTA e sai sozinha na rodada seguinte à retirada do código
+    da lista. ⚠ Liberar com "Tentar de novo" uma nota cujo código está em espera
+    NÃO a envia: a espera vale primeiro. Formulário de versão antiga, sem o campo,
+    NÃO apaga a lista.
+  - ⚠⚠ **Tipo de operação (`ibsCbs.operationType`) — decisão FISCAL do Laércio,
+    09/10/2026**, em `TIPO_DE_OPERACAO` (`emissao/regras.ts`): *"para gatilhos de
+    quitação a opção é fornecimento com pagamento já realizado; para NF emitida no
+    momento da geração é fornecimento com pagamento posterior"*. Ou seja, nota
+    emitida ao PAGAR a cobrança leva `supplyWithPriorPayment`, e a emitida ao
+    GERÁ-LA (cliente com regra "antes", `CobrancaFiscal.evento = gerada`) leva
+    `supplyWithSubsequentPayment`. Só vai nos itens que a prefeitura listou
+    (`ITENS_COM_TIPO_DE_OPERACAO`: 10.05, 15.09, 17.12 e 25.05): a nota comum
+    (03.03.02) e o Seabox (11.04.01) saem EXATAMENTE como antes, sem o campo. Não
+    mude o mapa sem ele. ⚠ A documentação da Spedy diz que o bloco `ibsCbs` tem
+    mais campos (`cst`, `classification`, `property` para bens imóveis...) e que
+    quem indica o que a operação exige é o time fiscal: a prefeitura pode pedir
+    outro depois deste — a primeira nota real depois do ajuste é o teste, e uma
+    rejeição não gasta número, fica guardada, avisa a equipe e pode tentar de novo.
   - ⚠ **Cobrança PAGA sem nota também avisa** (`CobrancaSemNota`, mesmo e-mail das
     notas com problema, uma lista a mais): retida por código em espera, e paga
     desde o corte em "conferir" ou "aguardando código" (`semDecisao`). Cada caso é

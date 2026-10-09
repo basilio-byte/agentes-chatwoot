@@ -72,6 +72,13 @@ export type CorpoDeNota = {
   effectiveDate?: string;
   description: string;
   nationalTaxationCode: string;
+  /**
+   * Reforma Tributária (NT 2025.002). Só vai nos serviços em que a prefeitura exige o
+   * tipo de operação (`tpOper`): 10.05, 15.09, 17.12 e 25.05 da LC 116 (rejeição E0903).
+   */
+  ibsCbs?: {
+    operationType: "supplyWithSubsequentPayment" | "paymentReceivedAfterSupply" | "supplyWithPriorPayment" | "paymentReceivedBeforeSupply" | "simultaneousSupplyAndPayment";
+  };
   receiver: {
     name: string;
     federalTaxNumber: string;

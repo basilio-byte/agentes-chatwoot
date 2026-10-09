@@ -220,6 +220,34 @@ export function dataDeCompetencia(competencia: string | null, hoje: string): str
   return `${competencia}-01`;
 }
 
+/**
+ * Itens da LC 116 em que a prefeitura (NFS-e nacional, NT 2025.002 da Reforma
+ * Tributária) exige o TIPO DE OPERAÇÃO. Vem da própria rejeição E0903 de Natal, em
+ * 09/10/2026: "deve ser informado quando se tratar de uma compra governamental ou um
+ * dos serviços da LC 116/2003 listados: 25.05; 15.09; 17.12; 10.05". A sala privativa
+ * (10.05.01) é o único que a Seahub usa; os outros entram por segurança, porque o
+ * código de uma categoria pode mudar na tela.
+ */
+export const ITENS_COM_TIPO_DE_OPERACAO = ["10.05", "15.09", "17.12", "25.05"] as const;
+
+export function exigeTipoDeOperacao(codigo: string): boolean {
+  return ITENS_COM_TIPO_DE_OPERACAO.some((item) => codigo.startsWith(`${item}.`));
+}
+
+/** Quando a nota sai: ao PAGAR a cobrança (o padrão) ou ao GERÁ-LA (cliente "antes"). */
+export type MomentoDaNota = "quitacao" | "geracao";
+
+/**
+ * O tipo de operação por momento, como o Laércio respondeu em 09/10/2026:
+ * "para gatilhos de quitação é fornecimento com pagamento já realizado; para NF
+ * emitida no momento da geração é fornecimento com pagamento posterior". Decisão
+ * fiscal dele — não mude sem ele.
+ */
+export const TIPO_DE_OPERACAO: Record<MomentoDaNota, NonNullable<CorpoDeNota["ibsCbs"]>["operationType"]> = {
+  quitacao: "supplyWithPriorPayment",
+  geracao: "supplyWithSubsequentPayment",
+};
+
 export function montarCorpo(args: {
   nota: Pick<NotaPlanejada, "chave" | "codigo" | "valorCentavos" | "descricao" | "competencia">;
   tomador: Tomador;
@@ -227,6 +255,8 @@ export function montarCorpo(args: {
   /** Dia de hoje em São Paulo (AAAA-MM-DD). */
   hoje: string;
   enviarEmailAoCliente: boolean;
+  /** Sem isto vale o pagamento já realizado, que é a nota da maioria. */
+  momento?: MomentoDaNota;
 }): CorpoDeNota {
   const { nota, tomador: t, cep } = args;
   const cidade = cep.estado === "ok" ? { code: cep.ibge ?? undefined, name: cep.cidade, state: cep.uf.toLowerCase() } : t.cidade
@@ -244,6 +274,11 @@ export function montarCorpo(args: {
     effectiveDate: dataDeCompetencia(nota.competencia, args.hoje),
     description: cortar(nota.descricao, LIMITES.descricao),
     nationalTaxationCode: codigoNacional(nota.codigo),
+    // Só onde a prefeitura exige: mandar a todas mudaria a nota comum (03.03.02),
+    // que o Natal já autoriza sem o campo.
+    ...(exigeTipoDeOperacao(nota.codigo)
+      ? { ibsCbs: { operationType: TIPO_DE_OPERACAO[args.momento ?? "quitacao"] } }
+      : {}),
     receiver: {
       name: cortar(t.nome, LIMITES.nome),
       federalTaxNumber: t.documento,

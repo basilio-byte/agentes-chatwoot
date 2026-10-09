@@ -31,6 +31,7 @@ import {
   situacaoDoStatus,
   type CepLido,
   type CobrancaSemNota,
+  type MomentoDaNota,
   type NotaComProblema,
   type Problema,
   type Tomador,
@@ -155,6 +156,8 @@ export type LinhaPronta = {
   clienteId: number;
   situacao: string;
   quitadaEm: string | null;
+  /** `quitada` (a nota sai ao pagar) ou `gerada` (cliente "antes": sai ao gerar a cobrança). */
+  evento?: string | null;
   cobranca: unknown;
   notas: unknown;
 };
@@ -221,6 +224,8 @@ export async function enviarNota(
     clienteId: number;
     empresa: string;
     enviarEmailAoCliente: boolean;
+    /** Quando a nota sai: define o tipo de operação nos serviços que a prefeitura exige. */
+    momento?: MomentoDaNota;
   },
 ): Promise<ResultadoDoEnvio> {
   const { nota, empresa } = args;
@@ -276,6 +281,7 @@ export async function enviarNota(
       cep,
       hoje: diaEmSaoPaulo(agora),
       enviarEmailAoCliente: args.enviarEmailAoCliente,
+      momento: args.momento,
     });
     const criada = await spedy.criarNota(corpo);
     await aplicar(dep, nota.chave, criada, { cobrancaId: args.cobrancaId, valorCentavos: nota.valorCentavos });
@@ -581,6 +587,7 @@ export async function rodarEmissao(
         clienteId: linha.clienteId,
         empresa,
         enviarEmailAoCliente: config.emissao.enviarEmailAoCliente,
+        momento: linha.evento === "gerada" ? "geracao" : "quitacao",
       });
       if (resultado === "ja existe") continue;
       novas++;
@@ -708,7 +715,7 @@ export async function prontasDoBanco(config: NotasFiscaisConfig, agora = new Dat
   return db.cobrancaFiscal.findMany({
     where: { situacao: "PRONTA", cobrancaId: { in: ids } },
     orderBy: { criadaEm: "asc" },
-    select: { cobrancaId: true, empresaId: true, clienteId: true, situacao: true, quitadaEm: true, cobranca: true, notas: true },
+    select: { cobrancaId: true, empresaId: true, clienteId: true, situacao: true, quitadaEm: true, evento: true, cobranca: true, notas: true },
   });
 }
 

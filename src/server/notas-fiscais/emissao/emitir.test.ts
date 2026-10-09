@@ -537,6 +537,58 @@ describe("a rodada de emissão com cautela", () => {
     expect(await c.dep.repo.contarAutorizadas()).toBe(1);
   });
 
+  describe("tipo de operação da sala privativa na rodada", () => {
+    const sala = (n: number, evento?: string): LinhaPronta => ({
+      ...pronta(n),
+      evento,
+      notas: [{ ...nota(n), chave: `conexa-${n}-100501`, codigo: "10.05.01" }],
+    });
+
+    it("⚠ cobrança paga manda 'pagamento já realizado'; gerada (cliente antes) manda 'pagamento posterior'", async () => {
+      const c = cenario((id) => autorizada(id), [sala(1, "quitada"), sala(2, "gerada"), sala(3), pronta(4)]);
+      const r = await rodarEmissao(c.dep, config({ cautela: 0, soCobrancas: [1, 2, 3, 4] }), c.pausar);
+      expect(r.enviadas).toBe(4);
+      const corpos = new Map(c.spedy.criarNota.mock.calls.map(([corpo]) => [corpo.integrationId, corpo]));
+      expect(corpos.get("conexa-1-100501")?.ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
+      expect(corpos.get("conexa-2-100501")?.ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
+      // Sem evento gravado, vale o pagamento já realizado, que é o padrão.
+      expect(corpos.get("conexa-3-100501")?.ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
+      // A nota comum não muda.
+      expect(corpos.get("conexa-4-030302")).not.toHaveProperty("ibsCbs");
+    });
+
+    it("⚠ a nota rejeitada que foi liberada sai de novo COM o campo, no mesmo identificador", async () => {
+      const c = cenario((id) => autorizada(id), [sala(1, "quitada")]);
+      c.linhas.set("conexa-1-100501", {
+        chave: "conexa-1-100501",
+        cobrancaId: 1,
+        empresa: "SEAHUB",
+        codigo: "10.05.01",
+        valorCentavos: 14900,
+        competencia: "2026-10",
+        situacao: SituacaoDaNota.REJEITADA,
+        spedyId: "spedy-rejeitada",
+        numero: null,
+        motivo: "E0903: o tipo de operação deve ser informado",
+        tentativas: 1,
+        enviadaEm: new Date(),
+      });
+      // Rejeitada não tenta de novo sozinha...
+      await rodarEmissao(c.dep, config({ cautela: 0 }), c.pausar);
+      expect(c.spedy.criarNota).not.toHaveBeenCalled();
+      // ...e só sai quando alguém libera.
+      expect((await liberarNotaParaNovaTentativa(c.dep.repo, "conexa-1-100501")).ok).toBe(true);
+      const r = await rodarEmissao(c.dep, config({ cautela: 0 }), c.pausar);
+      expect(r.enviadas).toBe(1);
+      expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
+      expect(c.spedy.criarNota.mock.calls[0][0]).toMatchObject({
+        integrationId: "conexa-1-100501",
+        ibsCbs: { operationType: "supplyWithPriorPayment" },
+      });
+      expect(c.spedy.buscarPorIntegrationId).not.toHaveBeenCalled();
+    });
+  });
+
   describe("códigos em espera", () => {
     /** Uma cobrança de sala privativa (10.05.01), com uma nota só. */
     const salaPrivativa = (n: number): LinhaPronta => ({

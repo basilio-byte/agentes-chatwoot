@@ -4,6 +4,8 @@ import {
   codigoNacional,
   codigoQueSegura,
   divergenciaDeValor,
+  exigeTipoDeOperacao,
+  TIPO_DE_OPERACAO,
   motivoParaPausar,
   vagasNaCautela,
   cortar,
@@ -193,6 +195,39 @@ describe("tomador", () => {
   it("o telefone do cadastro não vai à Spedy, como no n8n", () => {
     expect(montarCorpo({ nota, tomador: tomador(), cep: cepOk, hoje: "2026-10-07", enviarEmailAoCliente: true }).receiver)
       .not.toHaveProperty("phoneNumber");
+  });
+});
+
+describe("tipo de operação (E0903 da prefeitura, 09/10/2026)", () => {
+  const sala = { ...nota, chave: "conexa-900-100501", codigo: "10.05.01" };
+  const corpo = (n: typeof nota, momento?: "quitacao" | "geracao") =>
+    montarCorpo({ nota: n, tomador: tomador(), cep: cepOk, hoje: "2026-10-09", enviarEmailAoCliente: true, momento });
+
+  it("⚠ sala privativa (10.05.01) leva o tipo de operação que o Laércio definiu para cada momento", () => {
+    // "Para gatilhos de quitação a opção é fornecimento com pagamento já realizado"
+    expect(corpo(sala).ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
+    expect(corpo(sala, "quitacao").ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
+    // "Para NF emitidas no momento da geração é fornecimento com pagamento posterior"
+    expect(corpo(sala, "geracao").ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
+  });
+
+  it("⚠ a nota comum (03.03.02) e o Seabox (11.04.01) saem EXATAMENTE como antes, sem o campo", () => {
+    expect(corpo(nota)).not.toHaveProperty("ibsCbs");
+    expect(corpo({ ...nota, codigo: "11.04.01" }, "geracao")).not.toHaveProperty("ibsCbs");
+    expect(JSON.stringify(corpo(nota))).not.toContain("operationType");
+  });
+
+  it("os quatro itens que a prefeitura listou exigem; o vizinho não", () => {
+    for (const codigo of ["10.05.01", "10.05.02", "15.09.01", "17.12.01", "25.05.01"]) {
+      expect(exigeTipoDeOperacao(codigo), codigo).toBe(true);
+    }
+    for (const codigo of ["10.04.01", "10.06.01", "03.03.02", "11.04.01", "01.05.01", "15.10.01", "25.05"]) {
+      expect(exigeTipoDeOperacao(codigo), codigo).toBe(false);
+    }
+  });
+
+  it("o mapa de momentos não perde um: quitação paga já, geração paga depois", () => {
+    expect(TIPO_DE_OPERACAO).toEqual({ quitacao: "supplyWithPriorPayment", geracao: "supplyWithSubsequentPayment" });
   });
 });
 
