@@ -1938,6 +1938,24 @@ a tela na aba "Notas fiscais" de Integrações.
     8. **"Tentar de novo" prometia "sai em até 5 minutos" a uma nota que não ia sair**
        (emissão desligada, sem a chave da Spedy, cobrança fora do corte):
        `oQueImpedeASaida` diz o que segura, na resposta e na linha da nota reservada.
+    9. **A 2ª revisão (mesmo dia) achou furos nos próprios consertos — corrigidos.**
+       (a) **"Reservada" nem sempre é viva:** a nota liberada por "Tentar de novo" volta
+       a RESERVADA com zero tentativas e sem `enviadaEm`; se contasse como viva
+       (`vivasDaCobranca`, `reclassificar`), uma liberada que o plano já não prevê
+       travava a cobrança em "plano mudou" para sempre. Só vale a reservada que já foi
+       tentada ou enviada. (b) **Liberar nota fora do plano é recusado**
+       (`tentarEmitirDeNovo`): quem trocou o código depois da rejeição tem a cobrança
+       refeita com OUTRA chave, e liberar a antiga emitiria as duas. (c) **"Sem cliente"
+       e "sem chave" também têm teto**: cliente que o Conexa não devolve fica de molho
+       30 min por cobrança (`semClienteEm`, em memória) e conta no teto de 10 tentativas
+       sem envio; empresa sem chave é decidida uma vez por rodada e as cobranças dela só
+       são puladas — as da outra empresa saem. (d) **A versão da tela inclui a chave
+       geral** (`Integration.enabled`) e a ação devolve a versão nova depois de salvar:
+       o formulário que continua aberto não é recusado no segundo clique. (e) A lista da
+       tela busca REJEITADA/INCERTA e FALHOU em consultas separadas (cadastro preso é
+       FALHOU e se repete; empurrava a rejeição da prefeitura para fora), e a nota
+       RESERVADA mostra também o que a segura na cobrança (corte, lista).
+       (f) `semDecisaoDoBanco` e `reclassificar` olham a mesma janela de 60 dias da emissão.
     - **Deixado como está, de propósito:** a poda de 30 dias das entregas apaga a
       memória do "dito uma vez" (um caso que continua pendente é avisado de novo todo
       mês: lembrete, não defeito); a rodada só olha 60 dias para trás (o e-mail da

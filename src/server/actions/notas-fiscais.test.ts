@@ -82,6 +82,21 @@ describe("salvar a configuração das notas fiscais", () => {
     expect(db.integration.upsert).not.toHaveBeenCalled();
   });
 
+  it("⚠ a chave geral também conta: tela aberta antes de alguém DESLIGAR a integração não a religa", async () => {
+    const versaoQueATelaViu = versaoDaConfig(gravada, true);
+    db.integration.findUnique.mockResolvedValue({ config: gravada, enabled: false });
+    expect(await salvarConfigNotasFiscais({}, envio(versaoQueATelaViu))).toEqual({ erro: TELA_DESATUALIZADA });
+    expect(db.integration.upsert).not.toHaveBeenCalled();
+  });
+
+  it("depois de salvar, devolve a versão do que gravou — o mesmo formulário aberto pode salvar de novo", async () => {
+    db.integration.findUnique.mockResolvedValue({ config: gravada });
+    const r = await salvarConfigNotasFiscais({}, formulario({ enabled: "on", emissaoLigada: "on", aPartirDe: "2026-10-08", versao: versaoDaConfig(gravada) }));
+    expect(r.versao).toMatch(/^[0-9a-f]{16}$/);
+    const gravou = db.integration.upsert.mock.calls[0][0].update;
+    expect(r.versao).toBe(versaoDaConfig(gravou.config, true));
+  });
+
   it("tela de antes desta regra, sem versão nenhuma: recusa e pede para recarregar", async () => {
     db.integration.findUnique.mockResolvedValue({ config: gravada });
     expect(await salvarConfigNotasFiscais({}, envio(undefined))).toEqual({ erro: TELA_DESATUALIZADA });
@@ -150,6 +165,22 @@ describe("tentar de novo: o que a resposta diz", () => {
     const r = await tentarEmitirDeNovo("conexa-30594-100501");
     expect(r.ok).toContain("a integração de notas fiscais está desligada");
     expect(r.ok).not.toContain("a emissão está desligada");
+  });
+
+  it("⚠ nota que saiu do plano (o código mudou depois da rejeição): recusa, senão a cobrança teria DUAS notas", async () => {
+    db.notaFiscalEmitida.findUnique.mockResolvedValue({ ...nota, cobrancaId: 30594 });
+    db.cobrancaFiscal.findUnique.mockResolvedValue({ ...cobranca, notas: [{ chave: "conexa-30594-030302" }] });
+    const r = await tentarEmitirDeNovo("conexa-30594-100501");
+    expect(r.erro).toMatch(/saiu do plano/);
+    expect(emitir.liberarNotaParaNovaTentativa).not.toHaveBeenCalled();
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("nota que ainda é do plano: libera normalmente", async () => {
+    db.cobrancaFiscal.findUnique.mockResolvedValue({ ...cobranca, notas: [{ chave: "conexa-30594-100501" }] });
+    const r = await tentarEmitirDeNovo("conexa-30594-100501");
+    expect(r.erro).toBeUndefined();
+    expect(emitir.liberarNotaParaNovaTentativa).toHaveBeenCalledTimes(1);
   });
 
   it("nota que não pode ser liberada (autorizada, na fila): devolve o erro e não grava nada", async () => {

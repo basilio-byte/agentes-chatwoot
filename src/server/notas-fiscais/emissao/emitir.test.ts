@@ -608,6 +608,8 @@ describe("aviso à equipe", () => {
 // ---------------------------------------------------------------------------
 
 describe("a rodada de emissão com cautela", () => {
+  // O módulo guarda em memória as cobranças de molho: cada caso começa limpo.
+  beforeEach(() => reiniciarRelogioDaEmissao());
   const nota = (n: number) => ({ ...NOTA, chave: `conexa-${n}-030302`, valorCentavos: 14900 });
   const pronta = (n: number): LinhaPronta => ({
     cobrancaId: n,
@@ -1275,6 +1277,39 @@ describe("a rodada de emissão com cautela", () => {
       const r = await rodarEmissao(c.dep, config({ cautela: 0 }), c.pausar);
       expect(r.enviadas).toBe(0);
       expect(r.semChave).toEqual(["SEAHUB"]);
+    });
+
+    it("⚠ doze clientes que o Conexa não devolve à frente de uma boa: o teto vale, e a rodada seguinte não os relê — a boa sai", async () => {
+      const sumidas = Array.from({ length: 12 }, (_, i) => comCadastroRuim(100 + i));
+      const nova = boa(1);
+      const c = cenario((id) => autorizada(id), [...sumidas, nova]);
+      const olhados: number[] = [];
+      c.dep.tomador = async (clienteId) => {
+        olhados.push(clienteId);
+        return clienteId < 2000 ? null : TOMADOR;
+      };
+      const cfg = config({ cautela: 0, soCobrancas: todas(sumidas, [nova]) });
+      const r1 = await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(r1.adiadas).toBe(10); // o teto de tentativas sem envio
+      expect(r1.enviadas).toBe(0);
+      olhados.length = 0;
+      const r2 = await rodarEmissao(c.dep, cfg, c.pausar);
+      // As dez já olhadas ficam de molho; só as duas que sobraram e a boa são olhadas.
+      expect(olhados.sort()).toEqual([1110, 1111, 2001].sort());
+      expect(r2.enviadas).toBe(1);
+      expect(c.linhas.get("conexa-1-030302")?.situacao).toBe("ENVIADA");
+    });
+
+    it("⚠ sem a chave de uma empresa, as cobranças da OUTRA saem e a sem chave não gasta o teto", async () => {
+      const seatech = (n: number): LinhaPronta => ({ ...boa(n), empresaId: 4 });
+      const semChave = Array.from({ length: 12 }, (_, i) => seatech(100 + i));
+      const nova = boa(1);
+      const c = cenario((id) => autorizada(id), [...semChave, nova]);
+      c.dep.spedy = (empresa) => (empresa === "SEATECH" ? null : c.spedy);
+      const r = await rodarEmissao(c.dep, config({ cautela: 0, soCobrancas: todas(semChave, [nova]) }), c.pausar);
+      expect(r.semChave).toEqual(["SEATECH"]);
+      expect(r.enviadas).toBe(1);
+      expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
     });
   });
 

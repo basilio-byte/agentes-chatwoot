@@ -147,7 +147,7 @@ describe.skipIf(!base.pode)("a emissão contra o Postgres de verdade", () => {
   });
 
   describe("as notas vivas da cobrança", () => {
-    it("reservada, enviada, incerta e autorizada; rejeitada, parada e cancelada não", async () => {
+    it("enviada, incerta, autorizada e a reservada que já foi tentada; a liberada (nunca enviada), rejeitada, parada e cancelada não", async () => {
       const situacoes = [
         SituacaoDaNota.RESERVADA,
         SituacaoDaNota.ENVIADA,
@@ -162,9 +162,15 @@ describe.skipIf(!base.pode)("a emissão contra o Postgres de verdade", () => {
           data: { chave: `conexa-7-${i}`, cobrancaId: 7, empresa: "SEAHUB", codigo: "03.03.02", valorCentavos: 100, situacao },
         });
       }
+      // A mesma reservada, mas já enviada uma vez: essa é viva.
+      await db.notaFiscalEmitida.create({
+        data: { chave: "conexa-7-tentada", cobrancaId: 7, empresa: "SEAHUB", codigo: "03.03.02", valorCentavos: 100, situacao: SituacaoDaNota.RESERVADA, tentativas: 1 },
+      });
       await nota(8, SituacaoDaNota.AUTORIZADA); // de outra cobrança
       const vivas = await repositorioReal().vivasDaCobranca(7);
+      // A RESERVADA "i=0" (zero tentativas, nunca enviada) NÃO conta; só a tentada.
       expect(vivas.map((v) => v.situacao).sort()).toEqual(["AUTORIZADA", "ENVIADA", "INCERTA", "RESERVADA"]);
+      expect(vivas.find((v) => v.situacao === "RESERVADA")?.chave).toBe("conexa-7-tentada");
     });
   });
 

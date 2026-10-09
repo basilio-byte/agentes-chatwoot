@@ -567,6 +567,14 @@ export type RodadaDeEmissao = {
 
 let ultima = 0;
 let rodando = false;
+/**
+ * Cobranças cujo cliente o Conexa não devolveu, e quando foi a última tentativa (memória do processo).
+ * Sem linha no banco, elas não "giram" na fila: dez delas na frente enchiam o teto de toda rodada e
+ * as cobranças boas atrás nunca eram alcançadas (revisão de 09/10/2026). Ficam de molho por
+ * `PRAZO_SEM_CLIENTE_MS` — o que não faz mal, pois quem corrige o cadastro espera a próxima olhada de qualquer jeito.
+ */
+const semClienteEm = new Map<number, number>();
+const PRAZO_SEM_CLIENTE_MS = 30 * 60_000;
 
 export async function emitirNotasFiscais(
   agora = new Date(),
@@ -603,6 +611,7 @@ export async function emitirNotasFiscais(
 export function reiniciarRelogioDaEmissao() {
   ultima = 0;
   rodando = false;
+  semClienteEm.clear();
 }
 
 /** Depois de enviar na cautela, dá um instante à prefeitura antes de conferir. */
@@ -673,7 +682,9 @@ export async function rodarEmissao(
   /** Tentativas que nem chegaram a ela (cadastro, cliente não lido, empresa sem chave). */
   let semEnvio = 0;
   let parar = false;
-  for (const linha of prontas) {
+  /** Empresas sem a chave da Spedy no servidor: decidido uma vez, e as demais cobranças delas só são puladas. */
+  const empresasSemChave = new Set<string>();
+  laco: for (const linha of prontas) {
     if (parar || novas >= NOVAS_POR_RODADA) break;
     const cobranca = linha.cobranca as { criadaEm?: string | null } | null;
     const referencia = linha.quitadaEm ?? cobranca?.criadaEm ?? null;
@@ -722,6 +733,11 @@ export async function rodarEmissao(
       continue;
     }
 
+    // Empresa sem chave: nada a tentar (e nada a gastar do teto). Cliente que o Conexa não devolveu: de molho.
+    if (empresasSemChave.has(empresa)) continue;
+    const ultimaSemCliente = semClienteEm.get(linha.cobrancaId);
+    if (ultimaSemCliente !== undefined && dep.agora().getTime() - ultimaSemCliente < PRAZO_SEM_CLIENTE_MS) continue;
+
     for (const nota of planejadas) {
       if (novas >= NOVAS_POR_RODADA) break;
       const existente = await dep.repo.obter(nota.chave);
@@ -754,12 +770,23 @@ export async function rodarEmissao(
       });
       if (resultado === "ja existe" || resultado === "em andamento") continue;
 
-      if (resultado === "cadastro" || resultado === "sem cliente" || resultado === "sem chave") {
+      if (resultado === "sem chave") {
+        // Checagem local, sem custo: não conta no teto. As outras cobranças dessa empresa só são puladas.
+        empresasSemChave.add(empresa);
+        if (!r.semChave?.includes(empresa)) r.semChave?.push(empresa);
+        continue laco;
+      }
+
+      if (resultado === "cadastro" || resultado === "sem cliente") {
         // Não chegou à Spedy: tem teto próprio e não gasta as vagas das notas novas.
         semEnvio++;
         if (resultado === "cadastro") r.falhas = (r.falhas ?? 0) + 1;
-        else if (resultado === "sem cliente") r.adiadas = (r.adiadas ?? 0) + 1;
-        else if (!r.semChave?.includes(empresa)) r.semChave?.push(empresa);
+        else {
+          r.adiadas = (r.adiadas ?? 0) + 1;
+          semClienteEm.set(linha.cobrancaId, dep.agora().getTime());
+          if (semEnvio >= SEM_ENVIO_POR_RODADA) parar = true;
+          continue laco;
+        }
         if (semEnvio >= SEM_ENVIO_POR_RODADA) {
           parar = true;
           break;
@@ -965,9 +992,17 @@ const SEM_DECISAO_LIDAS = 2_000;
  * mesmas (estas linhas não saem do estado sozinhas): da 51ª em diante ninguém era
  * avisado (revisão de 09/10/2026).
  */
+/** O mais recente entre o corte com o n8n e a janela de emissão: antes disso a cobrança precisa de uma pessoa. */
+function desdeDaJanela(aPartirDe: string, agora = new Date()): string {
+  const inicio = diaParaTras(JANELA_DA_EMISSAO_DIAS, agora);
+  return aPartirDe > inicio ? aPartirDe : inicio;
+}
+
 async function semDecisaoDoBanco(aPartirDe: string): Promise<LinhaSemDecisao[]> {
   const candidatas = await db.cobrancaFiscal.findMany({
-    where: { situacao: { in: ["CONFERIR", "AGUARDANDO_CLASSIFICACAO"] }, quitadaEm: { gte: aPartirDe } },
+    // Mesma janela da emissão: cobrança mais velha que ela nunca seria emitida, e avisar da "sem nota" de
+    // dois meses atrás encheria o e-mail de coisa que ninguém vai resolver.
+    where: { situacao: { in: ["CONFERIR", "AGUARDANDO_CLASSIFICACAO"] }, quitadaEm: { gte: desdeDaJanela(aPartirDe) } },
     orderBy: { criadaEm: "asc" },
     take: SEM_DECISAO_LIDAS,
     select: { cobrancaId: true, empresaId: true, situacao: true, valorCentavos: true, motivo: true },
@@ -1038,9 +1073,13 @@ export function repositorioReal(): Repositorio {
       const linhas = await db.notaFiscalEmitida.findMany({
         where: {
           cobrancaId,
-          situacao: {
-            in: [SituacaoDaNota.RESERVADA, SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA, SituacaoDaNota.AUTORIZADA],
-          },
+          // ⚠ Reservada que NUNCA saiu (zero tentativas, sem envio anotado) não é nota viva: é a linha que
+          // "Tentar de novo" devolve à fila. Se contasse, uma liberada que o plano já não prevê travava a
+          // cobrança em "plano mudou" para sempre (revisão de 09/10/2026).
+          OR: [
+            { situacao: { in: [SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA, SituacaoDaNota.AUTORIZADA] } },
+            { situacao: SituacaoDaNota.RESERVADA, OR: [{ tentativas: { gt: 0 } }, { enviadaEm: { not: null } }] },
+          ],
         },
       });
       return linhas.map(ler);

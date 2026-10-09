@@ -23,7 +23,7 @@ let chamadas: string[] = [];
 let vendaQueFalha: number | null = null;
 let estadoDaIntegracao: Record<string, unknown> = {};
 /** As notas que a Spedy já recebeu (a tabela `NotaFiscalEmitida`), só o que `reclassificar` lê. */
-let notasEmitidas: Array<{ cobrancaId: number; situacao: string }> = [];
+let notasEmitidas: Array<{ cobrancaId: number; situacao: string; tentativas?: number; enviadaEm?: Date | null }> = [];
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -35,13 +35,22 @@ vi.mock("@/lib/db", () => ({
       },
     },
     notaFiscalEmitida: {
+      // Interpreta o `OR` do código: situações vivas, ou reservada que já foi tentada/enviada.
       findMany: async ({
         where,
       }: {
-        where: { cobrancaId: { in: number[] }; situacao: { in: string[] } };
+        where: {
+          cobrancaId: { in: number[] };
+          OR: Array<{ situacao: string | { in: string[] }; OR?: Array<Record<string, unknown>> }>;
+        };
       }) =>
         notasEmitidas.filter(
-          (n) => where.cobrancaId.in.includes(n.cobrancaId) && where.situacao.in.includes(n.situacao),
+          (n) =>
+            where.cobrancaId.in.includes(n.cobrancaId) &&
+            where.OR.some((c) => {
+              if (typeof c.situacao === "string") return c.situacao === n.situacao && ((n.tentativas ?? 0) > 0 || n.enviadaEm != null);
+              return c.situacao.in.includes(n.situacao);
+            }),
         ),
     },
     cobrancaFiscal: {
@@ -264,12 +273,26 @@ describe("notas fiscais em modo sombra", () => {
       // Quem trocou o código da categoria 10 e salvou a tela.
       const comOutroCodigo = () => lerConfigNotasFiscais({ codigos: { "10": "10.05.01" } });
 
-      it.each(["RESERVADA", "ENVIADA", "INCERTA", "AUTORIZADA"])("com nota %s: o plano fica como estava", async (situacao) => {
+      it.each(["ENVIADA", "INCERTA", "AUTORIZADA"])("com nota %s: o plano fica como estava", async (situacao) => {
         await conferida();
         notasEmitidas = [{ cobrancaId: 900, situacao }];
         const r = await reclassificar(comOutroCodigo(), AGORA);
         expect(r).toEqual({ mudadas: 0, apagadas: 0, preservadas: 1 });
         expect(linhas[0].notas).toEqual([expect.objectContaining({ chave: "conexa-900-030302", codigo: "03.03.02" })]);
+      });
+
+      it("com nota RESERVADA que já foi tentada: o plano fica como estava", async () => {
+        await conferida();
+        notasEmitidas = [{ cobrancaId: 900, situacao: "RESERVADA", tentativas: 1 }];
+        const r = await reclassificar(comOutroCodigo(), AGORA);
+        expect(r).toEqual({ mudadas: 0, apagadas: 0, preservadas: 1 });
+      });
+
+      it("⚠ com nota RESERVADA que NUNCA saiu (a liberada por 'Tentar de novo'): o plano é refeito", async () => {
+        await conferida();
+        notasEmitidas = [{ cobrancaId: 900, situacao: "RESERVADA", tentativas: 0, enviadaEm: null }];
+        const r = await reclassificar(comOutroCodigo(), AGORA);
+        expect(r).toEqual({ mudadas: 1, apagadas: 0, preservadas: 0 });
       });
 
       it.each(["REJEITADA", "FALHOU", "CANCELADA"])(

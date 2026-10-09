@@ -27,6 +27,12 @@ describe("a versão da configuração das notas fiscais", () => {
     expect(versaoDaConfig(depois)).not.toBe(versaoDaConfig(antes));
   });
 
+  it("⚠ muda quando a chave geral (ligada/desligada) muda, mesmo com a configuração igual", () => {
+    const config = { emissao: { ligada: true } };
+    expect(versaoDaConfig(config, true)).not.toBe(versaoDaConfig(config, false));
+    expect(versaoDaConfig(config)).toBe(versaoDaConfig(config, false));
+  });
+
   it("sem configuração gravada (linha nova, nula ou vazia) a versão é a mesma nos dois lados", () => {
     expect(versaoDaConfig(null)).toBe(versaoDaConfig(undefined));
     expect(versaoDaConfig(null)).toBe(versaoDaConfig({}));

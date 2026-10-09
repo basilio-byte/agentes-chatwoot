@@ -36,6 +36,7 @@ import {
   resumoDasCobrancas,
   resumoDasNotas,
 } from "@/server/notas-fiscais/resumo";
+import type { NotaDaTela } from "@/server/notas-fiscais/resumo";
 import { formatarReais, type NotaPlanejada } from "@/server/notas-fiscais/regras";
 import { oQueImpedeASaida } from "@/server/notas-fiscais/emissao/regras";
 import { versaoDaConfig } from "@/server/notas-fiscais/versao";
@@ -300,12 +301,13 @@ export default async function IntegracoesPage({
   const chavesDaSpedy = chavesDaSpedyNoServidor();
   const emitindo = !!notasFiscais?.enabled && configNotas.emissao.ligada;
   /** O que segura, agora, uma nota liberada para tentar de novo (a rodada confere as mesmas coisas). */
-  const impedimentosDaReservada = (n: { codigo: string; empresa: string }) =>
+  const impedimentosDaReservada = (n: { codigo: string; empresa: string; cobranca?: NotaDaTela["cobranca"] }) =>
     oQueImpedeASaida({
       integracaoLigada: !!notasFiscais?.enabled,
       config: configNotas,
       nota: n,
       chaveDaEmpresaNoServidor: chavesDaSpedy[n.empresa as keyof typeof chavesDaSpedy] ?? false,
+      cobranca: n.cobranca,
     });
   const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
   const configNps = lerConfigNps(nps?.config);
@@ -1478,7 +1480,7 @@ export default async function IntegracoesPage({
                   ) : null}
 
                   <NotasFiscaisConfigForm
-                    versao={versaoDaConfig(notasFiscais?.config)}
+                    versao={versaoDaConfig(notasFiscais?.config, notasFiscais?.enabled)}
                     habilitada={notasFiscais?.enabled ?? false}
                     inicio={configNotas.inicio ?? ""}
                     categorias={linhasDeCategoria}

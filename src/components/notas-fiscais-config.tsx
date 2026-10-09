@@ -107,7 +107,7 @@ export function NotasFiscaisConfigForm({
 
   return (
     <form onSubmit={enviar} className="space-y-5">
-      <input type="hidden" name="versao" value={versao} />
+      <input type="hidden" name="versao" value={estado.versao ?? versao} />
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"

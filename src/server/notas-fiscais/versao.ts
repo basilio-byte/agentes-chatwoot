@@ -13,8 +13,13 @@ import { createHash } from "node:crypto";
  *
  * O `jsonb` do Postgres devolve as chaves em outra ordem: o hash é do JSON ordenado.
  */
-export function versaoDaConfig(bruto: unknown): string {
-  return createHash("sha256").update(JSON.stringify(ordenar(bruto ?? {}))).digest("hex").slice(0, 16);
+export function versaoDaConfig(bruto: unknown, habilitada = false): string {
+  // A chave geral (`Integration.enabled`) mora fora do JSON e também é desligada por outra
+  // pessoa: entra na impressão, senão salvar uma tela velha religava a integração.
+  return createHash("sha256")
+    .update(JSON.stringify(ordenar({ configuracao: bruto ?? {}, habilitada: !!habilitada })))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 function ordenar(valor: unknown): unknown {

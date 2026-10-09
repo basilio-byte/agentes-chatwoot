@@ -14,7 +14,7 @@ import { TELA_DESATUALIZADA, versaoDaConfig } from "@/server/notas-fiscais/versa
 import { chaveDaSpedy } from "@/server/integrations/spedy/client";
 import { gerarToken } from "@/server/gatilho/token";
 
-export type EstadoNotasFiscais = { ok?: string; erro?: string };
+export type EstadoNotasFiscais = { ok?: string; erro?: string; versao?: string };
 
 /**
  * Config e liga/desliga das notas fiscais, gravados juntos. Não toca em
@@ -32,7 +32,7 @@ export async function salvarConfigNotasFiscais(
 
   const atual = await db.integration.findUnique({
     where: { provider: IntegrationProvider.NOTAS_FISCAIS },
-    select: { config: true },
+    select: { config: true, enabled: true },
   });
   const campos: Record<string, string> = {};
   for (const [campo, valor] of formData.entries()) {
@@ -42,7 +42,7 @@ export async function salvarConfigNotasFiscais(
   // ligada, lista de espera —, e salvá-lo depois de o sistema desligar a emissão sozinho
   // (ou de outra pessoa mexer) religava tudo e apagava o motivo da pausa sem ninguém ler.
   // Sem a versão (tela aberta antes desta regra) também recusa.
-  if (campos.versao !== versaoDaConfig(atual?.config)) return { erro: TELA_DESATUALIZADA };
+  if (campos.versao !== versaoDaConfig(atual?.config, atual?.enabled)) return { erro: TELA_DESATUALIZADA };
 
   const lido = configDoFormulario(campos, lerConfigNotasFiscais(atual?.config));
   if ("erro" in lido) return { erro: lido.erro };
@@ -103,7 +103,9 @@ export async function salvarConfigNotasFiscais(
     : emissao.ligada
       ? `Emissão LIGADA: ${quemEmite} vira nota fiscal real na Spedy, a cada 5 minutos. O n8n não pode emitir essas mesmas.`
       : "Modo sombra ligado. A primeira conferência acontece em até 1 minuto e depois a cada 30 minutos. Nenhuma nota é emitida.";
-  return { ok: modo + efeito };
+  // A versão nova volta no estado: o formulário que continua aberto passa a valer a partir do que
+  // acabou de gravar, e não do que viu ao abrir (senão o segundo clique em salvar seria recusado).
+  return { ok: modo + efeito, versao: versaoDaConfig(lido.config, ligada) };
 }
 
 /**
@@ -115,6 +117,18 @@ export async function salvarConfigNotasFiscais(
 export async function tentarEmitirDeNovo(chave: string): Promise<EstadoNotasFiscais> {
   const sessao = await exigirPapel(UserRole.ADMIN);
   if (typeof chave !== "string" || !chave || chave.length > 100) return { erro: "Nota inválida." };
+
+  // ⚠ Só se a nota ainda é do plano de hoje. Quem trocou o código da categoria depois da rejeição
+  // tem a cobrança refeita com OUTRA chave: liberar a antiga a reenviaria, e a nova sairia também —
+  // duas notas do mesmo pagamento.
+  const daNota = await db.notaFiscalEmitida.findUnique({ where: { chave }, select: { cobrancaId: true } });
+  if (daNota) {
+    const plano = await db.cobrancaFiscal.findUnique({ where: { cobrancaId: daNota.cobrancaId }, select: { notas: true } });
+    const chavesDoPlano = Array.isArray(plano?.notas) ? (plano.notas as Array<{ chave?: string }>).map((n) => n.chave) : null;
+    if (chavesDoPlano && !chavesDoPlano.includes(chave)) {
+      return { erro: "Esta nota saiu do plano da cobrança (o código ou a tabela mudou depois dela). A nota nova sai sozinha; esta não deve ser reenviada." };
+    }
+  }
 
   const liberada = await liberarNotaParaNovaTentativa(repositorioReal(), chave);
   if (!liberada.ok) return { erro: liberada.erro };

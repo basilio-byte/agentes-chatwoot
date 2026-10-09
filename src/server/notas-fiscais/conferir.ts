@@ -350,7 +350,7 @@ async function gravar(
 }
 
 /** Quantos dias de cobranças em sombra a tabela nova refaz ao ser salva. */
-const DIAS_RECLASSIFICADOS = 30;
+const DIAS_RECLASSIFICADOS = 60;
 
 /**
  * Refaz a decisão das cobranças em sombra com a config nova — chamada quando
@@ -391,9 +391,11 @@ export async function reclassificar(config: NotasFiscaisConfig, agora = new Date
       ? await db.notaFiscalEmitida.findMany({
           where: {
             cobrancaId: { in: linhas.map((l) => l.cobrancaId) },
-            situacao: {
-              in: [SituacaoDaNota.RESERVADA, SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA, SituacaoDaNota.AUTORIZADA],
-            },
+            // Reservada que nunca saiu (a liberada por "Tentar de novo") não congela o plano.
+            OR: [
+              { situacao: { in: [SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA, SituacaoDaNota.AUTORIZADA] } },
+              { situacao: SituacaoDaNota.RESERVADA, OR: [{ tentativas: { gt: 0 } }, { enviadaEm: { not: null } }] },
+            ],
           },
           select: { cobrancaId: true },
         })

@@ -250,11 +250,17 @@ describe("reivindicar a nota: a trava entre as duas rodadas", () => {
 });
 
 describe("as notas vivas de uma cobrança e as em voo", () => {
-  it("⚠ vivas são reservada, enviada, incerta e autorizada — rejeitada, parada e cancelada NÃO seguram o plano novo", async () => {
+  it("⚠ vivas são enviada, incerta, autorizada e a reservada que já saiu — a liberada (nunca enviada), rejeitada, parada e cancelada NÃO seguram o plano novo", async () => {
     db.notaFiscalEmitida.findMany.mockResolvedValue([]);
     await repositorioReal().vivasDaCobranca(31000);
     expect(db.notaFiscalEmitida.findMany).toHaveBeenCalledWith({
-      where: { cobrancaId: 31000, situacao: { in: ["RESERVADA", "ENVIADA", "INCERTA", "AUTORIZADA"] } },
+      where: {
+        cobrancaId: 31000,
+        OR: [
+          { situacao: { in: ["ENVIADA", "INCERTA", "AUTORIZADA"] } },
+          { situacao: "RESERVADA", OR: [{ tentativas: { gt: 0 } }, { enviadaEm: { not: null } }] },
+        ],
+      },
     });
   });
 

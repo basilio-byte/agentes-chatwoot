@@ -48,6 +48,8 @@ export type NotaDaTela = {
   motivo: string | null;
   tentativas: number;
   atualizadaEm: Date;
+  /** A cobrança de onde a nota veio — só nas RESERVADAS, para a tela dizer o que ainda a segura (corte, lista). */
+  cobranca?: { cobrancaId: number; empresaId: number; situacao: string; referencia: string | null };
 };
 
 /**
@@ -83,18 +85,44 @@ export async function resumoDasNotas(): Promise<{
     tentativas: true,
     atualizadaEm: true,
   } as const;
-  const [pedemPessoa, recentes] = await Promise.all([
+  // ⚠ Duas consultas, e a segunda só para o FALHOU: cadastro ruim de cliente é FALHOU e se repete a cada
+  // rodada — uma pilha delas, numa consulta só, empurrava a nota REJEITADA pela prefeitura para fora da lista.
+  const [pedemPessoa, falharam, recentes] = await Promise.all([
     db.notaFiscalEmitida.findMany({
-      where: { situacao: { in: ["REJEITADA", "FALHOU", "INCERTA"] } },
+      where: { situacao: { in: ["REJEITADA", "INCERTA"] } },
       orderBy: { atualizadaEm: "desc" },
       take: 15,
       select,
     }),
+    db.notaFiscalEmitida.findMany({ where: { situacao: "FALHOU" }, orderBy: { atualizadaEm: "desc" }, take: 10, select }),
     db.notaFiscalEmitida.findMany({ orderBy: { atualizadaEm: "desc" }, take: 15, select }),
   ]);
   const vistos = new Set<string>();
-  const ultimas = [...pedemPessoa, ...recentes].filter((n) => !vistos.has(n.id) && vistos.add(n.id));
-  return { contagem, ultimas: ultimas.slice(0, 20) };
+  const ultimas: NotaDaTela[] = [...pedemPessoa, ...falharam, ...recentes]
+    .filter((n) => !vistos.has(n.id) && vistos.add(n.id))
+    .slice(0, 25);
+
+  // A cobrança das notas na fila (liberadas por "Tentar de novo"): fora do corte ou da lista a nota não sai,
+  // e a tela dizia "sai em 5 minutos" (revisão de 09/10/2026).
+  const reservadas = ultimas.filter((n) => n.situacao === "RESERVADA");
+  if (reservadas.length) {
+    const cobrancas = await db.cobrancaFiscal.findMany({
+      where: { cobrancaId: { in: reservadas.map((n) => n.cobrancaId) } },
+      select: { cobrancaId: true, empresaId: true, situacao: true, quitadaEm: true, cobranca: true },
+    });
+    for (const n of reservadas) {
+      const c = cobrancas.find((x) => x.cobrancaId === n.cobrancaId);
+      if (c) {
+        n.cobranca = {
+          cobrancaId: c.cobrancaId,
+          empresaId: c.empresaId,
+          situacao: c.situacao,
+          referencia: c.quitadaEm ?? (c.cobranca as { criadaEm?: string | null } | null)?.criadaEm ?? null,
+        };
+      }
+    }
+  }
+  return { contagem, ultimas };
 }
 
 /** Só SE a Resend (chave e remetente) está no servidor. O valor nunca sai daqui. */
