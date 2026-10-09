@@ -3,6 +3,7 @@ import {
   clientesEmTexto,
   configDoFormulario,
   lerClientes,
+  lerCodigosEmEspera,
   lerConfigNotasFiscais,
   lerProdutos,
   normalizarCodigo,
@@ -120,5 +121,42 @@ describe("formulário", () => {
 
   it("config mexida à mão cai nos padrões em vez de quebrar", () => {
     expect(lerConfigNotasFiscais({ codigos: { "10": "errado" } })).toEqual(padrao);
+  });
+});
+
+describe("códigos em espera", () => {
+  it("nascem vazios: nada fica retido sem alguém pedir", () => {
+    expect(padrao.emissao.codigosEmEspera).toEqual([]);
+  });
+
+  it("aceita qualquer formato, normaliza e tira repetido", () => {
+    expect(lerCodigosEmEspera("10.05.01 100501, 030302")).toEqual({ codigos: ["10.05.01", "03.03.02"] });
+    expect(lerCodigosEmEspera("")).toEqual({ codigos: [] });
+  });
+
+  it("⚠ um código inválido recusa TUDO: gravar só os bons soltaria a nota que se quis segurar", () => {
+    expect(lerCodigosEmEspera("10.05.01 abc")).toEqual({ erro: expect.stringContaining("abc") });
+    expect(configDoFormulario({ codigosEmEspera: "10.05" }, padrao)).toEqual({
+      erro: expect.stringContaining("Códigos em espera"),
+    });
+  });
+
+  it("o formulário grava a lista", () => {
+    const lido = configDoFormulario({ codigosEmEspera: "100501" }, padrao);
+    expect(lido).toEqual({
+      config: expect.objectContaining({ emissao: expect.objectContaining({ codigosEmEspera: ["10.05.01"] }) }),
+    });
+  });
+
+  it("⚠ formulário de versão antiga, sem o campo, NÃO apaga a espera", () => {
+    const atual = lerConfigNotasFiscais({ emissao: { codigosEmEspera: ["10.05.01"] } });
+    const lido = configDoFormulario({ inicio: "" }, atual);
+    expect("config" in lido && lido.config.emissao.codigosEmEspera).toEqual(["10.05.01"]);
+  });
+
+  it("campo vazio na tela solta tudo (é a pessoa tirando o código da espera)", () => {
+    const atual = lerConfigNotasFiscais({ emissao: { codigosEmEspera: ["10.05.01"] } });
+    const lido = configDoFormulario({ codigosEmEspera: "" }, atual);
+    expect("config" in lido && lido.config.emissao.codigosEmEspera).toEqual([]);
   });
 });

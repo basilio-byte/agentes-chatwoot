@@ -183,6 +183,25 @@ describe("processar o aviso", () => {
     expect(r.detalhe).toMatch(/emissão desligada: nas primeiras notas/);
   });
 
+  it("⚠ cobrança retida por código em espera: diz que está retida, e só a dela", async () => {
+    const retida = montar({
+      emitir: vi.fn(async () => rodada({ retidas: [31041] })),
+      notasDaCobranca: vi.fn(async () => []),
+    });
+    const r = await processarAviso(31041, { dependencias: retida });
+    expect(r.resultado).toBe("registrada");
+    expect(r.detalhe).toMatch(/retida: tem um código em espera/);
+
+    // A retida é OUTRA: a nossa não sai com essa explicação.
+    esquecerAvisosRecentes();
+    const outra = montar({
+      emitir: vi.fn(async () => rodada({ retidas: [99999] })),
+      notasDaCobranca: vi.fn(async () => []),
+    });
+    const r2 = await processarAviso(31042, { dependencias: outra });
+    expect(r2.detalhe).not.toMatch(/retida/);
+  });
+
   it("⚠ erro inesperado vira 'falhou' e NÃO trava o aviso seguinte do mesmo número", async () => {
     const dep = montar({
       conferir: vi.fn<DependenciasDoAviso["conferir"]>().mockRejectedValueOnce(new Error("Conexa fora do ar")),

@@ -20,6 +20,7 @@ describe("config da emissão", () => {
       emailsDeAviso: [],
       cautela: 3,
       pausadaMotivo: null,
+      codigosEmEspera: [],
     });
     // 3 = SEAHUB COWORKING e 4 = SEATECH (conferido na configuração do Conexa).
     expect(antiga.empresas).toEqual({ "3": "SEAHUB", "4": "SEATECH" });

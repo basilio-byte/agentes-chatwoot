@@ -1774,22 +1774,79 @@ a tela na aba "Notas fiscais" de Integrações.
     emissor nacional e declara usar o item da LC 116 e o código municipal; as
     notas atuais do n8n saem com esses campos VAZIOS e o NBS padrão, e foram
     autorizadas. **Se o Natal aceita o `030302` só a primeira emissão real diz.**
-  - ⚠ **Cautela: as primeiras notas saem uma de cada vez e problema desliga a
-    emissão SOZINHA** (`emissao.cautela`, 3 por padrão; pedido do usuário em
-    08/10/2026, para ligar ao vivo com o n8n já sem emitir). Enquanto menos de
-    `cautela` notas NOSSAS tiverem sido autorizadas, a próxima só sai depois de a
-    anterior terminar (`vagasNaCautela`); depois de enviar, a rodada confere na
-    hora, 3 s depois, em vez de esperar os 5 min. Desliga (`ligada=false` e
-    `pausadaMotivo` à vista na tela) quando: a prefeitura **rejeita**; a Spedy
-    **recusa** (4xx que não é de cadastro); ou o **valor registrado difere do
-    planejado** (`divergenciaDeValor`, mesmo com a nota autorizada). Na cautela
-    UM problema basta; passada a cautela, três na mesma rodada — rejeição por
-    cadastro de um cliente não pode parar o resto. Cadastro ruim nunca desliga:
-    não gasta número e não é defeito nosso. Salvar a tela apaga o aviso: é a
-    pessoa dizendo que viu. A conferência das notas já enviadas vale ANTES de
-    mandar mais. Cada nota autorizada deixa no log `nota autorizada` com número,
-    valor, `effectiveDate` e `issuedOn` (é por ali que se prova o ponto em aberto
-    da data).
+  - ⚠ **Cautela: as primeiras notas saem uma de cada vez** (`emissao.cautela`, 3
+    por padrão; pedido do usuário em 08/10/2026, para ligar ao vivo com o n8n já
+    sem emitir). Enquanto menos de `cautela` notas NOSSAS tiverem sido
+    autorizadas, a próxima só sai depois de a anterior terminar
+    (`vagasNaCautela`); depois de enviar, a rodada confere na hora, 3 s depois,
+    em vez de esperar os 5 min. **Na cautela, QUALQUER problema desliga a emissão**
+    (`ligada=false` e `pausadaMotivo` à vista na tela). Salvar a tela apaga o
+    aviso: é a pessoa dizendo que viu. A conferência das notas já enviadas vale
+    ANTES de mandar mais. Cada nota autorizada deixa no log `nota autorizada` com
+    número, valor, `effectiveDate` e `issuedOn`.
+  - ⚠⚠ **Nota NÃO emitida avisa a equipe e NÃO desliga a emissão** (pedido do
+    usuário em 09/10/2026, depois da primeira rejeição real). Passada a cautela
+    (`motivoParaPausar`, com `Problema` TIPADO — o tipo diz a causa, o texto não):
+    1. **rejeição da prefeitura** (`rejeitada`) nunca desliga, por mais que sejam:
+       a nota fica REJEITADA, guardada e avisada, e as outras seguem;
+    2. **valor registrado diferente do planejado** (`divergencia`) desliga NA
+       PRIMEIRA, sempre: é nota fiscal autorizada com valor errado, e o erro se
+       repetiria nas próximas;
+    3. **três recusas da Spedy** (4xx, `recusa`) na mesma rodada desligam: é
+       chave, formato ou conta, não uma nota — e cada recusa marca a nota como
+       FALHOU (que não tenta de novo sozinha), então sem esse freio uma chave
+       revogada marcaria todas as notas do dia.
+    Cadastro ruim do cliente nunca desliga: não gasta número e não é defeito nosso.
+  - ⚠⚠ **Nota guardada: "Tentar de novo"** (`liberarNotaParaNovaTentativa`, botão
+    na lista "Notas emitidas", ADMIN). Nota REJEITADA ou FALHOU NÃO tenta de novo
+    sozinha (`reenviavel`): voltar a mandar sem corrigir daria a mesma rejeição.
+    O botão devolve a linha a RESERVADA com **zero tentativas**, e a rodada manda
+    o MESMO `integrationId`: a Spedy documenta que isso CORRIGE a nota rejeitada
+    em vez de criar outra, sem gastar número. ⚠ O zero é de propósito: com
+    tentativa anotada o código "procura antes de mandar" e ADOTARIA a nota
+    rejeitada que a Spedy já tem, sem reenviar nada. Nunca "Reemitir" pela tela da
+    Spedy: ela não leva o campo novo. A liberação apaga `avisadaEm`, para uma
+    nova rejeição ser avisada de novo (a chave de idempotência do e-mail leva
+    `enviadaEm`, senão a Resend devolveria o e-mail de antes).
+  - ⚠⚠ **Códigos em espera** (`emissao.codigosEmEspera`, tela "Códigos em
+    espera"; 09/10/2026). A cobrança que tem UMA nota com um destes códigos fica
+    **retida INTEIRA** (`codigoQueSegura`): nenhuma nota dela sai, nem a de outro
+    código — o cliente receberia metade das notas por e-mail —, e as outras
+    seguem. Nasceu da rejeição E0903 da prefeitura de Natal: o item **10.05**
+    (sala privativa, 10.05.01) — e 25.05, 15.09 e 17.12 — exige o **tipo de
+    operação** (`tpOper`, NT 2025.002 da Reforma Tributária), que na Spedy é
+    `ibsCbs.operationType` com 5 valores (`supplyWithSubsequentPayment`,
+    `paymentReceivedAfterSupply`, `supplyWithPriorPayment`,
+    `paymentReceivedBeforeSupply`, `simultaneousSupplyAndPayment`). ⚠ **Qual vale
+    é decisão FISCAL** (Laércio/contador) e NÃO está no código: o corpo da nota
+    ainda não manda `ibsCbs`. A cobrança retida continua PRONTA e sai sozinha na
+    rodada seguinte à retirada do código da lista. ⚠ Liberar com "Tentar de novo"
+    uma nota cujo código está em espera NÃO a envia: a espera vale primeiro.
+    Formulário de versão antiga, sem o campo, NÃO apaga a lista.
+  - ⚠ **Cobrança PAGA sem nota também avisa** (`CobrancaSemNota`, mesmo e-mail das
+    notas com problema, uma lista a mais): retida por código em espera, e paga
+    desde o corte em "conferir" ou "aguardando código" (`semDecisao`). Cada caso é
+    dito UMA vez: o que lembra é uma entrega `WebhookEvent` com `provider`
+    `NOTAS_SEM_NOTA` e `externalId` = `retida:<cobrança>:<códigos>` ou
+    `decisao:<cobrança>:<situação>` (`resultado` "a avisar" → "avisada"), sem
+    migration. Só marca como avisada se a Resend ACEITOU. Com a emissão desligada
+    nada é guardado (tudo estaria "sem nota"), e com lista de cobranças liberadas
+    a decisão não avisa.
+  - ⚠⚠ **Dois defeitos de PRODUÇÃO achados em 09/10/2026, que o repositório em
+    memória dos testes escondia** (`emissao/repositorio.test.ts` confere agora a
+    CONSULTA que o código manda):
+    1. **`contarAutorizadas` devolvia 0.** Usava `NOT: { motivo: { startsWith } }`,
+       e em SQL `NOT (motivo LIKE '…')` é desconhecido quando `motivo` é NULL — e a
+       nota nossa autorizada tem `motivo` nulo. Com 33 nossas e 4 do n8n, a
+       contagem era 0: a cautela nunca acabou e UMA rejeição desligou a emissão
+       "nas primeiras notas". Hoje é o total MENOS as do n8n.
+    2. **A rodada lia só as 200 cobranças prontas mais ANTIGAS** (`take: 200`), e
+       a cobrança continua "pronta" na sombra para sempre, mesmo depois de a nota
+       sair, e as anteriores ao corte nunca saem. Eram 174 e entravam ~36 por dia:
+       em um dia as novas ficariam fora das 200 e **a emissão pararia sem
+       nenhum erro**. Hoje só entra quem pode ser emitido (corte, lista, janela de
+       60 dias) E ainda tem nota por emitir (`faltaEmitir`: sem linha, ou com
+       linha que pode tentar de novo).
   - **Corte sem nota em dobro:** o que o n8n já emitiu antes de ser desligado não
     pode ser emitido de novo. As cobranças pagas no dia do corte, antes de a saída
     do n8n ser desligada, entram em `NotaFiscalEmitida` como `AUTORIZADA` com

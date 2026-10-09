@@ -18,6 +18,7 @@ import { lerConfigNotasFiscais, type NotasFiscaisConfig } from "../config";
 import type { NotaPlanejada } from "../regras";
 import { consultarCep } from "./cep";
 import {
+  codigoQueSegura,
   divergenciaDeValor,
   lerTomador,
   motivoParaPausar,
@@ -29,7 +30,9 @@ import {
   problemasDoTomador,
   situacaoDoStatus,
   type CepLido,
+  type CobrancaSemNota,
   type NotaComProblema,
+  type Problema,
   type Tomador,
 } from "./regras";
 
@@ -63,6 +66,8 @@ const PAUSA_ENTRE_ENVIOS_MS = 1_000;
 const PREFIXO_DE_CADASTRO = "Cadastro do cliente:";
 /** Linha que só existe para barrar a nota em dobro de cobrança que o n8n já emitiu. */
 export const MARCA_DO_N8N = "emitida pelo n8n";
+/** `provider` das entregas que lembram quais cobranças sem nota já foram ditas à equipe. */
+export const PROVIDER_SEM_NOTA = "NOTAS_SEM_NOTA";
 
 export type LinhaDaNota = {
   chave: string;
@@ -77,6 +82,8 @@ export type LinhaDaNota = {
   motivo: string | null;
   tentativas: number;
   enviadaEm: Date | null;
+  /** Quando o problema da nota foi levado à equipe; `null` = ainda não foi (ou foi liberada de novo). */
+  avisadaEm?: Date | null;
 };
 
 export type Repositorio = {
@@ -92,9 +99,26 @@ export type Repositorio = {
   contarAutorizadas(): Promise<number>;
   /** Enviadas à Spedy e ainda sem resposta da prefeitura. */
   contarEmVoo(): Promise<number>;
+  /**
+   * Cobranças pagas que ainda não geraram nota e esperam uma pessoa. Guarda uma
+   * vez só por `chave` (já guardada, já avisada: não volta a ser dita).
+   */
+  registrarSemNota(itens: CobrancaSemNota[]): Promise<void>;
+  /** As guardadas que ainda não foram levadas à equipe. */
+  semNotaAAvisar(limite: number): Promise<CobrancaSemNota[]>;
+  marcarSemNotaAvisadas(chaves: string[], quando: Date): Promise<void>;
 };
 
 export type ResultadoDoAviso = "enviado" | "sem provedor" | "falhou";
+
+/** A cobrança paga cuja decisão (conferir, aguardando código) ainda não foi tomada. */
+export type LinhaSemDecisao = {
+  cobrancaId: number;
+  empresaId: number;
+  situacao: string;
+  valorCentavos: number;
+  motivo: string | null;
+};
 
 export type SpedyDaEmpresa = Pick<SpedyClient, "criarNota" | "obterNota" | "buscarPorIntegrationId">;
 
@@ -106,17 +130,23 @@ export type Dependencias = {
   tomador: (clienteId: number) => Promise<Tomador | null>;
   cep: (cep: string) => Promise<CepLido>;
   agora: () => Date;
-  /** Leva o problema a uma pessoa. `sem provedor`: falta a Resend no servidor. */
-  avisar: (notas: NotaComProblema[], destinos: string[]) => Promise<ResultadoDoAviso>;
   /**
-   * Onde o envio e o acompanhamento anotam o que deve fazer a rodada desligar a
-   * emissão (rejeição, recusa da Spedy, valor diferente). A rodada esvazia e lê.
+   * Leva o problema a uma pessoa: as notas com problema e, no mesmo e-mail, as
+   * cobranças pagas que ainda não geraram nota. `sem provedor`: falta a Resend.
    */
-  alertas?: string[];
+  avisar: (notas: NotaComProblema[], destinos: string[], semNota?: CobrancaSemNota[]) => Promise<ResultadoDoAviso>;
+  /**
+   * Onde o envio e o acompanhamento anotam o que pode fazer a rodada desligar a
+   * emissão (ver `motivoParaPausar`: rejeição da prefeitura NÃO desliga, depois
+   * da cautela). A rodada esvazia e lê.
+   */
+  alertas?: Problema[];
   /** Desliga a emissão e guarda o motivo à vista na tela. */
   desligar?: (motivo: string) => Promise<void>;
   /** As cobranças prontas, na ordem de chegada. Sem isso, lê do banco. */
   prontas?: () => Promise<LinhaPronta[]>;
+  /** As cobranças pagas desde `aPartirDe` que estão em "conferir" ou "aguardando código". */
+  semDecisao?: (aPartirDe: string) => Promise<LinhaSemDecisao[]>;
 };
 
 export type LinhaPronta = {
@@ -138,9 +168,49 @@ export type ResultadoDoEnvio =
   | "ja existe";
 
 /** Pode tentar de novo sem pergunta: nunca saiu, saiu e não sabemos, ou o cadastro era o problema. */
-function reenviavel(l: LinhaDaNota): boolean {
+function reenviavel(l: Pick<LinhaDaNota, "situacao" | "motivo">): boolean {
   if (l.situacao === SituacaoDaNota.RESERVADA || l.situacao === SituacaoDaNota.INCERTA) return true;
   return l.situacao === SituacaoDaNota.FALHOU && !!l.motivo?.startsWith(PREFIXO_DE_CADASTRO);
+}
+
+/**
+ * A cobrança ainda tem trabalho para a rodada? Sim quando alguma nota planejada
+ * não tem linha, ou tem uma que pode tentar de novo. Autorizada, na fila da
+ * prefeitura, rejeitada e recusada ficam de fora: já não dependem da rodada, e
+ * ficar lendo essas cobranças prontas para sempre as faria encher as vagas da
+ * leitura e esconder as novas.
+ */
+export function faltaEmitir(
+  notas: ReadonlyArray<{ chave: string }>,
+  linhas: ReadonlyMap<string, Pick<LinhaDaNota, "situacao" | "motivo">>,
+): boolean {
+  return notas.some((n) => {
+    const linha = linhas.get(n.chave);
+    return !linha || reenviavel(linha);
+  });
+}
+
+export type ResultadoDaLiberacao = { ok: true; situacaoAnterior: SituacaoDaNota } | { ok: false; erro: string };
+
+/**
+ * "Tentar de novo": devolve uma nota REJEITADA ou parada (FALHOU) à fila, depois
+ * que a causa foi corrigida. A linha volta a RESERVADA com zero tentativas, e a
+ * rodada manda o MESMO identificador à Spedy, que corrige a nota rejeitada em
+ * vez de criar outra (documentado por eles) — sem gastar número, e sem o passo
+ * de "procurar antes de mandar", que só serve a quem não sabe se a nota saiu.
+ * Nota autorizada, na fila ou sem resposta não é liberada por aqui.
+ */
+export async function liberarNotaParaNovaTentativa(repo: Repositorio, chave: string): Promise<ResultadoDaLiberacao> {
+  const linha = await repo.obter(chave);
+  if (!linha) return { ok: false, erro: "Não achei esta nota." };
+  if (linha.situacao !== SituacaoDaNota.REJEITADA && linha.situacao !== SituacaoDaNota.FALHOU) {
+    return {
+      ok: false,
+      erro: `Só nota rejeitada ou parada pode tentar de novo; esta está "${linha.situacao.toLowerCase()}".`,
+    };
+  }
+  await repo.atualizar(chave, { situacao: SituacaoDaNota.RESERVADA, motivo: null, tentativas: 0, avisadaEm: null });
+  return { ok: true, situacaoAnterior: linha.situacao };
 }
 
 export async function enviarNota(
@@ -213,7 +283,10 @@ export async function enviarNota(
   } catch (erro) {
     if (ehRecusaDefinitiva(erro)) {
       await dep.repo.atualizar(nota.chave, { situacao: SituacaoDaNota.FALHOU, motivo: erro.message.slice(0, 500) });
-      dep.alertas?.push(`cobrança ${args.cobrancaId}: a Spedy recusou a nota (${erro.message.slice(0, 120)})`);
+      dep.alertas?.push({
+        tipo: "recusa",
+        texto: `cobrança ${args.cobrancaId}: a Spedy recusou a nota (${erro.message.slice(0, 120)})`,
+      });
       return "falhou";
     }
     if (erro instanceof SpedyApiError && (erro.status === 429 || erro.status === 408)) {
@@ -259,14 +332,17 @@ async function aplicar(
     motivo,
   });
   if (situacao === "REJEITADA") {
-    dep.alertas?.push(`cobrança ${esperado.cobrancaId}: rejeitada pela prefeitura (${(motivo ?? "sem motivo").slice(0, 120)})`);
+    dep.alertas?.push({
+      tipo: "rejeitada",
+      texto: `cobrança ${esperado.cobrancaId}: rejeitada pela prefeitura (${(motivo ?? "sem motivo").slice(0, 120)})`,
+    });
   }
   const divergencia = divergenciaDeValor({
     cobrancaId: esperado.cobrancaId,
     valorCentavos: esperado.valorCentavos,
     valorNaSpedy: nota.amount,
   });
-  if (divergencia) dep.alertas?.push(divergencia);
+  if (divergencia) dep.alertas?.push({ tipo: "divergencia", texto: divergencia });
   if (situacao === "AUTORIZADA") {
     // Fica no log para conferir a data: nas notas do n8n `effectiveDate` == `issuedOn`.
     logger.info(
@@ -315,8 +391,10 @@ export type Aviso = { avisadas: number; pendentes: number; motivo?: string };
  */
 export async function avisarProblemas(dep: Dependencias, destinos: string[]): Promise<Aviso> {
   const pendentes = await dep.repo.aAvisar(20);
-  if (!pendentes.length) return { avisadas: 0, pendentes: 0 };
-  if (!destinos.length) return { avisadas: 0, pendentes: pendentes.length, motivo: "sem destinatário na tela" };
+  const semNota = await dep.repo.semNotaAAvisar(20);
+  const total = pendentes.length + semNota.length;
+  if (!total) return { avisadas: 0, pendentes: 0 };
+  if (!destinos.length) return { avisadas: 0, pendentes: total, motivo: "sem destinatário na tela" };
 
   const notas: NotaComProblema[] = pendentes.map((l) => ({
     chave: l.chave,
@@ -326,11 +404,14 @@ export async function avisarProblemas(dep: Dependencias, destinos: string[]): Pr
     valorCentavos: l.valorCentavos,
     situacao: l.situacao === SituacaoDaNota.REJEITADA ? "REJEITADA" : "FALHOU",
     motivo: l.motivo,
+    tentativaEm: l.enviadaEm?.toISOString(),
   }));
-  const resultado = await dep.avisar(notas, destinos);
-  if (resultado !== "enviado") return { avisadas: 0, pendentes: pendentes.length, motivo: resultado };
-  await dep.repo.marcarAvisadas(pendentes.map((l) => l.chave), dep.agora());
-  return { avisadas: pendentes.length, pendentes: 0 };
+  const resultado = await dep.avisar(notas, destinos, semNota);
+  if (resultado !== "enviado") return { avisadas: 0, pendentes: total, motivo: resultado };
+  const quando = dep.agora();
+  if (pendentes.length) await dep.repo.marcarAvisadas(pendentes.map((l) => l.chave), quando);
+  if (semNota.length) await dep.repo.marcarSemNotaAvisadas(semNota.map((c) => c.chave), quando);
+  return { avisadas: total, pendentes: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +432,8 @@ export type RodadaDeEmissao = {
   pausada?: string;
   /** Há uma nota esperando a prefeitura (cautela): a seguinte só sai depois. */
   aguardando?: boolean;
+  /** Cobranças seguradas por terem um código em espera (`emissao.codigosEmEspera`). */
+  retidas?: number[];
 };
 
 let ultima = 0;
@@ -402,8 +485,10 @@ export async function rodarEmissao(
   pausar: (ms: number) => Promise<void>,
 ): Promise<RodadaDeEmissao> {
   const r: RodadaDeEmissao = { acao: "emitido", enviadas: 0, falhas: 0, incertas: 0, adiadas: 0, semChave: [] };
-  const alertas: string[] = [];
+  const alertas: Problema[] = [];
   dep.alertas = alertas;
+  /** Cobranças pagas que esta rodada não emitiu e que esperam uma pessoa. */
+  const semNota: CobrancaSemNota[] = [];
   const cautela = config.emissao.cautela;
 
   // Acompanhar vale mesmo com a emissão desligada: nota que já saiu precisa
@@ -436,7 +521,7 @@ export async function rodarEmissao(
     return r;
   }
 
-  const prontas = await (dep.prontas ? dep.prontas() : prontasDoBanco());
+  const prontas = await (dep.prontas ? dep.prontas() : prontasDoBanco(config));
 
   let novas = 0;
   let parar = false;
@@ -452,6 +537,23 @@ export async function rodarEmissao(
     });
     if (!pode.ok) continue;
     const empresa = config.empresas[String(linha.empresaId)];
+
+    // Código em espera: a cobrança inteira fica para depois, sem gastar número —
+    // e a equipe é avisada UMA vez (ela continua pronta e sai quando o código sair).
+    const planejadas = linha.notas as unknown as NotaPlanejada[];
+    if (codigoQueSegura(planejadas, config.emissao.codigosEmEspera)) {
+      (r.retidas ??= []).push(linha.cobrancaId);
+      const segurando = [...new Set(planejadas.map((n) => n.codigo).filter((c) => config.emissao.codigosEmEspera.includes(c)))];
+      semNota.push({
+        chave: `retida:${linha.cobrancaId}:${segurando.join(",")}`,
+        cobrancaId: linha.cobrancaId,
+        empresa,
+        valorCentavos: planejadas.reduce((soma, n) => soma + n.valorCentavos, 0),
+        tipo: "retida",
+        detalhe: `o código ${segurando.join(", ")} está em espera, aguardando uma decisão fiscal`,
+      });
+      continue;
+    }
 
     for (const nota of linha.notas as unknown as NotaPlanejada[]) {
       if (novas >= NOVAS_POR_RODADA) break;
@@ -503,6 +605,36 @@ export async function rodarEmissao(
       }
     }
   }
+
+  // Paga e sem nota por falta de decisão (conferir, aguardando código): é "nota
+  // não emitida" do mesmo jeito, e sem aviso ninguém olha a tela.
+  const { aPartirDe, soCobrancas } = config.emissao;
+  if (dep.semDecisao && aPartirDe && !soCobrancas.length) {
+    try {
+      for (const l of await dep.semDecisao(aPartirDe)) {
+        const empresa = config.empresas[String(l.empresaId)];
+        if (!empresa) continue;
+        semNota.push({
+          chave: `decisao:${l.cobrancaId}:${l.situacao}`,
+          cobrancaId: l.cobrancaId,
+          empresa,
+          valorCentavos: l.valorCentavos,
+          tipo: l.situacao === "CONFERIR" ? "conferir" : "aguardando código",
+          detalhe: (l.motivo ?? "sem motivo registrado").slice(0, 300),
+        });
+      }
+    } catch (erro) {
+      logger.warn({ erro: mensagemDe(erro) }, "notas fiscais: não consegui listar as cobranças sem decisão");
+    }
+  }
+  if (semNota.length) {
+    try {
+      await dep.repo.registrarSemNota(semNota);
+    } catch (erro) {
+      logger.warn({ erro: mensagemDe(erro) }, "notas fiscais: não consegui guardar as cobranças sem nota");
+    }
+  }
+
   r.aviso = await avisarSemLancar(dep, config);
   if (r.enviadas || r.falhas || r.incertas || r.semChave?.length || r.aviso.avisadas || r.pausada) {
     logger.info(r, "notas fiscais: rodada de emissão");
@@ -518,12 +650,75 @@ function somar(a: Acompanhamento | undefined, b: Acompanhamento) {
   a.falhas += b.falhas;
 }
 
-async function prontasDoBanco(): Promise<LinhaPronta[]> {
-  return db.cobrancaFiscal.findMany({
-    where: { situacao: "PRONTA" },
+/** A rodada olha de volta até aqui: mais velha que isso, a cobrança precisa de uma pessoa. */
+const JANELA_DA_EMISSAO_DIAS = 60;
+/** Cobranças com trabalho a fazer lidas por rodada (as que já têm nota nem entram na conta). */
+const PRONTAS_POR_RODADA = 200;
+
+/** `AAAA-MM-DD` de São Paulo, `dias` para trás. */
+function diaParaTras(dias: number, agora = new Date()): string {
+  return diaEmSaoPaulo(new Date(agora.getTime() - dias * 86_400_000));
+}
+
+/**
+ * As cobranças prontas que ainda têm o que emitir.
+ *
+ * ⚠ Eram as 200 mais ANTIGAS prontas, e isso tinha prazo: a cobrança continua
+ * "pronta" na sombra para sempre, mesmo depois de a nota sair, e as anteriores ao
+ * corte nunca saem. Em 09/10/2026 eram 174 e entravam cerca de 36 por dia — em um
+ * dia as novas ficariam fora das 200 e a emissão pararia SEM nenhum erro. Agora
+ * só entra quem pode ser emitido (corte, lista, janela de 60 dias) e ainda falta
+ * nota (`faltaEmitir`).
+ */
+export async function prontasDoBanco(config: NotasFiscaisConfig, agora = new Date()): Promise<LinhaPronta[]> {
+  const { soCobrancas, aPartirDe } = config.emissao;
+  const inicioDaJanela = diaParaTras(JANELA_DA_EMISSAO_DIAS, agora);
+  // O mais recente entre o corte com o n8n e a janela: o que é mais velho que isso precisa de uma pessoa.
+  const desde = aPartirDe && aPartirDe > inicioDaJanela ? aPartirDe : inicioDaJanela;
+  const filtro: Prisma.CobrancaFiscalWhereInput = soCobrancas.length
+    ? { cobrancaId: { in: soCobrancas } }
+    : aPartirDe
+      ? {
+          OR: [
+            { quitadaEm: { gte: desde } },
+            // Geradas (cliente "antes"): sem data de quitação, valem pela criação.
+            { quitadaEm: null, criadaEm: { gte: new Date(agora.getTime() - JANELA_DA_EMISSAO_DIAS * 86_400_000) } },
+          ],
+        }
+      : { cobrancaId: -1 }; // sem lista e sem corte nada sai: nem vale ler
+
+  const candidatas = await db.cobrancaFiscal.findMany({
+    where: { situacao: "PRONTA", ...filtro },
     orderBy: { criadaEm: "asc" },
-    take: 200,
+    select: { cobrancaId: true, notas: true },
+  });
+  if (!candidatas.length) return [];
+
+  const linhas = await db.notaFiscalEmitida.findMany({
+    where: { cobrancaId: { in: candidatas.map((c) => c.cobrancaId) } },
+    select: { chave: true, situacao: true, motivo: true },
+  });
+  const porChave = new Map(linhas.map((l) => [l.chave, l]));
+  const ids = candidatas
+    .filter((c) => faltaEmitir(c.notas as unknown as NotaPlanejada[], porChave))
+    .slice(0, PRONTAS_POR_RODADA)
+    .map((c) => c.cobrancaId);
+  if (!ids.length) return [];
+
+  return db.cobrancaFiscal.findMany({
+    where: { situacao: "PRONTA", cobrancaId: { in: ids } },
+    orderBy: { criadaEm: "asc" },
     select: { cobrancaId: true, empresaId: true, clienteId: true, situacao: true, quitadaEm: true, cobranca: true, notas: true },
+  });
+}
+
+/** Paga e sem decisão (conferir, aguardando código) desde o corte: precisa de uma pessoa. */
+async function semDecisaoDoBanco(aPartirDe: string): Promise<LinhaSemDecisao[]> {
+  return db.cobrancaFiscal.findMany({
+    where: { situacao: { in: ["CONFERIR", "AGUARDANDO_CLASSIFICACAO"] }, quitadaEm: { gte: aPartirDe } },
+    orderBy: { criadaEm: "asc" },
+    take: 50,
+    select: { cobrancaId: true, empresaId: true, situacao: true, valorCentavos: true, motivo: true },
   });
 }
 
@@ -579,13 +774,19 @@ export function repositorioReal(): Repositorio {
       await db.notaFiscalEmitida.updateMany({ where: { chave: { in: chaves } }, data: { avisadaEm: quando } });
     },
     async contarAutorizadas() {
-      return db.notaFiscalEmitida.count({
-        where: {
-          situacao: SituacaoDaNota.AUTORIZADA,
-          // As que o n8n já tinha emitido entram na tabela só para barrar o duplicado.
-          NOT: { motivo: { startsWith: MARCA_DO_N8N } },
-        },
-      });
+      // ⚠ Total MENOS as do n8n, e não `NOT: { motivo: { startsWith } }`: em SQL,
+      // `NOT (motivo LIKE '…')` é desconhecido quando `motivo` é NULL, e a nota
+      // autorizada nossa tem `motivo` nulo. Era o que devolvia 0 em produção
+      // (33 nossas, 4 do n8n): a cautela nunca acabava e UMA rejeição, em
+      // 09/10/2026, desligou a emissão "nas primeiras notas".
+      // As do n8n entram na tabela só para barrar o duplicado.
+      const [todas, doN8n] = await Promise.all([
+        db.notaFiscalEmitida.count({ where: { situacao: SituacaoDaNota.AUTORIZADA } }),
+        db.notaFiscalEmitida.count({
+          where: { situacao: SituacaoDaNota.AUTORIZADA, motivo: { startsWith: MARCA_DO_N8N } },
+        }),
+      ]);
+      return todas - doN8n;
     },
     async contarEmVoo() {
       return db.notaFiscalEmitida.count({
@@ -599,6 +800,48 @@ export function repositorioReal(): Repositorio {
         take: limite,
       });
       return linhas.map(ler);
+    },
+    // A cobrança retida (ou sem decisão) não tem linha em `NotaFiscalEmitida`: o que
+    // lembra que a equipe já foi avisada é uma entrega registrada, única por `chave`.
+    async registrarSemNota(itens) {
+      if (!itens.length) return;
+      const jaGuardadas = await db.webhookEvent.findMany({
+        where: { provider: PROVIDER_SEM_NOTA, externalId: { in: itens.map((i) => i.chave) } },
+        select: { externalId: true },
+      });
+      const vistas = new Set(jaGuardadas.map((e) => e.externalId));
+      for (const item of itens) {
+        if (vistas.has(item.chave)) continue;
+        try {
+          await db.webhookEvent.create({
+            data: {
+              provider: PROVIDER_SEM_NOTA,
+              externalId: item.chave,
+              eventType: item.tipo,
+              payload: item as unknown as Prisma.InputJsonValue,
+              resultado: "a avisar",
+              detalhe: item.detalhe.slice(0, 500),
+            },
+          });
+        } catch (erro) {
+          if ((erro as { code?: string }).code !== "P2002") throw erro;
+        }
+      }
+    },
+    async semNotaAAvisar(limite) {
+      const linhas = await db.webhookEvent.findMany({
+        where: { provider: PROVIDER_SEM_NOTA, resultado: "a avisar" },
+        orderBy: { createdAt: "asc" },
+        take: limite,
+        select: { payload: true },
+      });
+      return linhas.map((l) => l.payload as unknown as CobrancaSemNota);
+    },
+    async marcarSemNotaAvisadas(chaves, quando) {
+      await db.webhookEvent.updateMany({
+        where: { provider: PROVIDER_SEM_NOTA, externalId: { in: chaves } },
+        data: { resultado: "avisada", processedAt: quando },
+      });
     },
   };
 }
@@ -633,12 +876,16 @@ export function dependenciasReais(): Dependencias {
     cep: (cep) => consultarCep(cep),
     agora: () => new Date(),
     desligar: desligarEmissao,
-    async avisar(notas, destinos) {
+    semDecisao: semDecisaoDoBanco,
+    async avisar(notas, destinos, semNota = []) {
       const email = configuracaoDeEmail();
       if (!email) return "sem provedor";
-      const aviso = montarAviso(notas);
+      const aviso = montarAviso(notas, semNota);
       // Mesma lista = mesma chave: um reenvio depois de timeout não duplica.
-      const idempotencia = `nfse-aviso-${createHash("sha256").update(notas.map((n) => n.chave).sort().join("|")).digest("hex").slice(0, 40)}`;
+      const idempotencia = `nfse-aviso-${createHash("sha256")
+        .update([...notas.map((n) => `${n.chave}@${n.tentativaEm ?? ""}`), ...semNota.map((c) => c.chave)].sort().join("|"))
+        .digest("hex")
+        .slice(0, 40)}`;
       try {
         await enviarEmail(email, { para: destinos, assunto: aviso.assunto, texto: aviso.texto, html: aviso.html, idempotencia });
         return "enviado";

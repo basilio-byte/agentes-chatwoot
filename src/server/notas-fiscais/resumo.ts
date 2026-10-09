@@ -2,7 +2,36 @@ import type { SituacaoCobrancaFiscal, SituacaoDaNota } from "@/generated/prisma/
 import { db } from "@/lib/db";
 import { configuracaoDeEmail } from "@/server/integrations/resend/client";
 import { chaveDaSpedy } from "@/server/integrations/spedy/client";
-import { EMPRESAS_DA_SPEDY, type EmpresaDaSpedy } from "./config";
+import { EMPRESAS_DA_SPEDY, type EmpresaDaSpedy, type NotasFiscaisConfig } from "./config";
+import { codigoQueSegura, podeEmitir } from "./emissao/regras";
+import type { NotaPlanejada } from "./regras";
+
+/**
+ * Quantas cobranças estão retidas AGORA por um código em espera: as que a emissão
+ * emitiria (corte, lista, empresa) se o código não as segurasse. Conta mesmo com a
+ * emissão desligada, porque é o tamanho da fila que vai sair quando o código sair.
+ */
+export async function contarRetidas(config: NotasFiscaisConfig): Promise<number> {
+  if (!config.emissao.codigosEmEspera.length) return 0;
+  const linhas = await db.cobrancaFiscal.findMany({
+    where: { situacao: "PRONTA" },
+    orderBy: { criadaEm: "asc" },
+    take: 200,
+    select: { cobrancaId: true, empresaId: true, situacao: true, quitadaEm: true, cobranca: true, notas: true },
+  });
+  const ligada = { ...config, emissao: { ...config.emissao, ligada: true } };
+  return linhas.filter((l) => {
+    const cobranca = l.cobranca as { criadaEm?: string | null } | null;
+    const referencia = l.quitadaEm ?? cobranca?.criadaEm ?? null;
+    const pode = podeEmitir(ligada, {
+      cobrancaId: l.cobrancaId,
+      empresaId: l.empresaId,
+      situacao: l.situacao,
+      referencia,
+    });
+    return pode.ok && !!codigoQueSegura(l.notas as unknown as NotaPlanejada[], config.emissao.codigosEmEspera);
+  }).length;
+}
 
 /** Quantas cobranças em cada situação nos últimos `dias` — para a tela. */
 export async function resumoDasCobrancas(

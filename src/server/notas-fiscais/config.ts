@@ -74,6 +74,15 @@ export const emissaoSchema = z.object({
   cautela: z.number().int().min(0).max(50).default(3),
   /** Por que a emissão foi desligada sozinha. Salvar a tela apaga: é a pessoa dizendo que viu. */
   pausadaMotivo: z.string().max(500).nullable().default(null),
+  /**
+   * CÓDIGOS EM ESPERA (08/10/2026): a cobrança que tem uma nota com um destes
+   * códigos fica RETIDA INTEIRA — nenhuma das notas dela sai, nem a de outro
+   * código —, e as demais cobranças seguem normalmente. Nasceu da rejeição E0903
+   * da prefeitura (sala privativa, 10.05.01, exige o tipo de operação): segurar o
+   * código deixa a emissão ligada para o resto enquanto a pergunta fiscal não é
+   * respondida. A cobrança continua PRONTA e sai quando o código sai da lista.
+   */
+  codigosEmEspera: z.array(codigo).max(20).default([]),
 });
 
 export type EmissaoConfig = z.infer<typeof emissaoSchema>;
@@ -158,6 +167,7 @@ export const notasFiscaisConfigSchema = z.object({
     emailsDeAviso: [],
     cautela: 3,
     pausadaMotivo: null,
+    codigosEmEspera: [],
   }),
   /**
    * O aviso do Conexa (`/api/webhooks/conexa/<token>`): a nota sai na hora do
@@ -265,6 +275,24 @@ export function lerEmailsDeAviso(texto: string): { emails: string[] } | { erro: 
   return { emails };
 }
 
+/**
+ * Códigos em espera, separados por espaço, vírgula ou linha, em qualquer formato
+ * (`10.05.01`, `100501`). Um inválido recusa tudo: gravar só os bons deixaria
+ * sair a nota que a pessoa quis segurar.
+ */
+export function lerCodigosEmEspera(texto: string): { codigos: string[] } | { erro: string } {
+  const codigos: string[] = [];
+  for (const parte of texto.split(/[\s,;]+/).filter(Boolean)) {
+    const normal = normalizarCodigo(parte);
+    if (!normal) {
+      return { erro: `Códigos em espera: "${parte.slice(0, 20)}" não é um código no formato 03.03.02.` };
+    }
+    if (!codigos.includes(normal)) codigos.push(normal);
+  }
+  if (codigos.length > 20) return { erro: "Códigos em espera: no máximo 20 códigos." };
+  return { codigos };
+}
+
 export type RegraDeProduto = NotasFiscaisConfig["produtos"][number]["regra"];
 
 /** A exceção do produto, ou `null` quando vale a categoria. */
@@ -361,8 +389,16 @@ export function configDoFormulario(
   const emails = lerEmailsDeAviso(campos.emailsDeAviso ?? "");
   if ("erro" in emails) return emails;
 
+  // Formulário que não traz o campo (versão antiga da tela) não apaga a espera:
+  // soltar a nota que a pessoa quis segurar seria o erro caro.
+  const espera = lerCodigosEmEspera(
+    campos.codigosEmEspera === undefined ? atual.emissao.codigosEmEspera.join(" ") : campos.codigosEmEspera,
+  );
+  if ("erro" in espera) return espera;
+
   const emissao = {
     emailsDeAviso: emails.emails,
+    codigosEmEspera: espera.codigos,
     ligada: campos.emissaoLigada === "on",
     soCobrancas: cobrancas.ids,
     aPartirDe: valor("aPartirDe") || null,

@@ -102,6 +102,20 @@ export function podeEmitir(
   return { ok: true };
 }
 
+/**
+ * A cobrança está RETIDA? É quando alguma das notas dela tem um código em espera
+ * (`emissao.codigosEmEspera`): então NENHUMA nota da cobrança sai — nem a de outro
+ * código —, porque o cliente receberia metade das notas por e-mail e a outra
+ * metade, depois. Devolve o primeiro código que segura, ou `null`.
+ */
+export function codigoQueSegura(
+  notas: ReadonlyArray<{ codigo: string }>,
+  emEspera: readonly string[],
+): string | null {
+  if (!emEspera.length) return null;
+  return notas.find((n) => emEspera.includes(n.codigo))?.codigo ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // O tomador (o cliente da nota)
 // ---------------------------------------------------------------------------
@@ -298,6 +312,12 @@ export type NotaComProblema = {
   valorCentavos: number;
   situacao: "REJEITADA" | "FALHOU";
   motivo: string | null;
+  /**
+   * Quando a nota foi mandada pela última vez (ISO). Entra na chave de idempotência
+   * do e-mail: a mesma nota rejeitada DE NOVO, depois de "Tentar de novo", é outro
+   * fato e merece outro aviso, e não o mesmo e-mail já enviado.
+   */
+  tentativaEm?: string;
 };
 
 const escaparHtml = (t: string) =>
@@ -309,19 +329,62 @@ function oQueFazer(n: NotaComProblema): string {
     return "Corrija o cadastro do cliente no Conexa. A nota sai sozinha na próxima conferência (a cada 5 minutos).";
   }
   if (n.situacao === "FALHOU") {
-    return "A Spedy recusou o pedido e repetir igual dá no mesmo. Precisa de ajuda técnica.";
+    return "A Spedy recusou o pedido e repetir igual dá no mesmo. Precisa de ajuda técnica. Resolvida a causa, use \"Tentar de novo\" na lista de notas (Integrações → Notas fiscais).";
   }
-  return "A prefeitura recusou a nota. Corrija a causa e reemita pela tela da Spedy (Reemitir nota fiscal).";
+  return "A prefeitura recusou a nota; ela fica guardada. Corrija a causa e use \"Tentar de novo\" na lista de notas (Integrações → Notas fiscais): a mesma nota é reenviada, sem gastar outro número.";
+}
+
+/**
+ * Cobrança PAGA que ainda não gerou nota e espera uma pessoa. É o outro lado do
+ * "nota com problema": aqui nem chegou a existir nota. `chave` é o que impede o
+ * mesmo caso de ser avisado duas vezes.
+ */
+export type CobrancaSemNota = {
+  /** `retida:<cobrança>:<códigos>` ou `decisao:<cobrança>:<situação>`. */
+  chave: string;
+  cobrancaId: number;
+  empresa: string;
+  valorCentavos: number;
+  tipo: "retida" | "conferir" | "aguardando código";
+  detalhe: string;
+};
+
+const TITULO_DO_TIPO: Record<CobrancaSemNota["tipo"], string> = {
+  retida: "retida (código em espera)",
+  conferir: "para conferir",
+  "aguardando código": "aguardando código",
+};
+
+function oQueFazerSemNota(c: CobrancaSemNota): string {
+  if (c.tipo === "retida") {
+    return "Fica guardada, já paga. Quando a decisão fiscal chegar, tire o código da lista \"Códigos em espera\" (Integrações → Notas fiscais): ela sai sozinha na rodada seguinte.";
+  }
+  if (c.tipo === "aguardando código") {
+    return "Dê um código à categoria (ou à regra do produto) em Integrações → Notas fiscais e salve: a cobrança volta a ser avaliada na hora.";
+  }
+  return "Uma pessoa precisa decidir esta cobrança (multa, venda que não soma, parcela...). Veja o motivo e ajuste as regras em Integrações → Notas fiscais.";
 }
 
 /**
  * O e-mail para quem cuida das notas. Uma mensagem só com tudo que está
  * pendente, e não um e-mail por nota: um lote ruim não pode encher a caixa.
  * Sem nome nem documento do cliente — só a cobrança, que se acha no Conexa.
+ *
+ * Leva duas listas: as NOTAS com problema (rejeitada, parada) e as cobranças
+ * PAGAS que ainda nem geraram nota (retida, para conferir, aguardando código).
  */
-export function montarAviso(notas: NotaComProblema[]): { assunto: string; texto: string; html: string } {
-  const n = notas.length;
-  const assunto = `NFS-e: ${n} nota${n === 1 ? "" : "s"} precisa${n === 1 ? "" : "m"} de atenção`;
+export function montarAviso(
+  notas: NotaComProblema[],
+  semNota: CobrancaSemNota[] = [],
+): { assunto: string; texto: string; html: string } {
+  const total = notas.length + semNota.length;
+  const assunto =
+    semNota.length === 0
+      ? `NFS-e: ${total} nota${total === 1 ? "" : "s"} precisa${total === 1 ? "" : "m"} de atenção`
+      : notas.length === 0
+        ? `NFS-e: ${total} cobrança${total === 1 ? " paga" : "s pagas"} sem nota`
+        : `NFS-e: ${total} ${total === 1 ? "item precisa" : "itens precisam"} de atenção`;
+
   const linhas = notas.map((nota) => {
     const situacao = nota.situacao === "REJEITADA" ? "rejeitada pela prefeitura" : "parada antes de enviar";
     return {
@@ -331,20 +394,36 @@ export function montarAviso(notas: NotaComProblema[]): { assunto: string; texto:
       fazer: oQueFazer(nota),
     };
   });
-  const texto = [
-    n === 1 ? "Uma nota fiscal precisa de atenção:" : `${n} notas fiscais precisam de atenção:`,
+  const sem = semNota.map((c) => ({
+    titulo: `Cobrança #${c.cobrancaId} (${c.empresa}) — ${formatarReais(c.valorCentavos)}`,
+    situacao: TITULO_DO_TIPO[c.tipo],
+    motivo: c.detalhe,
+    fazer: oQueFazerSemNota(c),
+  }));
+
+  const cabecalhoDasNotas = notas.length === 1 ? "Uma nota fiscal precisa de atenção:" : `${notas.length} notas fiscais precisam de atenção:`;
+  const cabecalhoDasSemNota =
+    semNota.length === 1
+      ? "Uma cobrança paga ainda não gerou nota (fica guardada, nada se perde):"
+      : `${semNota.length} cobranças pagas ainda não geraram nota (ficam guardadas, nada se perde):`;
+  const item = (l: { titulo: string; situacao: string; motivo: string; fazer: string }) => [
+    `• ${l.titulo}`,
+    `  Situação: ${l.situacao}`,
+    `  Motivo: ${l.motivo}`,
+    `  O que fazer: ${l.fazer}`,
     "",
-    ...linhas.flatMap((l) => [`• ${l.titulo}`, `  Situação: ${l.situacao}`, `  Motivo: ${l.motivo}`, `  O que fazer: ${l.fazer}`, ""]),
+  ];
+  const itemHtml = (l: { titulo: string; situacao: string; motivo: string; fazer: string }) =>
+    `<li><strong>${escaparHtml(l.titulo)}</strong><br>Situação: ${escaparHtml(l.situacao)}<br>Motivo: ${escaparHtml(l.motivo)}<br>O que fazer: ${escaparHtml(l.fazer)}</li>`;
+
+  const texto = [
+    ...(notas.length ? [cabecalhoDasNotas, "", ...linhas.flatMap(item)] : []),
+    ...(semNota.length ? [cabecalhoDasSemNota, "", ...sem.flatMap(item)] : []),
     "Aviso automático do sistema de notas fiscais da Seahub.",
   ].join("\n");
   const html = [
-    `<p>${n === 1 ? "Uma nota fiscal precisa de atenção:" : `${n} notas fiscais precisam de atenção:`}</p>`,
-    "<ul>",
-    ...linhas.map(
-      (l) =>
-        `<li><strong>${escaparHtml(l.titulo)}</strong><br>Situação: ${escaparHtml(l.situacao)}<br>Motivo: ${escaparHtml(l.motivo)}<br>O que fazer: ${escaparHtml(l.fazer)}</li>`,
-    ),
-    "</ul>",
+    ...(notas.length ? [`<p>${cabecalhoDasNotas}</p>`, "<ul>", ...linhas.map(itemHtml), "</ul>"] : []),
+    ...(semNota.length ? [`<p>${cabecalhoDasSemNota}</p>`, "<ul>", ...sem.map(itemHtml), "</ul>"] : []),
     "<p><small>Aviso automático do sistema de notas fiscais da Seahub.</small></p>",
   ].join("");
   return { assunto, texto, html };
@@ -393,20 +472,52 @@ export function divergenciaDeValor(args: {
   );
 }
 
-/** Problemas desta rodada que ainda não são desligamento: ficam à vista. */
-export const PROBLEMAS_ATE_DESLIGAR = 3;
+/**
+ * Um problema desta rodada, com a causa dita pelo TIPO e não adivinhada do texto:
+ * - `divergencia`: nota AUTORIZADA com valor diferente do planejado. Já é nota
+ *   fiscal errada no mundo, e o erro tende a se repetir na próxima.
+ * - `recusa`: a Spedy recusou o pedido (4xx). Uma recusa é caso de uma nota; várias
+ *   na mesma rodada dizem que é a chave, o formato ou a conta.
+ * - `rejeitada`: a prefeitura rejeitou a nota. É caso daquela nota: ela fica
+ *   guardada e avisada, e não há motivo para parar as outras.
+ */
+export type Problema = { tipo: "divergencia" | "recusa" | "rejeitada"; texto: string };
+
+/** Recusas da Spedy numa mesma rodada que passam a ser sinal de defeito geral. */
+export const RECUSAS_ATE_DESLIGAR = 3;
 
 /**
  * Se a emissão deve ser desligada, e por quê (frase para quem vai ler na tela).
- * Na cautela, UM problema basta. Depois dela, três na mesma rodada: uma
- * rejeição por cadastro de cliente não pode parar o resto, mas três seguidas
- * dizem que algo está errado em nós. Cadastro ruim nem chega aqui: não gasta
- * número e não é defeito nosso.
+ *
+ * ⚠ Nota NÃO EMITIDA não desliga a emissão (pedido do usuário, 09/10/2026): a
+ * rejeição da prefeitura, o cadastro do cliente e a cobrança retida viram aviso
+ * por e-mail e ficam guardadas para emitir depois do ajuste, enquanto as outras
+ * notas seguem. O que desliga é só o que se repetiria nas próximas:
+ * 1. na CAUTELA (menos de `cautela` notas nossas autorizadas), qualquer problema;
+ * 2. valor registrado diferente do planejado, sempre — é nota fiscal errada;
+ * 3. três recusas da Spedy numa rodada — chave, formato ou conta, não uma nota.
  */
-export function motivoParaPausar(args: { emCautela: boolean; problemas: string[] }): string | null {
-  const limite = args.emCautela ? 1 : PROBLEMAS_ATE_DESLIGAR;
-  if (args.problemas.length < limite) return null;
-  const quais = args.problemas.slice(0, 3).join(" | ");
-  const resto = args.problemas.length > 3 ? ` (+${args.problemas.length - 3})` : "";
-  return `${args.emCautela ? "nas primeiras notas" : `${args.problemas.length} problemas numa rodada`}: ${quais}${resto}`.slice(0, 450);
+export function motivoParaPausar(args: { emCautela: boolean; problemas: Problema[] }): string | null {
+  const { emCautela, problemas } = args;
+  if (!problemas.length) return null;
+
+  const divergencias = problemas.filter((p) => p.tipo === "divergencia");
+  const recusas = problemas.filter((p) => p.tipo === "recusa");
+  let causa: Problema[];
+  let abertura: string;
+  if (emCautela) {
+    causa = problemas;
+    abertura = "nas primeiras notas";
+  } else if (divergencias.length) {
+    causa = divergencias;
+    abertura = "valor diferente do planejado";
+  } else if (recusas.length >= RECUSAS_ATE_DESLIGAR) {
+    causa = recusas;
+    abertura = `${recusas.length} recusas da Spedy numa rodada`;
+  } else {
+    return null;
+  }
+  const quais = causa.slice(0, 3).map((p) => p.texto).join(" | ");
+  const resto = causa.length > 3 ? ` (+${causa.length - 3})` : "";
+  return `${abertura}: ${quais}${resto}`.slice(0, 450);
 }

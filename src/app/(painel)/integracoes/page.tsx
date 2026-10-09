@@ -31,11 +31,13 @@ import {
 import { categoriasDoConexa } from "@/server/notas-fiscais/categorias";
 import {
   chavesDaSpedyNoServidor,
+  contarRetidas,
   emailNoServidor,
   resumoDasCobrancas,
   resumoDasNotas,
 } from "@/server/notas-fiscais/resumo";
 import { formatarReais, type NotaPlanejada } from "@/server/notas-fiscais/regras";
+import { BotaoTentarDeNovo } from "@/components/botao-tentar-de-novo";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
 import { ConexaConfigForm } from "@/components/conexa-config";
@@ -286,6 +288,7 @@ export default async function IntegracoesPage({
   });
   const resumoFiscal = await resumoDasCobrancas();
   const notasEmitidas = await resumoDasNotas();
+  const cobrancasRetidas = await contarRetidas(configNotas);
   const entregasDoAvisoDoConexa = await db.webhookEvent.findMany({
     where: { provider: "CONEXA_AVISO" },
     orderBy: { createdAt: "desc" },
@@ -1480,6 +1483,8 @@ export default async function IntegracoesPage({
                       emailsDeAviso: configNotas.emissao.emailsDeAviso.join(" "),
                       cautela: String(configNotas.emissao.cautela),
                       pausadaMotivo: configNotas.emissao.pausadaMotivo,
+                      codigosEmEspera: configNotas.emissao.codigosEmEspera.join(" "),
+                      retidas: cobrancasRetidas,
                     }}
                     chaves={chavesDaSpedy}
                     emailNoServidor={emailNoServidor()}
@@ -1505,8 +1510,11 @@ export default async function IntegracoesPage({
                   {notasEmitidas.contagem.REJEITADA + notasEmitidas.contagem.FALHOU > 0 ? (
                     <Aviso tone="danger">
                       Há nota que precisa de uma pessoa: rejeitada pela prefeitura ou parada por
-                      cadastro do cliente. O motivo está na linha. Se os e-mails de aviso e a
-                      Resend estiverem configurados, a equipe também recebe por e-mail.
+                      cadastro do cliente. O motivo está na linha, e a equipe recebe por e-mail
+                      (se a Resend e os destinatários estiverem configurados). A nota fica
+                      guardada: corrigida a causa, use <strong>Tentar de novo</strong> na linha e
+                      a mesma nota é reenviada, sem gastar outro número. Isso <strong>não para</strong>{" "}
+                      a emissão das outras notas.
                     </Aviso>
                   ) : null}
                   {notasEmitidas.ultimas.length === 0 ? (
@@ -1520,6 +1528,9 @@ export default async function IntegracoesPage({
                           <th>Código</th>
                           <th className="text-right">Valor</th>
                           <th>Situação</th>
+                          <th>
+                            <span className="sr-only">Ação</span>
+                          </th>
                         </>
                       }
                     >
@@ -1545,6 +1556,11 @@ export default async function IntegracoesPage({
                             </Badge>
                             {n.motivo ? (
                               <span className="mt-1 block max-w-md text-xs text-muted">{n.motivo}</span>
+                            ) : null}
+                          </td>
+                          <td>
+                            {editavel && (n.situacao === "REJEITADA" || n.situacao === "FALHOU") ? (
+                              <BotaoTentarDeNovo chave={n.chave} />
                             ) : null}
                           </td>
                         </tr>

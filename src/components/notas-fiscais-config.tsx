@@ -52,6 +52,10 @@ export function NotasFiscaisConfigForm({
     cautela: string;
     /** Por que o sistema desligou a emissão sozinho (nulo = não desligou). */
     pausadaMotivo: string | null;
+    /** Códigos em espera, separados por espaço (ex.: "10.05.01"). */
+    codigosEmEspera: string;
+    /** Quantas cobranças pagas estão retidas agora por causa deles. */
+    retidas: number;
   };
   /** Se a chave de cada empresa está no servidor (nunca o valor). */
   chaves: Record<string, boolean>;
@@ -79,6 +83,7 @@ export function NotasFiscaisConfigForm({
   const [emailAoCliente, setEmailAoCliente] = useState(emissao.enviarEmailAoCliente);
   const [avisos, setAvisos] = useState(emissao.emailsDeAviso);
   const [cautela, setCautela] = useState(emissao.cautela);
+  const [espera, setEspera] = useState(emissao.codigosEmEspera);
 
   const enviar = (evento: React.FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
@@ -316,6 +321,36 @@ export function NotasFiscaisConfigForm({
             onChange={(e) => setCautela(e.target.value)}
             disabled={somenteLeitura}
             className="w-24 tabular-nums"
+          />
+        </Field>
+
+        <Field
+          label="Códigos em espera (retidos)"
+          hint={
+            <>
+              Códigos de serviço separados por espaço, como <code>10.05.01</code>. A cobrança que tiver
+              uma nota com um destes códigos fica <strong>retida inteira</strong> (nenhuma nota dela
+              sai, sem gastar número) e o resto segue normalmente. Tire o código da lista para soltar:
+              a cobrança continua pronta e sai na rodada seguinte.
+              {emissao.retidas > 0 ? (
+                <>
+                  {" "}
+                  <strong>
+                    Agora: {emissao.retidas} cobrança{emissao.retidas === 1 ? "" : "s"} paga
+                    {emissao.retidas === 1 ? "" : "s"} esperando.
+                  </strong>
+                </>
+              ) : null}
+            </>
+          }
+        >
+          <Input
+            name="codigosEmEspera"
+            placeholder="10.05.01"
+            value={espera}
+            onChange={(e) => setEspera(e.target.value)}
+            disabled={somenteLeitura}
+            className="font-mono tabular-nums"
           />
         </Field>
 

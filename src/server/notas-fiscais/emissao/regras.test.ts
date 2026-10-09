@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { notasFiscaisConfigSchema } from "../config";
 import {
   codigoNacional,
+  codigoQueSegura,
   divergenciaDeValor,
   motivoParaPausar,
   vagasNaCautela,
@@ -16,6 +17,7 @@ import {
   problemasDoTomador,
   situacaoDoStatus,
   type CepLido,
+  type Problema,
   type Tomador,
 } from "./regras";
 
@@ -300,7 +302,8 @@ describe("texto do aviso à equipe", () => {
     expect(a.texto).toMatch(/Cobrança #900 \(SEATECH\) — R\$\s?149,00, código 03\.03\.02/);
     expect(a.texto).toContain("Situação: rejeitada pela prefeitura");
     expect(a.texto).toContain("Motivo: E0240: O CEP do tomador não existe.");
-    expect(a.texto).toMatch(/reemita pela tela da Spedy/);
+    expect(a.texto).toMatch(/use "Tentar de novo" na lista de notas/);
+    expect(a.texto).toMatch(/sem gastar outro número/);
   });
 
   it("várias notas vão num e-mail só, e cada causa pede uma providência diferente", () => {
@@ -364,12 +367,114 @@ describe("a cautela (regras puras)", () => {
     );
   });
 
-  it("na cautela um problema desliga; depois dela, só três na mesma rodada", () => {
+  const p = (tipo: Problema["tipo"], texto: string): Problema => ({ tipo, texto });
+
+  it("na cautela QUALQUER problema desliga", () => {
     expect(motivoParaPausar({ emCautela: true, problemas: [] })).toBeNull();
-    expect(motivoParaPausar({ emCautela: true, problemas: ["a"] })).toMatch(/nas primeiras notas: a/);
-    expect(motivoParaPausar({ emCautela: false, problemas: ["a", "b"] })).toBeNull();
-    expect(motivoParaPausar({ emCautela: false, problemas: ["a", "b", "c", "d"] })).toMatch(
-      /4 problemas numa rodada: a \| b \| c \(\+1\)/,
+    expect(motivoParaPausar({ emCautela: true, problemas: [p("rejeitada", "a")] })).toMatch(/nas primeiras notas: a/);
+    expect(motivoParaPausar({ emCautela: true, problemas: [p("recusa", "b")] })).toMatch(/nas primeiras notas: b/);
+  });
+
+  it("⚠ passada a cautela, nota NÃO emitida (rejeitada pela prefeitura) nunca desliga, por mais que sejam", () => {
+    const muitas = Array.from({ length: 12 }, (_, i) => p("rejeitada", `cobrança ${i}`));
+    expect(motivoParaPausar({ emCautela: false, problemas: muitas })).toBeNull();
+  });
+
+  it("⚠ passada a cautela, valor diferente do planejado desliga NA PRIMEIRA: é nota fiscal errada", () => {
+    expect(motivoParaPausar({ emCautela: false, problemas: [p("divergencia", "cobrança 7: a Spedy registrou R$ 1,00")] })).toBe(
+      "valor diferente do planejado: cobrança 7: a Spedy registrou R$ 1,00",
     );
+    // Misturada com rejeições, a causa dita é a divergência.
+    expect(
+      motivoParaPausar({ emCautela: false, problemas: [p("rejeitada", "x"), p("divergencia", "y")] }),
+    ).toBe("valor diferente do planejado: y");
+  });
+
+  it("recusa da Spedy: uma ou duas são casos; três na mesma rodada são defeito geral e desligam", () => {
+    expect(motivoParaPausar({ emCautela: false, problemas: [p("recusa", "a"), p("recusa", "b")] })).toBeNull();
+    expect(
+      motivoParaPausar({ emCautela: false, problemas: ["a", "b", "c", "d"].map((t) => p("recusa", t)) }),
+    ).toMatch(/^4 recusas da Spedy numa rodada: a \| b \| c \(\+1\)/);
+    // Recusas e rejeições não se somam: a conta é só das recusas.
+    expect(
+      motivoParaPausar({ emCautela: false, problemas: [p("recusa", "a"), p("recusa", "b"), p("rejeitada", "c")] }),
+    ).toBeNull();
+  });
+});
+
+describe("cobrança paga sem nota no e-mail", () => {
+  const retida = {
+    chave: "retida:30594:10.05.01",
+    cobrancaId: 30594,
+    empresa: "SEAHUB",
+    valorCentavos: 112668,
+    tipo: "retida" as const,
+    detalhe: "o código 10.05.01 está em espera, aguardando uma decisão fiscal",
+  };
+
+  it("só cobranças sem nota: assunto próprio, o que está guardado e o que fazer", () => {
+    const a = montarAviso([], [retida]);
+    expect(a.assunto).toBe("NFS-e: 1 cobrança paga sem nota");
+    expect(a.texto).toContain("Uma cobrança paga ainda não gerou nota (fica guardada, nada se perde):");
+    expect(a.texto).toMatch(/Cobrança #30594 \(SEAHUB\) — R\$\s?1\.126,68/);
+    expect(a.texto).toContain("Situação: retida (código em espera)");
+    expect(a.texto).toContain("Motivo: o código 10.05.01 está em espera");
+    expect(a.texto).toMatch(/tire o código da lista "Códigos em espera"/);
+    expect(a.texto).not.toContain("Uma nota fiscal precisa de atenção");
+  });
+
+  it("notas com problema E cobranças sem nota vão no mesmo e-mail, cada uma na sua lista", () => {
+    const rejeitada = {
+      chave: "conexa-900-030302",
+      cobrancaId: 900,
+      empresa: "SEATECH",
+      codigo: "03.03.02",
+      valorCentavos: 14900,
+      situacao: "REJEITADA" as const,
+      motivo: "E0240: O CEP do tomador não existe.",
+    };
+    const a = montarAviso([rejeitada], [retida, { ...retida, chave: "decisao:7:CONFERIR", cobrancaId: 7, tipo: "conferir", detalhe: "as vendas não somam" }]);
+    expect(a.assunto).toBe("NFS-e: 3 itens precisam de atenção");
+    expect(a.texto).toContain("Uma nota fiscal precisa de atenção:");
+    expect(a.texto).toContain("2 cobranças pagas ainda não geraram nota (ficam guardadas, nada se perde):");
+    expect(a.texto).toContain("Situação: para conferir");
+    expect(a.html).toContain("<ul>");
+  });
+
+  it("⚠ o detalhe pode vir de fora (motivo da sombra): o HTML escapa", () => {
+    const a = montarAviso([], [{ ...retida, detalhe: '<script>alert("x")</script>' }]);
+    expect(a.html).not.toContain("<script>");
+    expect(a.html).toContain("&lt;script&gt;");
+  });
+
+  it("sem cobrança sem nota, o e-mail é exatamente o de antes", () => {
+    const rejeitada = {
+      chave: "k",
+      cobrancaId: 1,
+      empresa: "SEAHUB",
+      codigo: "03.03.02",
+      valorCentavos: 100,
+      situacao: "REJEITADA" as const,
+      motivo: "x",
+    };
+    expect(montarAviso([rejeitada], [])).toEqual(montarAviso([rejeitada]));
+    expect(montarAviso([rejeitada]).assunto).toBe("NFS-e: 1 nota precisa de atenção");
+  });
+});
+
+describe("códigos em espera (regra pura)", () => {
+  const notas = [{ codigo: "03.03.02" }, { codigo: "10.05.01" }];
+
+  it("sem lista, nada é retido", () => {
+    expect(codigoQueSegura(notas, [])).toBeNull();
+  });
+
+  it("⚠ UMA nota com código em espera segura a cobrança inteira, e diz qual código", () => {
+    expect(codigoQueSegura(notas, ["10.05.01"])).toBe("10.05.01");
+  });
+
+  it("cobrança sem nenhum dos códigos não é retida", () => {
+    expect(codigoQueSegura([{ codigo: "03.03.02" }], ["10.05.01"])).toBeNull();
+    expect(codigoQueSegura([], ["10.05.01"])).toBeNull();
   });
 });

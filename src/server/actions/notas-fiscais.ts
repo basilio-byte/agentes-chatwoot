@@ -8,6 +8,7 @@ import { IntegrationProvider, UserRole } from "@/generated/prisma/enums";
 import { configDoFormulario, lerConfigNotasFiscais } from "@/server/notas-fiscais/config";
 import { reclassificar } from "@/server/notas-fiscais/conferir";
 import { hashDoToken } from "@/server/notas-fiscais/aviso";
+import { liberarNotaParaNovaTentativa, repositorioReal } from "@/server/notas-fiscais/emissao/emitir";
 import { gerarToken } from "@/server/gatilho/token";
 
 export type EstadoNotasFiscais = { ok?: string; erro?: string };
@@ -88,6 +89,44 @@ export async function salvarConfigNotasFiscais(
       ? `Emissão LIGADA: ${quemEmite} vira nota fiscal real na Spedy, a cada 5 minutos. O n8n não pode emitir essas mesmas.`
       : "Modo sombra ligado. A primeira conferência acontece em até 1 minuto e depois a cada 30 minutos. Nenhuma nota é emitida.";
   return { ok: modo + efeito };
+}
+
+/**
+ * "Tentar de novo": devolve à fila uma nota REJEITADA pela prefeitura ou parada
+ * pela Spedy, depois que a causa foi corrigida. A rodada seguinte (até 5 minutos)
+ * reenvia a MESMA nota, que a Spedy corrige em vez de criar outra. ADMIN, como
+ * ligar a emissão: é o que faz uma nota fiscal sair.
+ */
+export async function tentarEmitirDeNovo(chave: string): Promise<EstadoNotasFiscais> {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+  if (typeof chave !== "string" || !chave || chave.length > 100) return { erro: "Nota inválida." };
+
+  const liberada = await liberarNotaParaNovaTentativa(repositorioReal(), chave);
+  if (!liberada.ok) return { erro: liberada.erro };
+
+  await db.auditLog.create({
+    data: {
+      userId: sessao.user.id,
+      action: "integration.notas_fiscais.nova_tentativa",
+      entity: "NotaFiscalEmitida",
+      entityId: chave,
+      diff: { situacaoAnterior: liberada.situacaoAnterior },
+    },
+  });
+  revalidatePath("/integracoes");
+
+  // Liberar nota cujo código ainda está em espera não a emite: a espera vale primeiro.
+  const [nota, integracao] = await Promise.all([
+    db.notaFiscalEmitida.findUnique({ where: { chave }, select: { codigo: true } }),
+    db.integration.findUnique({ where: { provider: IntegrationProvider.NOTAS_FISCAIS }, select: { config: true } }),
+  ]);
+  const emEspera = lerConfigNotasFiscais(integracao?.config).emissao.codigosEmEspera;
+  if (nota && emEspera.includes(nota.codigo)) {
+    return {
+      ok: `Liberada, mas o código ${nota.codigo} ainda está em espera: ela sai quando você o tirar da lista "Códigos em espera".`,
+    };
+  }
+  return { ok: "Liberada. A mesma nota é reenviada na próxima rodada (até 5 minutos), sem gastar outro número." };
 }
 
 /**

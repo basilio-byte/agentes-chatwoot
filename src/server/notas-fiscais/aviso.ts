@@ -144,6 +144,9 @@ async function emitirEContar(dep: DependenciasDoAviso, cobrancaId: number, antes
     return { resultado: "emitida", detalhe: `${antes}; nota(s): ${quais}` };
   }
   if (rodada?.pausada) return { resultado: "registrada", detalhe: `${antes}; emissão desligada: ${rodada.pausada}` };
+  if (rodada?.retidas?.includes(cobrancaId)) {
+    return { resultado: "registrada", detalhe: `${antes}; retida: tem um código em espera (aguarda decisão fiscal), sem gastar número` };
+  }
   if (rodada?.aguardando) return { resultado: "registrada", detalhe: `${antes}; aguardando a nota anterior (cautela)` };
   return { resultado: "registrada", detalhe: `${antes}; a emissão não enviou nota (travas, corte ou emissão desligada)` };
 }

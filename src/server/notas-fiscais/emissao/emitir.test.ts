@@ -9,6 +9,8 @@ import {
   acompanharNotas,
   avisarProblemas,
   enviarNota,
+  faltaEmitir,
+  liberarNotaParaNovaTentativa,
   MARCA_DO_N8N,
   rodarEmissao,
   type Dependencias,
@@ -16,7 +18,7 @@ import {
   type LinhaPronta,
   type Repositorio,
 } from "./emitir";
-import type { CepLido, Tomador } from "./regras";
+import type { CepLido, CobrancaSemNota, Tomador } from "./regras";
 
 const NOTA = {
   chave: "conexa-900-030302",
@@ -45,6 +47,8 @@ const CEP_OK: CepLido = { estado: "ok", ibge: 2408102, cidade: "Natal", uf: "RN"
 function repositorioEmMemoria() {
   const linhas = new Map<string, LinhaDaNota>();
   const avisadas = new Set<string>();
+  /** As cobranças sem nota guardadas (retida, conferir...) e se a equipe já foi avisada. */
+  const semNota = new Map<string, { item: CobrancaSemNota; avisada: boolean }>();
   const repo: Repositorio = {
     async obter(chave) {
       return linhas.get(chave) ? { ...linhas.get(chave)! } : null;
@@ -56,6 +60,20 @@ function repositorioEmMemoria() {
     },
     async atualizar(chave, dados) {
       linhas.set(chave, { ...linhas.get(chave)!, ...dados });
+      // Liberada de novo: o próximo problema desta nota volta a ser avisado.
+      if (dados.avisadaEm === null) avisadas.delete(chave);
+    },
+    async registrarSemNota(itens) {
+      for (const item of itens) if (!semNota.has(item.chave)) semNota.set(item.chave, { item, avisada: false });
+    },
+    async semNotaAAvisar() {
+      return [...semNota.values()].filter((e) => !e.avisada).map((e) => e.item);
+    },
+    async marcarSemNotaAvisadas(chaves) {
+      for (const c of chaves) {
+        const e = semNota.get(c);
+        if (e) e.avisada = true;
+      }
     },
     async aAvisar() {
       return [...linhas.values()].filter(
@@ -81,11 +99,11 @@ function repositorioEmMemoria() {
       ).length;
     },
   };
-  return { repo, linhas, avisadas };
+  return { repo, linhas, avisadas, semNota };
 }
 
 function montar(extra: Partial<Dependencias> = {}) {
-  const { repo, linhas, avisadas } = repositorioEmMemoria();
+  const { repo, linhas, avisadas, semNota } = repositorioEmMemoria();
   const spedy = {
     criarNota: vi.fn<(c: CorpoDeNota) => Promise<NotaDaSpedy>>(async (c) => ({
       id: "spedy-1",
@@ -106,7 +124,7 @@ function montar(extra: Partial<Dependencias> = {}) {
     avisar: async () => "enviado",
     ...extra,
   };
-  return { dep, spedy, linhas, avisadas };
+  return { dep, spedy, linhas, avisadas, semNota };
 }
 
 const args = { nota: NOTA, cobrancaId: 900, clienteId: 77, empresa: "SEATECH", enviarEmailAoCliente: true };
@@ -517,5 +535,350 @@ describe("a rodada de emissão com cautela", () => {
     expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
     expect(c.spedy.criarNota.mock.calls[0][0].integrationId).toBe("conexa-2-030302");
     expect(await c.dep.repo.contarAutorizadas()).toBe(1);
+  });
+
+  describe("códigos em espera", () => {
+    /** Uma cobrança de sala privativa (10.05.01), com uma nota só. */
+    const salaPrivativa = (n: number): LinhaPronta => ({
+      ...pronta(n),
+      notas: [{ ...nota(n), chave: `conexa-${n}-100501`, codigo: "10.05.01" }],
+    });
+    /** Cobrança com DUAS notas: um serviço comum e uma sala privativa. */
+    const mista = (n: number): LinhaPronta => ({
+      ...pronta(n),
+      notas: [nota(n), { ...nota(n), chave: `conexa-${n}-100501`, codigo: "10.05.01" }],
+    });
+
+    it("⚠ segura a cobrança de sala privativa e deixa o resto sair, sem gastar número", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1), pronta(2), pronta(3)]);
+      const r = await rodarEmissao(c.dep, config({ cautela: 0, codigosEmEspera: ["10.05.01"] }), c.pausar);
+      expect(r.enviadas).toBe(2);
+      expect(r.retidas).toEqual([1]);
+      expect(r.pausada).toBeUndefined();
+      expect(c.spedy.criarNota).toHaveBeenCalledTimes(2);
+      expect(c.linhas.has("conexa-1-100501")).toBe(false);
+    });
+
+    it("⚠ a cobrança com dois códigos fica retida INTEIRA: a nota comum também espera", async () => {
+      const c = cenario((id) => autorizada(id), [mista(1), pronta(2)]);
+      const r = await rodarEmissao(c.dep, config({ cautela: 0, codigosEmEspera: ["10.05.01"] }), c.pausar);
+      expect(r.enviadas).toBe(1);
+      expect(r.retidas).toEqual([1]);
+      expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
+      expect(c.spedy.criarNota.mock.calls[0][0].integrationId).toBe("conexa-2-030302");
+      expect(c.linhas.has("conexa-1-030302")).toBe(false);
+    });
+
+    it("tirou o código da espera: a cobrança retida sai na rodada seguinte, ainda pronta", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1)]);
+      await rodarEmissao(c.dep, config({ cautela: 0, codigosEmEspera: ["10.05.01"] }), c.pausar);
+      expect(c.spedy.criarNota).not.toHaveBeenCalled();
+
+      const r = await rodarEmissao(c.dep, config({ cautela: 0, codigosEmEspera: [] }), c.pausar);
+      expect(r.enviadas).toBe(1);
+      expect(r.retidas).toBeUndefined();
+      expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
+      expect(c.spedy.criarNota.mock.calls[0][0].integrationId).toBe("conexa-1-100501");
+      expect(c.linhas.get("conexa-1-100501")?.situacao).toBe("ENVIADA");
+    });
+
+    it("sem nada em espera a rodada é a de antes (nenhuma cobrança retida)", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1), pronta(2)]);
+      const r = await rodarEmissao(c.dep, config({ cautela: 0 }), c.pausar);
+      expect(r.enviadas).toBe(2);
+      expect(r.retidas).toBeUndefined();
+    });
+
+    it("⚠ nota liberada para tentar de novo, mas com o código ainda em espera, continua guardada", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1)]);
+      c.linhas.set("conexa-1-100501", {
+        chave: "conexa-1-100501",
+        cobrancaId: 1,
+        empresa: "SEAHUB",
+        codigo: "10.05.01",
+        valorCentavos: 14900,
+        competencia: "2026-10",
+        situacao: SituacaoDaNota.RESERVADA,
+        spedyId: "spedy-antiga",
+        numero: null,
+        motivo: null,
+        tentativas: 0,
+        enviadaEm: null,
+      });
+      const r = await rodarEmissao(c.dep, config({ cautela: 0, codigosEmEspera: ["10.05.01"] }), c.pausar);
+      expect(r.retidas).toEqual([1]);
+      expect(c.spedy.criarNota).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Nota NÃO emitida avisa a equipe e NÃO desliga a emissão (pedido de 09/10/2026)
+  // -------------------------------------------------------------------------
+
+  describe("o que desliga a emissão e o que só avisa", () => {
+    const suporte = ["suporte@seahubcoworking.com.br"];
+
+    it("⚠ passada a cautela, TRÊS rejeições da prefeitura NÃO desligam: ficam guardadas e avisadas, e as outras saem", async () => {
+      const c = cenario((id) => (/conexa-[123]-/.test(id) ? rejeitada(id) : autorizada(id)), [1, 2, 3, 4, 5].map(pronta));
+      const avisar = vi.fn<Dependencias["avisar"]>(async () => "enviado");
+      c.dep.avisar = avisar;
+      const cfg = config({ cautela: 0, soCobrancas: [1, 2, 3, 4, 5], emailsDeAviso: suporte });
+
+      const r1 = await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(r1.enviadas).toBe(5);
+
+      // A prefeitura só responde na rodada seguinte; é ali que as rejeições aparecem.
+      const r2 = await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(r2.acompanhamento?.rejeitadas).toBe(3);
+      expect(r2.pausada).toBeUndefined();
+      expect(c.desligar).not.toHaveBeenCalled();
+      expect(r2.aviso?.avisadas).toBe(3);
+      expect(avisar.mock.calls[0][0].map((n) => n.situacao)).toEqual(["REJEITADA", "REJEITADA", "REJEITADA"]);
+      expect(c.linhas.get("conexa-1-030302")?.situacao).toBe("REJEITADA");
+      expect(c.linhas.get("conexa-4-030302")?.situacao).toBe("AUTORIZADA");
+    });
+
+    it("⚠ com três notas nossas autorizadas a cautela JÁ ACABOU: uma rejeição não desliga", async () => {
+      const c = cenario((id) => rejeitada(id), [pronta(1)]);
+      for (const n of [91, 92, 93]) {
+        c.linhas.set(`conexa-${n}-030302`, {
+          chave: `conexa-${n}-030302`,
+          cobrancaId: n,
+          empresa: "SEAHUB",
+          codigo: "03.03.02",
+          valorCentavos: 14900,
+          competencia: "2026-10",
+          situacao: SituacaoDaNota.AUTORIZADA,
+          spedyId: `s-${n}`,
+          numero: n,
+          motivo: null, // ⚠ nota nossa autorizada tem motivo NULO: foi isso que a contagem real errava
+          tentativas: 1,
+          enviadaEm: new Date(),
+        });
+      }
+      // A cautela é 3 (a de produção): com 3 nossas autorizadas ela terminou.
+      const cfg = config({ cautela: 3, soCobrancas: [1] });
+      const r = await rodarEmissao(c.dep, cfg, c.pausar);
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(r.enviadas).toBe(1);
+      expect(c.desligar).not.toHaveBeenCalled();
+      expect(c.linhas.get("conexa-1-030302")?.situacao).toBe("REJEITADA");
+    });
+
+    it("⚠ valor diferente do planejado desliga SEMPRE, mesmo passada a cautela: é nota fiscal errada", async () => {
+      const c = cenario((id) => autorizada(id, 99.99), [1, 2].map(pronta));
+      const cfg = config({ cautela: 0 });
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      const r2 = await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(r2.pausada).toMatch(/^valor diferente do planejado: cobrança 1: a Spedy registrou R\$ 99,99/);
+      expect(c.desligar).toHaveBeenCalledTimes(1);
+    });
+
+    it("três recusas da Spedy numa rodada desligam (chave, formato ou conta); duas não", async () => {
+      const recusar = (c: ReturnType<typeof cenario>) =>
+        c.spedy.criarNota.mockRejectedValue(new SpedyApiError(400, "dado inválido"));
+
+      const tres = cenario((id) => autorizada(id), [1, 2, 3, 4].map(pronta));
+      recusar(tres);
+      const r = await rodarEmissao(tres.dep, config({ cautela: 0 }), tres.pausar);
+      expect(r.pausada).toMatch(/^3 recusas da Spedy numa rodada/);
+      expect(tres.desligar).toHaveBeenCalledTimes(1);
+      expect(tres.spedy.criarNota).toHaveBeenCalledTimes(3);
+
+      const duas = cenario((id) => autorizada(id), [1, 2].map(pronta));
+      recusar(duas);
+      const r2 = await rodarEmissao(duas.dep, config({ cautela: 0 }), duas.pausar);
+      expect(r2.falhas).toBe(2);
+      expect(r2.pausada).toBeUndefined();
+      expect(duas.desligar).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cobrança paga que não gerou nota avisa a equipe, uma vez", () => {
+    const suporte = ["suporte@seahubcoworking.com.br"];
+    const salaPrivativa = (n: number): LinhaPronta => ({
+      ...pronta(n),
+      notas: [{ ...nota(n), chave: `conexa-${n}-100501`, codigo: "10.05.01" }],
+    });
+
+    it("⚠ retida por código em espera: e-mail na primeira rodada, e nunca mais o mesmo", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1), pronta(2)]);
+      const avisar = vi.fn<Dependencias["avisar"]>(async () => "enviado");
+      c.dep.avisar = avisar;
+      const cfg = config({ cautela: 0, codigosEmEspera: ["10.05.01"], emailsDeAviso: suporte });
+
+      const r1 = await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(r1.enviadas).toBe(1);
+      expect(avisar).toHaveBeenCalledTimes(1);
+      const [notas, destinos, semNota] = avisar.mock.calls[0];
+      expect(notas).toEqual([]);
+      expect(destinos).toEqual(suporte);
+      expect(semNota).toEqual([
+        {
+          chave: "retida:1:10.05.01",
+          cobrancaId: 1,
+          empresa: "SEAHUB",
+          valorCentavos: 14900,
+          tipo: "retida",
+          detalhe: expect.stringContaining("10.05.01"),
+        },
+      ]);
+
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(avisar).toHaveBeenCalledTimes(1);
+    });
+
+    it("sem destinatário na tela ela fica guardada, e o aviso sai quando houver um (nada se perde)", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1)]);
+      const avisar = vi.fn<Dependencias["avisar"]>(async () => "enviado");
+      c.dep.avisar = avisar;
+
+      const r1 = await rodarEmissao(c.dep, config({ cautela: 0, codigosEmEspera: ["10.05.01"] }), c.pausar);
+      expect(r1.aviso).toMatchObject({ avisadas: 0, pendentes: 1, motivo: "sem destinatário na tela" });
+      expect(avisar).not.toHaveBeenCalled();
+
+      const r2 = await rodarEmissao(c.dep, config({ cautela: 0, codigosEmEspera: ["10.05.01"], emailsDeAviso: suporte }), c.pausar);
+      expect(r2.aviso).toMatchObject({ avisadas: 1, pendentes: 0 });
+      expect(avisar).toHaveBeenCalledTimes(1);
+    });
+
+    it("⚠ e-mail que NÃO saiu não é dado como dito: a cobrança retida volta no aviso seguinte", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1)]);
+      const avisar = vi.fn<Dependencias["avisar"]>().mockResolvedValueOnce("falhou").mockResolvedValue("enviado");
+      c.dep.avisar = avisar;
+      const cfg = config({ cautela: 0, codigosEmEspera: ["10.05.01"], emailsDeAviso: suporte });
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(avisar).toHaveBeenCalledTimes(2);
+      expect(avisar.mock.calls[1][2]).toHaveLength(1);
+    });
+
+    it("paga e sem decisão (conferir, aguardando código) também é nota não emitida: avisa uma vez", async () => {
+      const c = cenario((id) => autorizada(id), []);
+      c.dep.semDecisao = async () => [
+        { cobrancaId: 77, empresaId: 3, situacao: "CONFERIR", valorCentavos: 5000, motivo: "as vendas não somam a cobrança" },
+        { cobrancaId: 78, empresaId: 4, situacao: "AGUARDANDO_CLASSIFICACAO", valorCentavos: 9000, motivo: "categoria 23 sem código" },
+      ];
+      const avisar = vi.fn<Dependencias["avisar"]>(async () => "enviado");
+      c.dep.avisar = avisar;
+      const cfg = lerConfigNotasFiscais({ emissao: { ligada: true, aPartirDe: "2026-10-08", cautela: 0, emailsDeAviso: suporte } });
+
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(avisar).toHaveBeenCalledTimes(1);
+      expect(avisar.mock.calls[0][2]).toEqual([
+        expect.objectContaining({ chave: "decisao:77:CONFERIR", tipo: "conferir", empresa: "SEAHUB", detalhe: "as vendas não somam a cobrança" }),
+        expect.objectContaining({ chave: "decisao:78:AGUARDANDO_CLASSIFICACAO", tipo: "aguardando código", empresa: "SEATECH" }),
+      ]);
+      await rodarEmissao(c.dep, cfg, c.pausar);
+      expect(avisar).toHaveBeenCalledTimes(1);
+    });
+
+    it("com lista de cobranças liberadas (primeira nota real) não avisa decisão: o resto não é para emitir mesmo", async () => {
+      const c = cenario((id) => autorizada(id), []);
+      const semDecisao = vi.fn(async () => []);
+      c.dep.semDecisao = semDecisao;
+      await rodarEmissao(c.dep, config({ cautela: 0, emailsDeAviso: suporte }), c.pausar);
+      expect(semDecisao).not.toHaveBeenCalled();
+    });
+
+    it("com a emissão desligada ninguém é avisado de cobrança sem nota (tudo estaria sem nota)", async () => {
+      const c = cenario((id) => autorizada(id), [salaPrivativa(1)]);
+      const avisar = vi.fn<Dependencias["avisar"]>(async () => "enviado");
+      c.dep.avisar = avisar;
+      await rodarEmissao(c.dep, config({ ligada: false, codigosEmEspera: ["10.05.01"], emailsDeAviso: suporte }), c.pausar);
+      expect(avisar).not.toHaveBeenCalled();
+      expect(c.semNota.size).toBe(0);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guardada para emitir depois do ajuste: "Tentar de novo"
+// ---------------------------------------------------------------------------
+
+describe("tentar de novo a nota rejeitada ou parada", () => {
+  const rejeitar = async (c: ReturnType<typeof montar>) => {
+    await enviarNota(c.dep, args);
+    c.spedy.obterNota.mockResolvedValue({
+      id: "spedy-1",
+      integrationId: NOTA.chave,
+      status: "rejected",
+      number: null,
+      processingDetail: { code: "E0903", message: "O tipo de operação deve ser informado." },
+    });
+    await acompanharNotas(c.dep);
+  };
+
+  it("⚠ a rejeitada volta à fila e a MESMA nota é reenviada, sem procurar antes e sem criar outra", async () => {
+    const c = montar();
+    await rejeitar(c);
+    expect(c.linhas.get(NOTA.chave)?.situacao).toBe("REJEITADA");
+    await avisarProblemas(c.dep, ["a@b.com"]);
+    expect(c.avisadas.has(NOTA.chave)).toBe(true);
+
+    expect(await liberarNotaParaNovaTentativa(c.dep.repo, NOTA.chave)).toEqual({ ok: true, situacaoAnterior: "REJEITADA" });
+    expect(c.linhas.get(NOTA.chave)).toMatchObject({ situacao: "RESERVADA", motivo: null, tentativas: 0 });
+    // O próximo problema desta nota volta a ser avisado.
+    expect(c.avisadas.has(NOTA.chave)).toBe(false);
+
+    c.spedy.criarNota.mockClear();
+    c.spedy.buscarPorIntegrationId.mockClear();
+    expect(await enviarNota(c.dep, args)).toBe("enviada");
+    expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
+    expect(c.spedy.criarNota.mock.calls[0][0].integrationId).toBe(NOTA.chave);
+    // Sem tentativa anotada, não adota a nota rejeitada que a Spedy já tem: reenvia.
+    expect(c.spedy.buscarPorIntegrationId).not.toHaveBeenCalled();
+    expect(c.linhas.get(NOTA.chave)?.situacao).toBe("ENVIADA");
+  });
+
+  it("a nota parada por recusa da Spedy (FALHOU) também pode tentar de novo", async () => {
+    const c = montar();
+    c.spedy.criarNota.mockRejectedValueOnce(new SpedyApiError(400, "dado inválido"));
+    expect(await enviarNota(c.dep, args)).toBe("falhou");
+    expect(await liberarNotaParaNovaTentativa(c.dep.repo, NOTA.chave)).toEqual({ ok: true, situacaoAnterior: "FALHOU" });
+    expect(await enviarNota(c.dep, args)).toBe("enviada");
+  });
+
+  it("⚠ só rejeitada ou parada: autorizada, na fila ou inexistente não são liberadas", async () => {
+    const c = montar();
+    await enviarNota(c.dep, args);
+    expect(await liberarNotaParaNovaTentativa(c.dep.repo, NOTA.chave)).toEqual({
+      ok: false,
+      erro: expect.stringContaining('"enviada"'),
+    });
+    expect(await liberarNotaParaNovaTentativa(c.dep.repo, "conexa-1-nao-existe")).toEqual({
+      ok: false,
+      erro: "Não achei esta nota.",
+    });
+    expect(c.linhas.get(NOTA.chave)?.situacao).toBe("ENVIADA");
+  });
+});
+
+describe("a cobrança ainda tem o que emitir?", () => {
+  const notas = [{ chave: "a" }, { chave: "b" }];
+  const linha = (situacao: SituacaoDaNota, motivo: string | null = null) => ({ situacao, motivo });
+
+  it("sem linha, ou com linha que pode tentar de novo: sim", () => {
+    expect(faltaEmitir(notas, new Map())).toBe(true);
+    expect(faltaEmitir([{ chave: "a" }], new Map([["a", linha(SituacaoDaNota.RESERVADA)]]))).toBe(true);
+    expect(faltaEmitir([{ chave: "a" }], new Map([["a", linha(SituacaoDaNota.INCERTA)]]))).toBe(true);
+    expect(
+      faltaEmitir([{ chave: "a" }], new Map([["a", linha(SituacaoDaNota.FALHOU, "Cadastro do cliente: CEP não existe")]])),
+    ).toBe(true);
+  });
+
+  it("⚠ já autorizada, na fila, rejeitada ou recusada: não — senão ocupariam a leitura para sempre", () => {
+    for (const situacao of [SituacaoDaNota.AUTORIZADA, SituacaoDaNota.ENVIADA, SituacaoDaNota.REJEITADA, SituacaoDaNota.CANCELADA]) {
+      expect(faltaEmitir([{ chave: "a" }], new Map([["a", linha(situacao)]]))).toBe(false);
+    }
+    expect(faltaEmitir([{ chave: "a" }], new Map([["a", linha(SituacaoDaNota.FALHOU, "Spedy respondeu 400")]]))).toBe(false);
+  });
+
+  it("cobrança com duas notas: basta uma faltar", () => {
+    const linhas = new Map([["a", linha(SituacaoDaNota.AUTORIZADA)]]);
+    expect(faltaEmitir(notas, linhas)).toBe(true);
+    linhas.set("b", linha(SituacaoDaNota.AUTORIZADA));
+    expect(faltaEmitir(notas, linhas)).toBe(false);
   });
 });
