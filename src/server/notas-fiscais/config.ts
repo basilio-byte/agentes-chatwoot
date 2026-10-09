@@ -448,6 +448,18 @@ export function configDoFormulario(
   const tipos = lerTiposDeOperacao(campos, atual.emissao.tipoDeOperacao);
   if ("erro" in tipos) return tipos;
 
+  // ⚠ O corte com o n8n só anda para FRENTE. O que foi pago antes dele já tem a nota do n8n,
+  // e só o dia do corte tem linha-marca no banco: voltar o corte faria a rodada emitir de novo
+  // tudo o que o n8n emitiu no meio — nota em dobro, com outro número, só cancelável à mão
+  // (revisão de 09/10/2026). Apagar o corte é seguro (nada passa a ser emitido) e continua valendo.
+  const corteNovo = valor("aPartirDe") || null;
+  const corteAtual = atual.emissao.aPartirDe;
+  if (corteAtual && corteNovo && corteNovo < corteAtual) {
+    return {
+      erro: `O corte com o n8n não pode voltar de ${corteAtual} para ${corteNovo}: o que foi pago entre as duas datas já tem a nota do n8n e sairia em dobro. Se for mesmo preciso, peça a quem mantém o sistema.`,
+    };
+  }
+
   const emissao = {
     emailsDeAviso: emails.emails,
     codigosEmEspera: espera.codigos,

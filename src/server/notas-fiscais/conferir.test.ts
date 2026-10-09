@@ -22,6 +22,8 @@ let produtos: Record<number, Record<string, unknown>> = {};
 let chamadas: string[] = [];
 let vendaQueFalha: number | null = null;
 let estadoDaIntegracao: Record<string, unknown> = {};
+/** As notas que a Spedy já recebeu (a tabela `NotaFiscalEmitida`), só o que `reclassificar` lê. */
+let notasEmitidas: Array<{ cobrancaId: number; situacao: string }> = [];
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -31,6 +33,16 @@ vi.mock("@/lib/db", () => ({
         estadoDaIntegracao = data;
         return {};
       },
+    },
+    notaFiscalEmitida: {
+      findMany: async ({
+        where,
+      }: {
+        where: { cobrancaId: { in: number[] }; situacao: { in: string[] } };
+      }) =>
+        notasEmitidas.filter(
+          (n) => where.cobrancaId.in.includes(n.cobrancaId) && where.situacao.in.includes(n.situacao),
+        ),
     },
     cobrancaFiscal: {
       findMany: async ({ where }: { where: { cobrancaId?: { in: number[] }; modo?: string } }) => {
@@ -112,6 +124,7 @@ const cobranca = (id: number, salesIds: number[], extra: Record<string, unknown>
 beforeEach(() => {
   reiniciarRelogioDasNotas();
   linhas = [];
+  notasEmitidas = [];
   ligada = true;
   config = { codigos: { "10": "03.03.02", "3": "10.05.01" }, codigoReservaDeSala: "03.03.02" };
   conexaAberto = true;
@@ -221,7 +234,7 @@ describe("notas fiscais em modo sombra", () => {
         lerConfigNotasFiscais({ codigos: { "10": "03.03.02", "8": "10.05.01" } }),
         AGORA,
       );
-      expect(r).toEqual({ mudadas: 1, apagadas: 0 });
+      expect(r).toEqual({ mudadas: 1, apagadas: 0, preservadas: 0 });
       expect(linhas[0]).toMatchObject({
         situacao: "PRONTA",
         notas: [expect.objectContaining({ codigo: "10.05.01", valorCentavos: 120000 })],
@@ -235,7 +248,51 @@ describe("notas fiscais em modo sombra", () => {
       const notas = linhas[0].notas as Array<Record<string, unknown>>;
       linhas[0].notas = notas.map((n) => Object.fromEntries(Object.entries(n).reverse()));
       const r = await reclassificar(lerConfigNotasFiscais(config), AGORA);
-      expect(r).toEqual({ mudadas: 0, apagadas: 0 });
+      expect(r).toEqual({ mudadas: 0, apagadas: 0, preservadas: 0 });
+    });
+
+    describe("⚠ cobrança que já tem nota não tem o plano refeito (senão a rodada emitiria OUTRA nota do mesmo pagamento)", () => {
+      /** Cobrança de plano comum (categoria 10 → 03.03.02), já conferida em sombra. */
+      const conferida = async () => {
+        pagas = [cobranca(900, [1])];
+        await rodar();
+        expect(linhas[0]).toMatchObject({
+          situacao: "PRONTA",
+          notas: [expect.objectContaining({ chave: "conexa-900-030302" })],
+        });
+      };
+      // Quem trocou o código da categoria 10 e salvou a tela.
+      const comOutroCodigo = () => lerConfigNotasFiscais({ codigos: { "10": "10.05.01" } });
+
+      it.each(["RESERVADA", "ENVIADA", "INCERTA", "AUTORIZADA"])("com nota %s: o plano fica como estava", async (situacao) => {
+        await conferida();
+        notasEmitidas = [{ cobrancaId: 900, situacao }];
+        const r = await reclassificar(comOutroCodigo(), AGORA);
+        expect(r).toEqual({ mudadas: 0, apagadas: 0, preservadas: 1 });
+        expect(linhas[0].notas).toEqual([expect.objectContaining({ chave: "conexa-900-030302", codigo: "03.03.02" })]);
+      });
+
+      it.each(["REJEITADA", "FALHOU", "CANCELADA"])(
+        "com nota só %s: o plano É refeito (é assim que o código corrigido faz a nota sair)",
+        async (situacao) => {
+          await conferida();
+          notasEmitidas = [{ cobrancaId: 900, situacao }];
+          const r = await reclassificar(comOutroCodigo(), AGORA);
+          expect(r).toEqual({ mudadas: 1, apagadas: 0, preservadas: 0 });
+          expect(linhas[0].notas).toEqual([expect.objectContaining({ chave: "conexa-900-100501", codigo: "10.05.01" })]);
+        },
+      );
+
+      it("só a cobrança que já tem nota é poupada; as outras seguem refeitas", async () => {
+        pagas = [cobranca(900, [1]), cobranca(901, [1])];
+        await rodar();
+        notasEmitidas = [{ cobrancaId: 900, situacao: "AUTORIZADA" }];
+        const r = await reclassificar(comOutroCodigo(), AGORA);
+        expect(r).toEqual({ mudadas: 1, apagadas: 0, preservadas: 1 });
+        const por = (id: number) => linhas.find((l) => l.cobrancaId === id)!;
+        expect(por(900).notas).toEqual([expect.objectContaining({ codigo: "03.03.02" })]);
+        expect(por(901).notas).toEqual([expect.objectContaining({ codigo: "10.05.01" })]);
+      });
     });
 
     it("⚠ quem ficou fora sem os itens lidos e agora entraria é apagado, para a rodada ler de novo", async () => {
@@ -243,7 +300,7 @@ describe("notas fiscais em modo sombra", () => {
       pagas = [cobranca(900, [1])];
       await rodar();
       const r = await reclassificar(lerConfigNotasFiscais({ codigos: { "10": "03.03.02" } }), AGORA);
-      expect(r).toEqual({ mudadas: 0, apagadas: 1 });
+      expect(r).toEqual({ mudadas: 0, apagadas: 1, preservadas: 0 });
       expect(linhas).toEqual([]);
 
       config = { codigos: { "10": "03.03.02" } };

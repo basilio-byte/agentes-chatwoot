@@ -1,5 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
-import { IntegrationProvider, IntegrationStatus } from "@/generated/prisma/enums";
+import { IntegrationProvider, IntegrationStatus, SituacaoDaNota } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { diaEmSaoPaulo } from "@/lib/tempo";
@@ -360,6 +360,14 @@ const DIAS_RECLASSIFICADOS = 30;
  * ⚠ Cobrança que ficou fora ANTES de os itens serem lidos e que agora entraria
  * é apagada: sem os itens não há o que classificar, e a rodada seguinte a lê de
  * novo (se ainda estiver na janela).
+ *
+ * ⚠⚠ Cobrança que JÁ TEM NOTA (reservada, enviada, incerta ou autorizada) não é
+ * refeita: o plano dela fica como estava quando a nota saiu. A chave da nota leva o
+ * código (`conexa-<cobrança>-<código>`); refazer o plano com outro código trocava a
+ * chave, a cobrança parecia sem nota e a rodada seguinte emitia OUTRA NFS-e do mesmo
+ * pagamento — com outro número, só cancelável à mão (revisão de 09/10/2026, achado
+ * crítico). As que ainda não emitiram nada (inclusive rejeitadas e paradas) seguem
+ * refeitas: é assim que um código corrigido faz a nota sair.
  */
 export async function reclassificar(config: NotasFiscaisConfig, agora = new Date()) {
   const desde = new Date(agora.getTime() - DIAS_RECLASSIFICADOS * 86_400_000);
@@ -367,6 +375,7 @@ export async function reclassificar(config: NotasFiscaisConfig, agora = new Date
     where: { modo: "sombra", criadaEm: { gte: desde } },
     select: {
       id: true,
+      cobrancaId: true,
       evento: true,
       cobranca: true,
       itens: true,
@@ -377,9 +386,29 @@ export async function reclassificar(config: NotasFiscaisConfig, agora = new Date
     },
   });
 
+  const comNota = new Set(
+    (linhas.length
+      ? await db.notaFiscalEmitida.findMany({
+          where: {
+            cobrancaId: { in: linhas.map((l) => l.cobrancaId) },
+            situacao: {
+              in: [SituacaoDaNota.RESERVADA, SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA, SituacaoDaNota.AUTORIZADA],
+            },
+          },
+          select: { cobrancaId: true },
+        })
+      : []
+    ).map((n) => n.cobrancaId),
+  );
+
   let mudadas = 0;
   let apagadas = 0;
+  let preservadas = 0;
   for (const linha of linhas) {
+    if (comNota.has(linha.cobrancaId)) {
+      preservadas++;
+      continue;
+    }
     const cobranca = linha.cobranca as unknown as CobrancaLida;
     const itens = linha.itens as unknown as ItemClassificado[];
     const evento = linha.evento as Evento;
@@ -409,7 +438,7 @@ export async function reclassificar(config: NotasFiscaisConfig, agora = new Date
     });
     mudadas++;
   }
-  return { mudadas, apagadas };
+  return { mudadas, apagadas, preservadas };
 }
 
 /**

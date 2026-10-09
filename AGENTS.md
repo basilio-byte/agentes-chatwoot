@@ -1877,6 +1877,77 @@ a tela na aba "Notas fiscais" de Integrações.
        nenhum erro**. Hoje só entra quem pode ser emitido (corte, lista, janela de
        60 dias) E ainda tem nota por emitir (`faltaEmitir`: sem linha, ou com
        linha que pode tentar de novo).
+  - ⚠⚠ **A revisão independente de 09/10/2026 (57 agentes, cada achado verificado
+    por 2 ou 3 verificadores) confirmou mais defeitos reais — corrigidos.** O que ela
+    ensinou, por gravidade:
+    1. **Trocar o código de uma categoria e salvar a tela emitia uma SEGUNDA NFS-e do
+       mesmo pagamento.** A chave da nota leva o código (`conexa-<cobrança>-<código>`),
+       e `reclassificar` (chamada em todo salvamento) refazia o plano de toda cobrança
+       dos últimos 30 dias — inclusive as já emitidas. A cobrança parecia sem nota e a
+       rodada mandava outra, com outro número, só cancelável à mão. Agora: (a)
+       `reclassificar` NÃO refaz a cobrança que tem nota reservada, enviada, incerta ou
+       autorizada (devolve `preservadas`); rejeitada e parada seguem refeitas — é assim
+       que um código corrigido faz a nota sair; (b) mesmo assim, a rodada confere antes
+       de emitir (`notasForaDoPlano`): nota viva da cobrança que o plano atual NÃO
+       prevê = nada é emitido dela, e a equipe é avisada (`plano mudou`, chave
+       `plano:<cobrança>:<chaves>`). São duas camadas de propósito: a primeira evita o
+       plano mudar, a segunda segura o que escapar (config mudada por SQL, leitura do
+       Conexa de outra rodada...). O corte com o n8n também só anda para frente
+       (`configDoFormulario` recusa voltá-lo).
+    2. **Duas rodadas ao mesmo tempo mandavam a mesma nota.** O vigia (processo do
+       worker) e o aviso do Conexa (processo web, `emitirNotasFiscais({forcar})`) rodam
+       em paralelo, e `rodando` é variável de módulo (uma por processo). Nota NOVA já
+       era segura pela chave única; a que já existia (liberada, cadastro corrigido,
+       incerta) era lida e atualizada sem trava. Agora `repo.reivindicar` muda a nota
+       só se ela ainda está como foi lida (`updateMany` com situação e tentativas no
+       WHERE: uma instrução, sem janela), e quem perde volta com "em andamento" sem
+       mandar nada. `envioEmCurso` trata reservada ou incerta com tentativa de menos de
+       2 min como "outra rodada está mandando" (cobre quem acabou de reivindicar e
+       ainda espera a Spedy). A recusa ou o erro de rede que chega TARDE só grava se a
+       nota ainda é a que a rodada reivindicou (`fechar`): nunca sobrescreve uma nota
+       que a outra rodada mandou e a prefeitura autorizou. `rodando` é marcado antes de
+       qualquer `await`. "Tentar de novo" também zera `enviadaEm`, para a nota liberada
+       não parecer "em curso". Provado em Postgres de verdade: oito `reivindicar` em
+       paralelo, um ganha.
+    3. **Cobrança presa por cadastro enchia as 10 vagas de toda rodada, e as notas
+       novas nunca saíam, sem erro.** Elas ficam sempre na frente (a leitura é por data
+       de criação) e contavam como "nota nova". Agora o que NÃO chega à Spedy
+       (resultados `cadastro`, `sem cliente` e `sem chave`) tem teto próprio
+       (`SEM_ENVIO_POR_RODADA`, 10) e não gasta as vagas das notas novas; e
+       `ordenarParaARodada` põe as novas na frente e faz as presas girarem pela última
+       vez que foram olhadas (`verificadaEm`, que a rodada agora grava a cada olhada,
+       mudando ou não o motivo).
+    4. **Rejeição depois de um aviso de cadastro nunca gerava e-mail** (`avisadaEm`
+       velho). A reivindicação zera `avisadaEm`, e o cadastro que muda de problema
+       também. A chave de idempotência do e-mail agora leva o MOTIVO: a Resend a guarda
+       por 24 h e devolveria o e-mail de antes. A linha reaproveitada num reenvio
+       também ganha o valor, o código e a competência do plano de agora; senão o
+       acompanhamento desligava a emissão por "valor diferente" numa nota correta.
+    5. **A emissão que se desliga sozinha só ficava na tela.** Agora vai também por
+       e-mail (`tipo: "pausada"`, chave `pausa:<minuto>`), junto com o resto, e só
+       conta como avisada se a Resend aceitou.
+    6. **`semDecisaoDoBanco` lia as 50 mais antigas (sempre as mesmas) e `contarRetidas`
+       as 200 mais antigas:** da 51ª em diante ninguém era avisado, e a tela mostrava
+       zero com cobrança nova retida. Hoje a decisão devolve só as ainda não ditas (lê
+       até 2.000) e `cobrancasRetidas` é a MESMA leitura da rodada.
+    7. **Formulário que ficou aberto religava a emissão e apagava o motivo da pausa.**
+       A tela leva a versão da configuração gravada (`versaoDaConfig`, hash do JSON
+       ordenado, em `notas-fiscais/versao.ts`), e `salvarConfigNotasFiscais` recusa a
+       que ficou para trás e a que não traz versão nenhuma (tela aberta antes desta
+       regra). Salvar é "a pessoa dizendo que viu o aviso": só vale se viu.
+    8. **"Tentar de novo" prometia "sai em até 5 minutos" a uma nota que não ia sair**
+       (emissão desligada, sem a chave da Spedy, cobrança fora do corte):
+       `oQueImpedeASaida` diz o que segura, na resposta e na linha da nota reservada.
+    - **Deixado como está, de propósito:** a poda de 30 dias das entregas apaga a
+      memória do "dito uma vez" (um caso que continua pendente é avisado de novo todo
+      mês: lembrete, não defeito); a rodada só olha 60 dias para trás (o e-mail da
+      retida diz isso); emitir a partir do retrato gravado da cobrança, sem reler o
+      Conexa, é o desenho desde o início (a revisão o refutou como defeito).
+    - **Provas:** `emissao/banco-real.test.ts` roda contra um Postgres de verdade
+      (opt-in: `NF_BANCO_DE_TESTE=<url de um banco com "teste" no nome>`; as tabelas
+      são esvaziadas a cada caso). Foi ele que provou a concorrência e o SQL que o
+      repositório em memória esconde. Cada regra nova também foi quebrada de propósito,
+      uma a uma, para conferir que algum teste falha.
   - **Corte sem nota em dobro:** o que o n8n já emitiu antes de ser desligado não
     pode ser emitido de novo. As cobranças pagas no dia do corte, antes de a saída
     do n8n ser desligada, entram em `NotaFiscalEmitida` como `AUTORIZADA` com

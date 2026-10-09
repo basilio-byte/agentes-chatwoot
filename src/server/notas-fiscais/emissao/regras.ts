@@ -119,6 +119,36 @@ export function codigoQueSegura(
   return notas.find((n) => emEspera.includes(n.codigo))?.codigo ?? null;
 }
 
+/**
+ * O que impede uma nota liberada ("Tentar de novo") de sair na próxima rodada, em frases
+ * para quem clicou. Vazio: nada a dizer, ela sai. ⚠ O botão só olhava a espera de código
+ * e prometia "sai em até 5 minutos" com a emissão desligada, sem a chave da Spedy no
+ * servidor ou com a cobrança fora do corte (revisão de 09/10/2026).
+ */
+export function oQueImpedeASaida(args: {
+  integracaoLigada: boolean;
+  config: Pick<NotasFiscaisConfig, "emissao" | "empresas">;
+  nota: { codigo: string; empresa: string };
+  chaveDaEmpresaNoServidor: boolean;
+  /** A cobrança de onde a nota veio, quando foi lida: fora do corte ou da lista também segura. */
+  cobranca?: { cobrancaId: number; empresaId: number; situacao: string; referencia: string | null };
+}): string[] {
+  const { config, nota } = args;
+  const motivos: string[] = [];
+  if (!args.integracaoLigada) motivos.push("a integração de notas fiscais está desligada");
+  else if (!config.emissao.ligada) motivos.push('a emissão está desligada (marque "Emitir as notas na Spedy")');
+  if (config.emissao.codigosEmEspera.includes(nota.codigo)) {
+    motivos.push(`o código ${nota.codigo} está em espera (tire-o de "Códigos em espera")`);
+  }
+  if (!args.chaveDaEmpresaNoServidor) motivos.push(`falta a chave da Spedy da empresa ${nota.empresa} no servidor`);
+  if (args.cobranca) {
+    // A trava da emissão já foi dita acima: aqui só o que sobra (lista liberada, corte, empresa...).
+    const pode = podeEmitir({ ...config, emissao: { ...config.emissao, ligada: true } }, args.cobranca);
+    if (!pode.ok) motivos.push(pode.motivo);
+  }
+  return motivos;
+}
+
 // ---------------------------------------------------------------------------
 // O tomador (o cliente da nota)
 // ---------------------------------------------------------------------------
@@ -369,12 +399,22 @@ function oQueFazer(n: NotaComProblema): string {
  * mesmo caso de ser avisado duas vezes.
  */
 export type CobrancaSemNota = {
-  /** `retida:<cobrança>:<códigos>` ou `decisao:<cobrança>:<situação>`. */
+  /**
+   * `retida:<cobrança>:<códigos>`, `decisao:<cobrança>:<situação>`,
+   * `plano:<cobrança>:<chaves>` ou `pausa:<minuto>`.
+   */
   chave: string;
+  /** Zero na pausa da emissão, que não é de uma cobrança. */
   cobrancaId: number;
   empresa: string;
   valorCentavos: number;
-  tipo: "retida" | "conferir" | "aguardando código";
+  /**
+   * - `retida`: um código em espera segura a cobrança;
+   * - `conferir` e `aguardando código`: a decisão fiscal ainda não foi tomada;
+   * - `plano mudou`: o plano mudou DEPOIS de uma nota sair — nada mais é emitido dela;
+   * - `pausada`: a emissão se desligou sozinha (não é uma cobrança).
+   */
+  tipo: "retida" | "conferir" | "aguardando código" | "plano mudou" | "pausada";
   detalhe: string;
 };
 
@@ -382,14 +422,25 @@ const TITULO_DO_TIPO: Record<CobrancaSemNota["tipo"], string> = {
   retida: "retida (código em espera)",
   conferir: "para conferir",
   "aguardando código": "aguardando código",
+  "plano mudou": "plano mudou depois da emissão",
+  pausada: "emissão desligada sozinha",
 };
+
+/** A rodada olha para trás só até aqui: cobrança paga há mais tempo precisa de uma pessoa. */
+export const DIAS_DA_JANELA_DE_EMISSAO = 60;
 
 function oQueFazerSemNota(c: CobrancaSemNota): string {
   if (c.tipo === "retida") {
-    return "Fica guardada, já paga. Quando a decisão fiscal chegar, tire o código da lista \"Códigos em espera\" (Integrações → Notas fiscais): ela sai sozinha na rodada seguinte.";
+    return `Fica guardada, já paga. Quando a decisão fiscal chegar, tire o código da lista "Códigos em espera" (Integrações → Notas fiscais): ela sai sozinha na rodada seguinte, desde que o pagamento tenha menos de ${DIAS_DA_JANELA_DE_EMISSAO} dias.`;
   }
   if (c.tipo === "aguardando código") {
     return "Dê um código à categoria (ou à regra do produto) em Integrações → Notas fiscais e salve: a cobrança volta a ser avaliada na hora.";
+  }
+  if (c.tipo === "plano mudou") {
+    return "Esta cobrança já tem nota emitida com outro código. Para não sair uma segunda nota do mesmo pagamento, nada mais é emitido dela. Confira na Spedy o que já foi emitido: se cobre a cobrança, não há o que fazer; se não cobre, peça ajuda técnica.";
+  }
+  if (c.tipo === "pausada") {
+    return "Nenhuma nota nova sai enquanto estiver desligada (as cobranças pagas ficam guardadas, nada se perde). Leia o motivo, corrija a causa e ligue a emissão de novo em Integrações → Notas fiscais.";
   }
   return "Uma pessoa precisa decidir esta cobrança (multa, venda que não soma, parcela...). Veja o motivo e ajuste as regras em Integrações → Notas fiscais.";
 }
@@ -406,9 +457,13 @@ export function montarAviso(
   notas: NotaComProblema[],
   semNota: CobrancaSemNota[] = [],
 ): { assunto: string; texto: string; html: string } {
-  const total = notas.length + semNota.length;
-  const assunto =
-    semNota.length === 0
+  // A pausa da emissão não é uma cobrança: vai à frente, com assunto próprio.
+  const pausas = semNota.filter((c) => c.tipo === "pausada");
+  const cobrancas = semNota.filter((c) => c.tipo !== "pausada");
+  const total = notas.length + cobrancas.length;
+  const assunto = pausas.length
+    ? "NFS-e: a emissão foi desligada sozinha"
+    : cobrancas.length === 0
       ? `NFS-e: ${total} nota${total === 1 ? "" : "s"} precisa${total === 1 ? "" : "m"} de atenção`
       : notas.length === 0
         ? `NFS-e: ${total} cobrança${total === 1 ? " paga" : "s pagas"} sem nota`
@@ -423,8 +478,14 @@ export function montarAviso(
       fazer: oQueFazer(nota),
     };
   });
-  const sem = semNota.map((c) => ({
+  const sem = cobrancas.map((c) => ({
     titulo: `Cobrança #${c.cobrancaId} (${c.empresa}) — ${formatarReais(c.valorCentavos)}`,
+    situacao: TITULO_DO_TIPO[c.tipo],
+    motivo: c.detalhe,
+    fazer: oQueFazerSemNota(c),
+  }));
+  const aPausa = pausas.map((c) => ({
+    titulo: "A emissão automática de notas fiscais foi DESLIGADA",
     situacao: TITULO_DO_TIPO[c.tipo],
     motivo: c.detalhe,
     fazer: oQueFazerSemNota(c),
@@ -432,9 +493,10 @@ export function montarAviso(
 
   const cabecalhoDasNotas = notas.length === 1 ? "Uma nota fiscal precisa de atenção:" : `${notas.length} notas fiscais precisam de atenção:`;
   const cabecalhoDasSemNota =
-    semNota.length === 1
+    cobrancas.length === 1
       ? "Uma cobrança paga ainda não gerou nota (fica guardada, nada se perde):"
-      : `${semNota.length} cobranças pagas ainda não geraram nota (ficam guardadas, nada se perde):`;
+      : `${cobrancas.length} cobranças pagas ainda não geraram nota (ficam guardadas, nada se perde):`;
+  const cabecalhoDaPausa = "⚠ A emissão parou:";
   const item = (l: { titulo: string; situacao: string; motivo: string; fazer: string }) => [
     `• ${l.titulo}`,
     `  Situação: ${l.situacao}`,
@@ -446,13 +508,15 @@ export function montarAviso(
     `<li><strong>${escaparHtml(l.titulo)}</strong><br>Situação: ${escaparHtml(l.situacao)}<br>Motivo: ${escaparHtml(l.motivo)}<br>O que fazer: ${escaparHtml(l.fazer)}</li>`;
 
   const texto = [
+    ...(aPausa.length ? [cabecalhoDaPausa, "", ...aPausa.flatMap(item)] : []),
     ...(notas.length ? [cabecalhoDasNotas, "", ...linhas.flatMap(item)] : []),
-    ...(semNota.length ? [cabecalhoDasSemNota, "", ...sem.flatMap(item)] : []),
+    ...(cobrancas.length ? [cabecalhoDasSemNota, "", ...sem.flatMap(item)] : []),
     "Aviso automático do sistema de notas fiscais da Seahub.",
   ].join("\n");
   const html = [
+    ...(aPausa.length ? [`<p><strong>${cabecalhoDaPausa}</strong></p>`, "<ul>", ...aPausa.map(itemHtml), "</ul>"] : []),
     ...(notas.length ? [`<p>${cabecalhoDasNotas}</p>`, "<ul>", ...linhas.map(itemHtml), "</ul>"] : []),
-    ...(semNota.length ? [`<p>${cabecalhoDasSemNota}</p>`, "<ul>", ...sem.map(itemHtml), "</ul>"] : []),
+    ...(cobrancas.length ? [`<p>${cabecalhoDasSemNota}</p>`, "<ul>", ...sem.map(itemHtml), "</ul>"] : []),
     "<p><small>Aviso automático do sistema de notas fiscais da Seahub.</small></p>",
   ].join("");
   return { assunto, texto, html };

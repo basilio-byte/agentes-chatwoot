@@ -20,6 +20,7 @@ import type { NotaPlanejada } from "../regras";
 import { consultarCep } from "./cep";
 import {
   codigoQueSegura,
+  DIAS_DA_JANELA_DE_EMISSAO,
   divergenciaDeValor,
   lerTomador,
   motivoParaPausar,
@@ -60,8 +61,23 @@ import {
  */
 
 const A_CADA_MS = 5 * 60_000;
-/** Notas novas por rodada. A Spedy aguenta 5/s; o limite protege o Conexa (60/min). */
+/** Notas que chegam à Spedy por rodada. Ela aguenta 5/s; o limite protege o Conexa (60/min). */
 const NOVAS_POR_RODADA = 10;
+/**
+ * Tentativas que NÃO chegam à Spedy por rodada (cadastro ruim, cliente que o Conexa
+ * não devolve, empresa sem chave). Têm teto próprio: antes contavam como "nota
+ * nova", e dez cobranças presas por cadastro enchiam as vagas de toda rodada e
+ * escondiam as cobranças novas, sem nenhum erro (revisão de 09/10/2026).
+ */
+const SEM_ENVIO_POR_RODADA = 10;
+/**
+ * Quanto tempo uma nota reservada ou incerta é tratada como "alguém está mandando
+ * agora". O vigia (processo do worker) e o aviso do Conexa (processo web) podem
+ * rodar ao mesmo tempo; sem isto, a segunda rodada reenviaria a nota que a
+ * primeira acabou de reivindicar. Passado o prazo, o envio que morreu no meio é
+ * retomado (procurando a nota na Spedy antes de mandar de novo).
+ */
+const PRAZO_DO_ENVIO_MS = 2 * 60_000;
 const ACOMPANHADAS_POR_RODADA = 50;
 const PAUSA_ENTRE_ENVIOS_MS = 1_000;
 const PREFIXO_DE_CADASTRO = "Cadastro do cliente:";
@@ -85,6 +101,8 @@ export type LinhaDaNota = {
   enviadaEm: Date | null;
   /** Quando o problema da nota foi levado à equipe; `null` = ainda não foi (ou foi liberada de novo). */
   avisadaEm?: Date | null;
+  /** A última vez que a rodada olhou esta nota (mesmo sem mudar nada): faz as presas girarem. */
+  verificadaEm?: Date | null;
 };
 
 export type Repositorio = {
@@ -92,14 +110,27 @@ export type Repositorio = {
   /** `false` quando a chave já existe: quem perdeu a corrida não manda. */
   criar(linha: Omit<LinhaDaNota, "spedyId" | "numero" | "motivo" | "tentativas" | "enviadaEm">): Promise<boolean>;
   atualizar(chave: string, dados: Partial<Omit<LinhaDaNota, "chave">>): Promise<void>;
+  /**
+   * Muda a nota SÓ SE ela ainda está como foi lida (situação e tentativas): é o que
+   * decide qual rodada manda a nota quando duas olham a mesma ao mesmo tempo — o
+   * vigia e o aviso do Conexa são processos diferentes. `false` = outra chegou
+   * primeiro, e quem perdeu não manda nada.
+   */
+  reivindicar(
+    chave: string,
+    esperado: { situacao: SituacaoDaNota; tentativas: number },
+    dados: Partial<Omit<LinhaDaNota, "chave">>,
+  ): Promise<boolean>;
+  /** As notas desta cobrança que já saíram ou estão a caminho (reservada, enviada, incerta, autorizada). */
+  vivasDaCobranca(cobrancaId: number): Promise<LinhaDaNota[]>;
   aAcompanhar(limite: number): Promise<LinhaDaNota[]>;
   /** Rejeitadas e com falha que ainda não foram levadas a uma pessoa. */
   aAvisar(limite: number): Promise<LinhaDaNota[]>;
   marcarAvisadas(chaves: string[], quando: Date): Promise<void>;
   /** Notas NOSSAS autorizadas (as que o n8n já tinha emitido não contam). */
   contarAutorizadas(): Promise<number>;
-  /** Enviadas à Spedy e ainda sem resposta da prefeitura. */
-  contarEmVoo(): Promise<number>;
+  /** Enviadas à Spedy e ainda sem resposta da prefeitura, menos a `exceto` (a que a rodada vai mandar agora). */
+  contarEmVoo(exceto?: string): Promise<number>;
   /**
    * Cobranças pagas que ainda não geraram nota e esperam uma pessoa. Guarda uma
    * vez só por `chave` (já guardada, já avisada: não volta a ser dita).
@@ -163,17 +194,54 @@ export type LinhaPronta = {
 };
 
 export type ResultadoDoEnvio =
+  /** Chegou à Spedy e ela aceitou. */
   | "enviada"
+  /** A Spedy recusou o pedido (4xx): chegou lá, e repetir igual dá no mesmo. */
   | "falhou"
+  /** O envio caiu no meio (rede, prazo, 5xx): pode ter saído. */
   | "incerta"
+  /** A Spedy pediu para tentar depois (408/429): não saiu. */
   | "adiada"
+  /** Cadastro ruim do cliente: nem chegou à Spedy, e não gasta número. */
+  | "cadastro"
+  /** Não consegui ler o cliente no Conexa: nem chegou à Spedy. */
+  | "sem cliente"
   | "sem chave"
+  /** Outra rodada está mandando esta nota agora (ou acabou de reivindicá-la). */
+  | "em andamento"
   | "ja existe";
 
 /** Pode tentar de novo sem pergunta: nunca saiu, saiu e não sabemos, ou o cadastro era o problema. */
 function reenviavel(l: Pick<LinhaDaNota, "situacao" | "motivo">): boolean {
   if (l.situacao === SituacaoDaNota.RESERVADA || l.situacao === SituacaoDaNota.INCERTA) return true;
   return l.situacao === SituacaoDaNota.FALHOU && !!l.motivo?.startsWith(PREFIXO_DE_CADASTRO);
+}
+
+/**
+ * Alguém está mandando esta nota AGORA? Reservada ou incerta, com a última tentativa
+ * de poucos minutos atrás: é outra rodada (o vigia e o aviso do Conexa rodam em
+ * processos diferentes). Sem tentativa anotada (nota nova, ou liberada de novo) não
+ * é: quem decide entre dois que chegam juntos é a reivindicação atômica.
+ */
+export function envioEmCurso(l: Pick<LinhaDaNota, "situacao" | "enviadaEm">, agora: Date): boolean {
+  if (l.situacao !== SituacaoDaNota.RESERVADA && l.situacao !== SituacaoDaNota.INCERTA) return false;
+  if (!l.enviadaEm) return false;
+  return agora.getTime() - l.enviadaEm.getTime() < PRAZO_DO_ENVIO_MS;
+}
+
+/**
+ * ⚠ As notas VIVAS da cobrança que o plano atual NÃO prevê. É o sinal de "o plano
+ * mudou depois da emissão": a chave leva o código (`conexa-<cobrança>-<código>`),
+ * então trocar o código de uma categoria troca a chave, e a rodada acharia que a
+ * cobrança ainda não tem nota e mandaria OUTRA NFS-e do mesmo pagamento — com outro
+ * número, só cancelável à mão. Achado na revisão de 09/10/2026.
+ */
+export function notasForaDoPlano<T extends { chave: string }>(
+  vivas: readonly T[],
+  plano: ReadonlyArray<{ chave: string }>,
+): T[] {
+  const previstas = new Set(plano.map((n) => n.chave));
+  return vivas.filter((v) => !previstas.has(v.chave));
 }
 
 /**
@@ -212,7 +280,14 @@ export async function liberarNotaParaNovaTentativa(repo: Repositorio, chave: str
       erro: `Só nota rejeitada ou parada pode tentar de novo; esta está "${linha.situacao.toLowerCase()}".`,
     };
   }
-  await repo.atualizar(chave, { situacao: SituacaoDaNota.RESERVADA, motivo: null, tentativas: 0, avisadaEm: null });
+  // `enviadaEm` zerado: a nota liberada não pode parecer "alguém está mandando agora".
+  await repo.atualizar(chave, {
+    situacao: SituacaoDaNota.RESERVADA,
+    motivo: null,
+    tentativas: 0,
+    avisadaEm: null,
+    enviadaEm: null,
+  });
   return { ok: true, situacaoAnterior: linha.situacao };
 }
 
@@ -233,41 +308,66 @@ export async function enviarNota(
   const { nota, empresa } = args;
   const existente = await dep.repo.obter(nota.chave);
   if (existente && !reenviavel(existente)) return "ja existe";
+  // Outra rodada (o vigia ou o aviso do Conexa, em outro processo) está com ela.
+  if (existente && envioEmCurso(existente, dep.agora())) return "em andamento";
 
   const spedy = dep.spedy(empresa);
   if (!spedy) return "sem chave";
 
   const tomador = await dep.tomador(args.clienteId);
-  if (!tomador) return "adiada";
+  if (!tomador) return "sem cliente";
 
   const cep = await dep.cep(tomador.cep);
   const problemas = problemasDoTomador(tomador, cep);
   if (problemas.length) {
     const motivo = `${PREFIXO_DE_CADASTRO} ${problemas.join("; ")}`.slice(0, 500);
     if (existente) {
-      if (existente.motivo !== motivo || existente.situacao !== SituacaoDaNota.FALHOU) {
-        await dep.repo.atualizar(nota.chave, { situacao: SituacaoDaNota.FALHOU, motivo });
-      }
+      // Sempre grava (mesmo sem mudar nada): é o que faz as notas presas girarem na
+      // fila. Se o motivo mudou, a equipe tem uma notícia nova e é avisada de novo.
+      const mudou = existente.motivo !== motivo || existente.situacao !== SituacaoDaNota.FALHOU;
+      await dep.repo.atualizar(nota.chave, {
+        situacao: SituacaoDaNota.FALHOU,
+        motivo,
+        ...(mudou ? { avisadaEm: null } : {}),
+      });
     } else {
       await dep.repo.criar(reserva(args));
       await dep.repo.atualizar(nota.chave, { situacao: SituacaoDaNota.FALHOU, motivo });
     }
-    return "falhou";
+    return "cadastro";
   }
 
-  if (!existente) {
+  // ⚠ Reivindicar a nota de forma ATÔMICA antes de falar com a Spedy. Nota nova: a
+  // chave única decide quem a cria. Nota que já existe (reservada, incerta, cadastro
+  // corrigido, "tentar de novo"): só uma rodada consegue mudá-la a partir do estado
+  // em que a leu, e a outra volta sem mandar nada.
+  let base: { situacao: SituacaoDaNota; tentativas: number };
+  if (existente) {
+    base = { situacao: existente.situacao, tentativas: existente.tentativas };
+  } else {
     const criada = await dep.repo.criar(reserva(args));
     if (!criada) return "ja existe";
+    base = { situacao: SituacaoDaNota.RESERVADA, tentativas: 0 };
   }
 
-  const jaTentou = (existente?.tentativas ?? 0) > 0 || existente?.situacao === SituacaoDaNota.INCERTA;
+  const jaTentou = base.tentativas > 0 || base.situacao === SituacaoDaNota.INCERTA;
   const agora = dep.agora();
-  await dep.repo.atualizar(nota.chave, {
+  const minhaTentativa = base.tentativas + 1;
+  const minha = await dep.repo.reivindicar(nota.chave, base, {
     situacao: SituacaoDaNota.RESERVADA,
     motivo: null,
-    tentativas: (existente?.tentativas ?? 0) + 1,
+    tentativas: minhaTentativa,
     enviadaEm: agora,
+    // Esta tentativa é um fato novo: o que der errado nela precisa ser avisado, mesmo
+    // que um problema antigo desta nota já tenha sido (ex.: cadastro, depois rejeição).
+    avisadaEm: null,
+    // O plano pode ter mudado de valor desde a primeira vez que a linha nasceu; o que
+    // vai à Spedy é o plano de agora, e o acompanhamento compara com ele.
+    valorCentavos: nota.valorCentavos,
+    codigo: nota.codigo,
+    competencia: nota.competencia ?? null,
   });
+  if (!minha) return "em andamento";
 
   try {
     if (jaTentou) {
@@ -290,27 +390,45 @@ export async function enviarNota(
     await aplicar(dep, nota.chave, criada, { cobrancaId: args.cobrancaId, valorCentavos: nota.valorCentavos });
     return "enviada";
   } catch (erro) {
+    // ⚠ O que deu errado só vale se a nota ainda é a que ESTA rodada reivindicou: um
+    // erro nunca pode sobrescrever uma nota que outra rodada já mandou e a Spedy aceitou.
     if (ehRecusaDefinitiva(erro)) {
-      await dep.repo.atualizar(nota.chave, { situacao: SituacaoDaNota.FALHOU, motivo: erro.message.slice(0, 500) });
-      dep.alertas?.push({
-        tipo: "recusa",
-        texto: `cobrança ${args.cobrancaId}: a Spedy recusou a nota (${erro.message.slice(0, 120)})`,
+      const fechou = await fechar(dep, nota.chave, minhaTentativa, {
+        situacao: SituacaoDaNota.FALHOU,
+        motivo: erro.message.slice(0, 500),
       });
+      if (fechou) {
+        dep.alertas?.push({
+          tipo: "recusa",
+          texto: `cobrança ${args.cobrancaId}: a Spedy recusou a nota (${erro.message.slice(0, 120)})`,
+        });
+      }
       return "falhou";
     }
     if (erro instanceof SpedyApiError && (erro.status === 429 || erro.status === 408)) {
-      // "Tente depois": não saiu. Volta para reservada, sem contar como incerta.
-      await dep.repo.atualizar(nota.chave, { situacao: SituacaoDaNota.RESERVADA });
+      // "Tente depois": não saiu. Continua reservada, e sem "tentativa em curso" — a
+      // rodada seguinte (ou a do aviso do Conexa) pode tentar logo.
+      await fechar(dep, nota.chave, minhaTentativa, { enviadaEm: null });
       return "adiada";
     }
     // Rede, prazo ou 5xx: pode ter saído.
     const detalhe = erro instanceof SpedyRedeError || erro instanceof SpedyApiError ? erro.message : String(erro);
-    await dep.repo.atualizar(nota.chave, {
+    await fechar(dep, nota.chave, minhaTentativa, {
       situacao: SituacaoDaNota.INCERTA,
       motivo: `o envio não teve resposta (${detalhe.slice(0, 200)}); a próxima rodada procura a nota antes de mandar de novo`,
     });
     return "incerta";
   }
+}
+
+/** Fecha a tentativa desta rodada: só mexe na nota se ela ainda é a que a rodada reivindicou. */
+function fechar(
+  dep: Dependencias,
+  chave: string,
+  minhaTentativa: number,
+  dados: Partial<Omit<LinhaDaNota, "chave">>,
+): Promise<boolean> {
+  return dep.repo.reivindicar(chave, { situacao: SituacaoDaNota.RESERVADA, tentativas: minhaTentativa }, dados);
 }
 
 function reserva(a: { nota: NotaPlanejada; cobrancaId: number; empresa: string }) {
@@ -443,6 +561,8 @@ export type RodadaDeEmissao = {
   aguardando?: boolean;
   /** Cobranças seguradas por terem um código em espera (`emissao.codigosEmEspera`). */
   retidas?: number[];
+  /** Cobranças que NÃO foram emitidas porque o plano mudou depois de uma nota já ter saído. */
+  planoMudou?: number[];
 };
 
 let ultima = 0;
@@ -456,19 +576,19 @@ export async function emitirNotasFiscais(
   if (!opcoes.forcar && agora.getTime() - ultima < A_CADA_MS) return { acao: "cedo" };
   // Antes de ler a linha: desligada, a próxima olhada é só daqui a 5 minutos.
   ultima = agora.getTime();
-
-  let config = opcoes.config;
-  if (!config) {
-    const linha = await db.integration.findUnique({
-      where: { provider: IntegrationProvider.NOTAS_FISCAIS },
-      select: { enabled: true, config: true },
-    });
-    if (!linha?.enabled) return { acao: "desligada" };
-    config = lerConfigNotasFiscais(linha.config);
-  }
-
+  // ⚠ Antes de QUALQUER await: dois avisos do Conexa quase juntos passavam pelo teste
+  // acima e só marcavam `rodando` depois de ler a configuração — e rodavam em dobro.
   rodando = true;
   try {
+    let config = opcoes.config;
+    if (!config) {
+      const linha = await db.integration.findUnique({
+        where: { provider: IntegrationProvider.NOTAS_FISCAIS },
+        select: { enabled: true, config: true },
+      });
+      if (!linha?.enabled) return { acao: "desligada" };
+      config = lerConfigNotasFiscais(linha.config);
+    }
     const dep = opcoes.dependencias ?? dependenciasReais();
     return await rodarEmissao(dep, config, opcoes.pausar ?? pausa);
   } catch (erro) {
@@ -496,7 +616,7 @@ export async function rodarEmissao(
   const r: RodadaDeEmissao = { acao: "emitido", enviadas: 0, falhas: 0, incertas: 0, adiadas: 0, semChave: [] };
   const alertas: Problema[] = [];
   dep.alertas = alertas;
-  /** Cobranças pagas que esta rodada não emitiu e que esperam uma pessoa. */
+  /** O que esta rodada não emitiu e espera uma pessoa (retida, plano mudado, emissão desligada). */
   const semNota: CobrancaSemNota[] = [];
   const cautela = config.emissao.cautela;
 
@@ -508,7 +628,23 @@ export async function rodarEmissao(
     return r;
   }
 
-  /** Se há motivo para parar, desliga a emissão e diz por quê. */
+  /** Guarda o que a rodada achou, leva à equipe e fecha. */
+  const encerrar = async (): Promise<RodadaDeEmissao> => {
+    if (semNota.length) {
+      try {
+        await dep.repo.registrarSemNota(semNota);
+      } catch (erro) {
+        logger.warn({ erro: mensagemDe(erro) }, "notas fiscais: não consegui guardar as cobranças sem nota");
+      }
+    }
+    r.aviso = await avisarSemLancar(dep, config);
+    if (r.enviadas || r.falhas || r.incertas || r.semChave?.length || r.aviso.avisadas || r.pausada || r.planoMudou?.length) {
+      logger.info(r, "notas fiscais: rodada de emissão");
+    }
+    return r;
+  };
+
+  /** Se há motivo para parar, desliga a emissão, diz por quê — na tela e por e-mail — e avisa. */
   const deveParar = async (): Promise<boolean> => {
     if (!alertas.length) return false;
     const autorizadas = cautela > 0 ? await dep.repo.contarAutorizadas() : 0;
@@ -521,18 +657,21 @@ export async function rodarEmissao(
     } catch (erro) {
       logger.error({ erro: mensagemDe(erro) }, "notas fiscais: não consegui gravar o desligamento");
     }
+    // ⚠ A pausa não pode ficar só na tela: a pior falha é a emissão se desligar de
+    // madrugada e ninguém saber até um cliente cobrar a nota.
+    semNota.push(avisoDePausa(motivo, dep.agora()));
     return true;
   };
 
   // O que a conferência das notas já enviadas achou vale ANTES de mandar mais.
-  if (await deveParar()) {
-    r.aviso = await avisarSemLancar(dep, config);
-    return r;
-  }
+  if (await deveParar()) return encerrar();
 
-  const prontas = await (dep.prontas ? dep.prontas() : prontasDoBanco(config));
+  const prontas = await (dep.prontas ? dep.prontas() : prontasDoBanco(config, dep.agora()));
 
+  /** Notas que CHEGARAM à Spedy nesta rodada (o limite protege o Conexa, que aguenta 60/min). */
   let novas = 0;
+  /** Tentativas que nem chegaram a ela (cadastro, cliente não lido, empresa sem chave). */
+  let semEnvio = 0;
   let parar = false;
   for (const linha of prontas) {
     if (parar || novas >= NOVAS_POR_RODADA) break;
@@ -564,7 +703,26 @@ export async function rodarEmissao(
       continue;
     }
 
-    for (const nota of linha.notas as unknown as NotaPlanejada[]) {
+    // ⚠ O plano mudou DEPOIS de uma nota sair? A chave leva o código: trocar o código de
+    // uma categoria (e salvar a tela) troca a chave, e esta cobrança pareceria sem nota
+    // — a rodada mandaria OUTRA NFS-e do mesmo pagamento. Na dúvida, não emite nada.
+    const fora = notasForaDoPlano(await dep.repo.vivasDaCobranca(linha.cobrancaId), planejadas);
+    if (fora.length) {
+      (r.planoMudou ??= []).push(linha.cobrancaId);
+      semNota.push({
+        chave: `plano:${linha.cobrancaId}:${fora.map((f) => f.chave).sort().join(",")}`,
+        cobrancaId: linha.cobrancaId,
+        empresa,
+        valorCentavos: planejadas.reduce((soma, n) => soma + n.valorCentavos, 0),
+        tipo: "plano mudou",
+        detalhe:
+          `o plano da cobrança mudou depois da emissão: já existe ${fora.map(descreverNotaViva).join("; ")}, ` +
+          `e o plano de agora prevê ${planejadas.map((n) => n.chave).join(", ")}. Nada mais é emitido desta cobrança até alguém conferir`,
+      });
+      continue;
+    }
+
+    for (const nota of planejadas) {
       if (novas >= NOVAS_POR_RODADA) break;
       const existente = await dep.repo.obter(nota.chave);
       if (existente && !reenviavel(existente)) continue;
@@ -575,7 +733,8 @@ export async function rodarEmissao(
         vagas = vagasNaCautela({
           cautela,
           autorizadas: await dep.repo.contarAutorizadas(),
-          emVoo: await dep.repo.contarEmVoo(),
+          // Sem a própria nota: uma incerta que a rodada vai reenviar não pode barrar o reenvio.
+          emVoo: await dep.repo.contarEmVoo(nota.chave),
         });
         if (vagas < 1) {
           r.aguardando = true;
@@ -593,13 +752,26 @@ export async function rodarEmissao(
         momento: linha.evento === "gerada" ? "geracao" : "quitacao",
         tiposDeOperacao: config.emissao.tipoDeOperacao,
       });
-      if (resultado === "ja existe") continue;
+      if (resultado === "ja existe" || resultado === "em andamento") continue;
+
+      if (resultado === "cadastro" || resultado === "sem cliente" || resultado === "sem chave") {
+        // Não chegou à Spedy: tem teto próprio e não gasta as vagas das notas novas.
+        semEnvio++;
+        if (resultado === "cadastro") r.falhas = (r.falhas ?? 0) + 1;
+        else if (resultado === "sem cliente") r.adiadas = (r.adiadas ?? 0) + 1;
+        else if (!r.semChave?.includes(empresa)) r.semChave?.push(empresa);
+        if (semEnvio >= SEM_ENVIO_POR_RODADA) {
+          parar = true;
+          break;
+        }
+        continue;
+      }
+
       novas++;
       if (resultado === "enviada") r.enviadas = (r.enviadas ?? 0) + 1;
       else if (resultado === "falhou") r.falhas = (r.falhas ?? 0) + 1;
       else if (resultado === "incerta") r.incertas = (r.incertas ?? 0) + 1;
       else if (resultado === "adiada") r.adiadas = (r.adiadas ?? 0) + 1;
-      else if (resultado === "sem chave" && !r.semChave?.includes(empresa)) r.semChave?.push(empresa);
 
       if (resultado === "enviada") {
         if (Number.isFinite(vagas)) {
@@ -638,19 +810,25 @@ export async function rodarEmissao(
       logger.warn({ erro: mensagemDe(erro) }, "notas fiscais: não consegui listar as cobranças sem decisão");
     }
   }
-  if (semNota.length) {
-    try {
-      await dep.repo.registrarSemNota(semNota);
-    } catch (erro) {
-      logger.warn({ erro: mensagemDe(erro) }, "notas fiscais: não consegui guardar as cobranças sem nota");
-    }
-  }
 
-  r.aviso = await avisarSemLancar(dep, config);
-  if (r.enviadas || r.falhas || r.incertas || r.semChave?.length || r.aviso.avisadas || r.pausada) {
-    logger.info(r, "notas fiscais: rodada de emissão");
-  }
-  return r;
+  return encerrar();
+}
+
+/** O aviso de que a emissão se desligou sozinha: a chave leva o minuto, e cada pausa é um fato novo. */
+function avisoDePausa(motivo: string, agora: Date): CobrancaSemNota {
+  return {
+    chave: `pausa:${agora.toISOString().slice(0, 16)}`,
+    cobrancaId: 0,
+    empresa: "",
+    valorCentavos: 0,
+    tipo: "pausada",
+    detalhe: motivo.slice(0, 400),
+  };
+}
+
+function descreverNotaViva(l: Pick<LinhaDaNota, "chave" | "codigo" | "situacao" | "numero">): string {
+  const numero = l.numero != null ? `, nº ${l.numero}` : "";
+  return `${l.chave} (${l.codigo}, ${l.situacao.toLowerCase()}${numero})`;
 }
 
 function somar(a: Acompanhamento | undefined, b: Acompanhamento) {
@@ -662,7 +840,7 @@ function somar(a: Acompanhamento | undefined, b: Acompanhamento) {
 }
 
 /** A rodada olha de volta até aqui: mais velha que isso, a cobrança precisa de uma pessoa. */
-const JANELA_DA_EMISSAO_DIAS = 60;
+const JANELA_DA_EMISSAO_DIAS = DIAS_DA_JANELA_DE_EMISSAO;
 /** Cobranças com trabalho a fazer lidas por rodada (as que já têm nota nem entram na conta). */
 const PRONTAS_POR_RODADA = 200;
 
@@ -707,30 +885,104 @@ export async function prontasDoBanco(config: NotasFiscaisConfig, agora = new Dat
 
   const linhas = await db.notaFiscalEmitida.findMany({
     where: { cobrancaId: { in: candidatas.map((c) => c.cobrancaId) } },
-    select: { chave: true, situacao: true, motivo: true },
+    select: { chave: true, situacao: true, motivo: true, verificadaEm: true },
   });
   const porChave = new Map(linhas.map((l) => [l.chave, l]));
-  const ids = candidatas
-    .filter((c) => faltaEmitir(c.notas as unknown as NotaPlanejada[], porChave))
+  const ids = ordenarParaARodada(
+    candidatas.filter((c) => faltaEmitir(c.notas as unknown as NotaPlanejada[], porChave)),
+    porChave,
+  )
     .slice(0, PRONTAS_POR_RODADA)
     .map((c) => c.cobrancaId);
   if (!ids.length) return [];
 
-  return db.cobrancaFiscal.findMany({
+  const prontas = await db.cobrancaFiscal.findMany({
     where: { situacao: "PRONTA", cobrancaId: { in: ids } },
-    orderBy: { criadaEm: "asc" },
     select: { cobrancaId: true, empresaId: true, clienteId: true, situacao: true, quitadaEm: true, evento: true, cobranca: true, notas: true },
   });
+  // A consulta não garante a ordem da lista: a rodada precisa dela (novas antes das presas).
+  const posicao = new Map(ids.map((id, i) => [id, i]));
+  return prontas.sort((a, b) => (posicao.get(a.cobrancaId) ?? 0) - (posicao.get(b.cobrancaId) ?? 0));
 }
 
-/** Paga e sem decisão (conferir, aguardando código) desde o corte: precisa de uma pessoa. */
+/**
+ * A ordem em que a rodada olha as cobranças que têm trabalho. ⚠ Primeiro as NOVAS
+ * (nenhuma nota delas foi tentada), na ordem de chegada; depois as que já têm nota
+ * parada ou incerta, pela ÚLTIMA vez que a rodada olhou cada uma — a mais antiga
+ * primeiro. Era tudo por data de criação, e cobrança presa por cadastro (a mais
+ * antiga, por definição) ficava sempre na frente: dez delas enchiam as vagas de toda
+ * rodada e as notas novas nunca saíam, sem nenhum erro (revisão de 09/10/2026). Com
+ * esta ordem as novas não esperam as presas, e as presas se revezam.
+ */
+export function ordenarParaARodada<T extends { notas: unknown }>(
+  candidatas: readonly T[],
+  linhas: ReadonlyMap<string, { verificadaEm?: Date | null }>,
+): T[] {
+  const chaves = (c: T) => (c.notas as ReadonlyArray<{ chave: string }>).map((n) => n.chave);
+  const tentada = (c: T) => chaves(c).some((k) => linhas.has(k));
+  const olhadaEm = (c: T) =>
+    Math.max(0, ...chaves(c).map((k) => linhas.get(k)?.verificadaEm?.getTime() ?? 0));
+  const novas = candidatas.filter((c) => !tentada(c));
+  // `sort` é estável: cobranças olhadas no mesmo instante mantêm a ordem de chegada.
+  const presas = candidatas.filter(tentada).sort((a, b) => olhadaEm(a) - olhadaEm(b));
+  return [...novas, ...presas];
+}
+
+/**
+ * As cobranças que estão RETIDAS agora por um código em espera: as que a rodada
+ * emitiria (corte, lista, empresa, janela) se o código não as segurasse. É a MESMA
+ * leitura da rodada, e não uma amostra das mais antigas: a tela mostrava zero justo
+ * quando havia cobrança paga esperando (revisão de 09/10/2026).
+ */
+export async function cobrancasRetidas(config: NotasFiscaisConfig, agora = new Date()): Promise<number[]> {
+  if (!config.emissao.codigosEmEspera.length) return [];
+  // Conta mesmo com a emissão desligada: é o tamanho da fila que vai sair com o código.
+  const ligada = { ...config, emissao: { ...config.emissao, ligada: true } };
+  const prontas = await prontasDoBanco(config, agora);
+  return prontas
+    .filter((l) => {
+      const cobranca = l.cobranca as { criadaEm?: string | null } | null;
+      const pode = podeEmitir(ligada, {
+        cobrancaId: l.cobrancaId,
+        empresaId: l.empresaId,
+        situacao: l.situacao,
+        referencia: l.quitadaEm ?? cobranca?.criadaEm ?? null,
+      });
+      return pode.ok && !!codigoQueSegura(l.notas as unknown as NotaPlanejada[], config.emissao.codigosEmEspera);
+    })
+    .map((l) => l.cobrancaId);
+}
+
+/** Quantas cobranças sem decisão a rodada guarda e avisa por vez. */
+const SEM_DECISAO_POR_RODADA = 50;
+/** Quantas ela olha para achar as que ainda não foram ditas. */
+const SEM_DECISAO_LIDAS = 2_000;
+
+/**
+ * Paga e sem decisão (conferir, aguardando código) desde o corte: precisa de uma pessoa.
+ *
+ * ⚠ Devolve só as que ainda NÃO foram guardadas. Eram as 50 mais antigas, sempre as
+ * mesmas (estas linhas não saem do estado sozinhas): da 51ª em diante ninguém era
+ * avisado (revisão de 09/10/2026).
+ */
 async function semDecisaoDoBanco(aPartirDe: string): Promise<LinhaSemDecisao[]> {
-  return db.cobrancaFiscal.findMany({
+  const candidatas = await db.cobrancaFiscal.findMany({
     where: { situacao: { in: ["CONFERIR", "AGUARDANDO_CLASSIFICACAO"] }, quitadaEm: { gte: aPartirDe } },
     orderBy: { criadaEm: "asc" },
-    take: 50,
+    take: SEM_DECISAO_LIDAS,
     select: { cobrancaId: true, empresaId: true, situacao: true, valorCentavos: true, motivo: true },
   });
+  if (candidatas.length >= SEM_DECISAO_LIDAS) {
+    logger.warn({ lidas: candidatas.length }, "notas fiscais: há mais cobranças sem decisão do que a rodada lê");
+  }
+  if (!candidatas.length) return [];
+  const chaveDe = (c: { cobrancaId: number; situacao: string }) => `decisao:${c.cobrancaId}:${c.situacao}`;
+  const guardadas = await db.webhookEvent.findMany({
+    where: { provider: PROVIDER_SEM_NOTA, externalId: { in: candidatas.map(chaveDe) } },
+    select: { externalId: true },
+  });
+  const ditas = new Set(guardadas.map((e) => e.externalId));
+  return candidatas.filter((c) => !ditas.has(chaveDe(c))).slice(0, SEM_DECISAO_POR_RODADA);
 }
 
 /** Falha no aviso nunca derruba a rodada: o problema fica pendente e volta na próxima. */
@@ -755,6 +1007,7 @@ export function repositorioReal(): Repositorio {
     chave: string; cobrancaId: number; empresa: string; codigo: string; valorCentavos: number;
     competencia: string | null; situacao: SituacaoDaNota; spedyId: string | null; numero: number | null;
     motivo: string | null; tentativas: number; enviadaEm: Date | null;
+    avisadaEm?: Date | null; verificadaEm?: Date | null;
   }): LinhaDaNota => ({ ...l });
   return {
     async obter(chave) {
@@ -772,6 +1025,25 @@ export function repositorioReal(): Repositorio {
     },
     async atualizar(chave, dados) {
       await db.notaFiscalEmitida.update({ where: { chave }, data: { ...dados, verificadaEm: new Date() } });
+    },
+    async reivindicar(chave, esperado, dados) {
+      // Uma instrução só: o banco confere o estado e muda, sem janela entre as duas coisas.
+      const r = await db.notaFiscalEmitida.updateMany({
+        where: { chave, situacao: esperado.situacao, tentativas: esperado.tentativas },
+        data: { ...dados, verificadaEm: new Date() },
+      });
+      return r.count === 1;
+    },
+    async vivasDaCobranca(cobrancaId) {
+      const linhas = await db.notaFiscalEmitida.findMany({
+        where: {
+          cobrancaId,
+          situacao: {
+            in: [SituacaoDaNota.RESERVADA, SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA, SituacaoDaNota.AUTORIZADA],
+          },
+        },
+      });
+      return linhas.map(ler);
     },
     async aAvisar(limite) {
       const linhas = await db.notaFiscalEmitida.findMany({
@@ -799,9 +1071,12 @@ export function repositorioReal(): Repositorio {
       ]);
       return todas - doN8n;
     },
-    async contarEmVoo() {
+    async contarEmVoo(exceto) {
       return db.notaFiscalEmitida.count({
-        where: { situacao: { in: [SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA] } },
+        where: {
+          situacao: { in: [SituacaoDaNota.ENVIADA, SituacaoDaNota.INCERTA] },
+          ...(exceto ? { chave: { not: exceto } } : {}),
+        },
       });
     },
     async aAcompanhar(limite) {
@@ -893,8 +1168,14 @@ export function dependenciasReais(): Dependencias {
       if (!email) return "sem provedor";
       const aviso = montarAviso(notas, semNota);
       // Mesma lista = mesma chave: um reenvio depois de timeout não duplica.
+      // O motivo entra na chave: o cadastro que muda de problema é uma notícia nova, e a
+      // Resend devolveria o e-mail de antes se a chave fosse a mesma.
       const idempotencia = `nfse-aviso-${createHash("sha256")
-        .update([...notas.map((n) => `${n.chave}@${n.tentativaEm ?? ""}`), ...semNota.map((c) => c.chave)].sort().join("|"))
+        .update(
+          [...notas.map((n) => `${n.chave}@${n.tentativaEm ?? ""}@${n.motivo ?? ""}`), ...semNota.map((c) => c.chave)]
+            .sort()
+            .join("|"),
+        )
         .digest("hex")
         .slice(0, 40)}`;
       try {

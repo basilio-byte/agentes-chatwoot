@@ -37,6 +37,8 @@ import {
   resumoDasNotas,
 } from "@/server/notas-fiscais/resumo";
 import { formatarReais, type NotaPlanejada } from "@/server/notas-fiscais/regras";
+import { oQueImpedeASaida } from "@/server/notas-fiscais/emissao/regras";
+import { versaoDaConfig } from "@/server/notas-fiscais/versao";
 import { BotaoTentarDeNovo } from "@/components/botao-tentar-de-novo";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { ClickUpConfigForm } from "@/components/clickup-config";
@@ -297,6 +299,14 @@ export default async function IntegracoesPage({
   });
   const chavesDaSpedy = chavesDaSpedyNoServidor();
   const emitindo = !!notasFiscais?.enabled && configNotas.emissao.ligada;
+  /** O que segura, agora, uma nota liberada para tentar de novo (a rodada confere as mesmas coisas). */
+  const impedimentosDaReservada = (n: { codigo: string; empresa: string }) =>
+    oQueImpedeASaida({
+      integracaoLigada: !!notasFiscais?.enabled,
+      config: configNotas,
+      nota: n,
+      chaveDaEmpresaNoServidor: chavesDaSpedy[n.empresa as keyof typeof chavesDaSpedy] ?? false,
+    });
   const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
   const configNps = lerConfigNps(nps?.config);
   // Sem telefone nem nome: a tela é aberta pela equipe inteira.
@@ -1468,6 +1478,7 @@ export default async function IntegracoesPage({
                   ) : null}
 
                   <NotasFiscaisConfigForm
+                    versao={versaoDaConfig(notasFiscais?.config)}
                     habilitada={notasFiscais?.enabled ?? false}
                     inicio={configNotas.inicio ?? ""}
                     categorias={linhasDeCategoria}
@@ -1507,7 +1518,11 @@ export default async function IntegracoesPage({
                     {notasEmitidas.contagem.AUTORIZADA} autorizada(s) · {notasEmitidas.contagem.ENVIADA}{" "}
                     na fila da prefeitura · {notasEmitidas.contagem.REJEITADA} rejeitada(s) ·{" "}
                     {notasEmitidas.contagem.FALHOU} com falha · {notasEmitidas.contagem.INCERTA} sem
-                    resposta.
+                    resposta
+                    {notasEmitidas.contagem.RESERVADA > 0
+                      ? ` · ${notasEmitidas.contagem.RESERVADA} esperando a próxima rodada`
+                      : ""}
+                    .
                   </p>
                   {notasEmitidas.contagem.REJEITADA + notasEmitidas.contagem.FALHOU > 0 ? (
                     <Aviso tone="danger">
@@ -1515,8 +1530,9 @@ export default async function IntegracoesPage({
                       cadastro do cliente. O motivo está na linha, e a equipe recebe por e-mail
                       (se a Resend e os destinatários estiverem configurados). A nota fica
                       guardada: corrigida a causa, use <strong>Tentar de novo</strong> na linha e
-                      a mesma nota é reenviada, sem gastar outro número. Isso <strong>não para</strong>{" "}
-                      a emissão das outras notas.
+                      a mesma nota é reenviada, sem gastar outro número. Passada a cautela isso{" "}
+                      <strong>não para</strong> a emissão das outras notas (na cautela, qualquer
+                      problema a desliga).
                     </Aviso>
                   ) : null}
                   {notasEmitidas.ultimas.length === 0 ? (
@@ -1563,6 +1579,14 @@ export default async function IntegracoesPage({
                           <td>
                             {editavel && (n.situacao === "REJEITADA" || n.situacao === "FALHOU") ? (
                               <BotaoTentarDeNovo chave={n.chave} />
+                            ) : n.situacao === "RESERVADA" ? (
+                              // A resposta do botão some com ele (a linha muda de situação ao ser liberada):
+                              // o que ela dizia fica aqui, no estado da nota.
+                              <span className="block max-w-xs text-xs text-muted">
+                                {impedimentosDaReservada(n).length
+                                  ? `Na fila, mas não sai agora: ${impedimentosDaReservada(n).join("; ")}.`
+                                  : "Na fila: sai na próxima rodada (até 5 minutos), sem gastar outro número."}
+                              </span>
                             ) : null}
                           </td>
                         </tr>

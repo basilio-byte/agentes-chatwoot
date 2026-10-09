@@ -124,6 +124,33 @@ describe("formulário", () => {
   });
 });
 
+describe("o corte com o n8n só anda para frente", () => {
+  const com = (aPartirDe: string | null) => lerConfigNotasFiscais({ emissao: { ligada: true, aPartirDe } });
+  const salvar = (campos: Record<string, string>, atual: ReturnType<typeof com>) =>
+    configDoFormulario({ emissaoLigada: "on", ...campos }, atual);
+
+  it("⚠ voltar o corte recusa, dizendo o porquê (a nota do n8n sairia em dobro)", () => {
+    expect(salvar({ aPartirDe: "2026-10-01" }, com("2026-10-08"))).toEqual({
+      erro: expect.stringContaining("não pode voltar de 2026-10-08 para 2026-10-01"),
+    });
+    expect(salvar({ aPartirDe: "2026-10-07" }, com("2026-10-08"))).toHaveProperty("erro");
+  });
+
+  it("manter, adiantar ou apagar o corte continua valendo", () => {
+    expect(salvar({ aPartirDe: "2026-10-08" }, com("2026-10-08"))).toHaveProperty("config");
+    const adiantado = salvar({ aPartirDe: "2026-10-12" }, com("2026-10-08"));
+    expect("config" in adiantado && adiantado.config.emissao.aPartirDe).toBe("2026-10-12");
+    // Sem corte e sem lista a emissão ligada é recusada por outro motivo; desligada, apagar é seguro.
+    const apagado = configDoFormulario({ aPartirDe: "" }, com("2026-10-08"));
+    expect("config" in apagado && apagado.config.emissao.aPartirDe).toBeNull();
+  });
+
+  it("sem corte gravado (primeira vez), qualquer data vale", () => {
+    const r = salvar({ aPartirDe: "2026-01-01" }, com(null));
+    expect("config" in r && r.config.emissao.aPartirDe).toBe("2026-01-01");
+  });
+});
+
 describe("tipo de operação por momento", () => {
   it("nasce com a última resposta do Laércio: quitação = 1, geração = 4", () => {
     expect(padrao.emissao.tipoDeOperacao).toEqual({

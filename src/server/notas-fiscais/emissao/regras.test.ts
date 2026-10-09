@@ -5,7 +5,7 @@ import {
   TIPO_DE_OPERACAO_PADRAO,
   TIPOS_DE_OPERACAO,
 } from "@/lib/tipos-de-operacao";
-import { notasFiscaisConfigSchema } from "../config";
+import { lerConfigNotasFiscais, notasFiscaisConfigSchema } from "../config";
 import {
   codigoNacional,
   codigoQueSegura,
@@ -17,7 +17,9 @@ import {
   dataDeCompetencia,
   LIMITES,
   lerTomador,
+  DIAS_DA_JANELA_DE_EMISSAO,
   montarAviso,
+  oQueImpedeASaida,
   montarCorpo,
   motivoDaRecusa,
   podeEmitir,
@@ -516,6 +518,139 @@ describe("cobrança paga sem nota no e-mail", () => {
     };
     expect(montarAviso([rejeitada], [])).toEqual(montarAviso([rejeitada]));
     expect(montarAviso([rejeitada]).assunto).toBe("NFS-e: 1 nota precisa de atenção");
+  });
+
+  it("⚠ a cobrança retida diz até quando ela sai sozinha (a rodada só olha 60 dias para trás)", () => {
+    expect(montarAviso([], [retida]).texto).toContain(`menos de ${DIAS_DA_JANELA_DE_EMISSAO} dias`);
+    expect(DIAS_DA_JANELA_DE_EMISSAO).toBe(60);
+  });
+
+  describe("plano que mudou depois da emissão", () => {
+    const mudou = {
+      chave: "plano:31000:conexa-31000-030302",
+      cobrancaId: 31000,
+      empresa: "SEAHUB",
+      valorCentavos: 14900,
+      tipo: "plano mudou" as const,
+      detalhe: "o plano da cobrança mudou depois da emissão: já existe conexa-31000-030302 (03.03.02, autorizada, nº 2700)",
+    };
+
+    it("entra na lista das cobranças pagas sem nota, com o que fazer: conferir na Spedy, nada em dobro", () => {
+      const a = montarAviso([], [mudou]);
+      expect(a.assunto).toBe("NFS-e: 1 cobrança paga sem nota");
+      expect(a.texto).toContain("Situação: plano mudou depois da emissão");
+      expect(a.texto).toContain("conexa-31000-030302 (03.03.02, autorizada, nº 2700)");
+      expect(a.texto).toMatch(/nada mais é emitido dela/);
+      expect(a.texto).toMatch(/Confira na Spedy/);
+    });
+  });
+
+  describe("emissão desligada sozinha", () => {
+    const pausa = {
+      chave: "pausa:2026-10-09T15:00",
+      cobrancaId: 0,
+      empresa: "",
+      valorCentavos: 0,
+      tipo: "pausada" as const,
+      detalhe: "valor diferente do planejado: cobrança 31000: a Spedy registrou R$ 99,99 e o planejado era R$ 149,00",
+    };
+    const rejeitada = {
+      chave: "conexa-900-030302",
+      cobrancaId: 900,
+      empresa: "SEATECH",
+      codigo: "03.03.02",
+      valorCentavos: 14900,
+      situacao: "REJEITADA" as const,
+      motivo: "E0240: O CEP do tomador não existe.",
+    };
+
+    it("⚠ assunto próprio e o motivo à frente — sem fingir que é uma cobrança sem nota", () => {
+      const a = montarAviso([], [pausa]);
+      expect(a.assunto).toBe("NFS-e: a emissão foi desligada sozinha");
+      expect(a.texto).toContain("⚠ A emissão parou:");
+      expect(a.texto).toContain("A emissão automática de notas fiscais foi DESLIGADA");
+      expect(a.texto).toContain("Motivo: valor diferente do planejado");
+      expect(a.texto).toMatch(/ligue a emissão de novo em Integrações → Notas fiscais/);
+      // Não é uma cobrança: nada de "#0", nem de "cobranças pagas ainda não geraram nota".
+      expect(a.texto).not.toContain("Cobrança #0");
+      expect(a.texto).not.toContain("ainda não gerou nota");
+    });
+
+    it("a pausa vai antes das notas com problema, e cada coisa na sua lista", () => {
+      const a = montarAviso([rejeitada], [pausa]);
+      expect(a.assunto).toBe("NFS-e: a emissão foi desligada sozinha");
+      expect(a.texto.indexOf("⚠ A emissão parou:")).toBeLessThan(a.texto.indexOf("Uma nota fiscal precisa de atenção:"));
+      expect(a.texto).toContain("Cobrança #900 (SEATECH)");
+      expect(a.html).toContain("<strong>⚠ A emissão parou:</strong>");
+    });
+
+    it("com cobranças sem nota junto, só elas entram na contagem da lista delas", () => {
+      const retida = {
+        chave: "retida:1:10.05.01",
+        cobrancaId: 1,
+        empresa: "SEAHUB",
+        valorCentavos: 100,
+        tipo: "retida" as const,
+        detalhe: "o código 10.05.01 está em espera",
+      };
+      const a = montarAviso([], [pausa, retida]);
+      expect(a.texto).toContain("Uma cobrança paga ainda não gerou nota");
+      expect(a.texto).not.toContain("2 cobranças pagas");
+    });
+
+    it("o motivo vem do sistema, mas o HTML escapa do mesmo jeito", () => {
+      const a = montarAviso([], [{ ...pausa, detalhe: '<b onclick="x">' }]);
+      expect(a.html).not.toContain("<b onclick");
+      expect(a.html).toContain("&lt;b onclick=&quot;x&quot;&gt;");
+    });
+  });
+});
+
+describe("o que impede uma nota liberada de sair", () => {
+  const base = () => ({
+    integracaoLigada: true,
+    config: lerConfigNotasFiscais({ emissao: { ligada: true, aPartirDe: "2026-10-08" } }),
+    nota: { codigo: "10.05.01", empresa: "SEAHUB" },
+    chaveDaEmpresaNoServidor: true,
+  });
+  const cobranca = { cobrancaId: 30594, empresaId: 3, situacao: "PRONTA", referencia: "2026-10-09" };
+
+  it("nada impede: devolve vazio e a nota sai na próxima rodada", () => {
+    expect(oQueImpedeASaida({ ...base(), cobranca })).toEqual([]);
+    expect(oQueImpedeASaida(base())).toEqual([]);
+  });
+
+  it("⚠ emissão desligada: o botão não pode prometer 'sai em até 5 minutos'", () => {
+    const config = lerConfigNotasFiscais({ emissao: { ligada: false, aPartirDe: "2026-10-08" } });
+    expect(oQueImpedeASaida({ ...base(), config })).toEqual([expect.stringContaining("a emissão está desligada")]);
+  });
+
+  it("integração desligada vale mais que a emissão desligada (uma frase só)", () => {
+    const config = lerConfigNotasFiscais({ emissao: { ligada: false } });
+    expect(oQueImpedeASaida({ ...base(), config, integracaoLigada: false })).toEqual([
+      "a integração de notas fiscais está desligada",
+    ]);
+  });
+
+  it("código em espera e falta de chave são ditos, os dois juntos se for o caso", () => {
+    const config = lerConfigNotasFiscais({ emissao: { ligada: true, aPartirDe: "2026-10-08", codigosEmEspera: ["10.05.01"] } });
+    expect(oQueImpedeASaida({ ...base(), config, chaveDaEmpresaNoServidor: false })).toEqual([
+      expect.stringContaining("o código 10.05.01 está em espera"),
+      "falta a chave da Spedy da empresa SEAHUB no servidor",
+    ]);
+  });
+
+  it("cobrança fora do corte, ou fora da lista liberada, também segura — e é dita só uma vez", () => {
+    expect(oQueImpedeASaida({ ...base(), cobranca: { ...cobranca, referencia: "2026-10-07" } })).toEqual([
+      "é anterior ao corte com o n8n",
+    ]);
+    const comLista = lerConfigNotasFiscais({ emissao: { ligada: true, soCobrancas: [1] } });
+    expect(oQueImpedeASaida({ ...base(), config: comLista, cobranca })).toEqual(["a cobrança não está na lista liberada"]);
+    // Emissão desligada E cobrança fora do corte: a primeira frase não se repete dentro da segunda.
+    const desligada = lerConfigNotasFiscais({ emissao: { ligada: false, aPartirDe: "2026-10-08" } });
+    const frases = oQueImpedeASaida({ ...base(), config: desligada, cobranca: { ...cobranca, referencia: "2026-10-07" } });
+    expect(frases).toHaveLength(2);
+    expect(frases.filter((f) => f.includes("desligada"))).toHaveLength(1);
   });
 });
 

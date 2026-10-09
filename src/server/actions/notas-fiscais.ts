@@ -9,6 +9,9 @@ import { configDoFormulario, lerConfigNotasFiscais } from "@/server/notas-fiscai
 import { reclassificar } from "@/server/notas-fiscais/conferir";
 import { hashDoToken } from "@/server/notas-fiscais/aviso";
 import { liberarNotaParaNovaTentativa, repositorioReal } from "@/server/notas-fiscais/emissao/emitir";
+import { oQueImpedeASaida } from "@/server/notas-fiscais/emissao/regras";
+import { TELA_DESATUALIZADA, versaoDaConfig } from "@/server/notas-fiscais/versao";
+import { chaveDaSpedy } from "@/server/integrations/spedy/client";
 import { gerarToken } from "@/server/gatilho/token";
 
 export type EstadoNotasFiscais = { ok?: string; erro?: string };
@@ -35,6 +38,12 @@ export async function salvarConfigNotasFiscais(
   for (const [campo, valor] of formData.entries()) {
     if (typeof valor === "string") campos[campo] = valor;
   }
+  // ⚠ A tela tem de ser a de agora. O formulário guarda o que viu ao abrir — emissão
+  // ligada, lista de espera —, e salvá-lo depois de o sistema desligar a emissão sozinho
+  // (ou de outra pessoa mexer) religava tudo e apagava o motivo da pausa sem ninguém ler.
+  // Sem a versão (tela aberta antes desta regra) também recusa.
+  if (campos.versao !== versaoDaConfig(atual?.config)) return { erro: TELA_DESATUALIZADA };
+
   const lido = configDoFormulario(campos, lerConfigNotasFiscais(atual?.config));
   if ("erro" in lido) return { erro: lido.erro };
 
@@ -76,9 +85,15 @@ export async function salvarConfigNotasFiscais(
   revalidatePath("/integracoes");
 
   const mudou = refeitas.mudadas + refeitas.apagadas;
-  const efeito = mudou
+  const refeito = mudou
     ? ` ${refeitas.mudadas} cobrança(s) já vista(s) refeita(s) com a tabela nova${refeitas.apagadas ? `, e ${refeitas.apagadas} volta(m) a ser lida(s) na próxima conferência` : ""}.`
     : "";
+  // Cobrança com nota já emitida NÃO é refeita: trocar o código mudaria a chave da nota e a
+  // rodada emitiria outra do mesmo pagamento.
+  const poupadas = refeitas.preservadas
+    ? ` ${refeitas.preservadas} cobrança(s) que já têm nota emitida foram deixadas como estavam.`
+    : "";
+  const efeito = refeito + poupadas;
   const emissao = lido.config.emissao;
   const quemEmite = emissao.soCobrancas.length
     ? `só as cobranças ${emissao.soCobrancas.join(", ")}`
@@ -115,16 +130,41 @@ export async function tentarEmitirDeNovo(chave: string): Promise<EstadoNotasFisc
   });
   revalidatePath("/integracoes");
 
-  // Liberar nota cujo código ainda está em espera não a emite: a espera vale primeiro.
+  // Liberar não é emitir: a rodada ainda confere a espera de código, a emissão ligada, a
+  // chave da Spedy e se a cobrança está dentro do corte. Diz o que segura, em vez de
+  // prometer "até 5 minutos" a uma nota que não vai sair.
   const [nota, integracao] = await Promise.all([
-    db.notaFiscalEmitida.findUnique({ where: { chave }, select: { codigo: true } }),
-    db.integration.findUnique({ where: { provider: IntegrationProvider.NOTAS_FISCAIS }, select: { config: true } }),
+    db.notaFiscalEmitida.findUnique({ where: { chave }, select: { codigo: true, empresa: true, cobrancaId: true } }),
+    db.integration.findUnique({
+      where: { provider: IntegrationProvider.NOTAS_FISCAIS },
+      select: { enabled: true, config: true },
+    }),
   ]);
-  const emEspera = lerConfigNotasFiscais(integracao?.config).emissao.codigosEmEspera;
-  if (nota && emEspera.includes(nota.codigo)) {
-    return {
-      ok: `Liberada, mas o código ${nota.codigo} ainda está em espera: ela sai quando você o tirar da lista "Códigos em espera".`,
-    };
+  if (nota) {
+    const cobranca = await db.cobrancaFiscal.findUnique({
+      where: { cobrancaId: nota.cobrancaId },
+      select: { cobrancaId: true, empresaId: true, situacao: true, quitadaEm: true, cobranca: true },
+    });
+    const impedimentos = oQueImpedeASaida({
+      integracaoLigada: !!integracao?.enabled,
+      config: lerConfigNotasFiscais(integracao?.config),
+      nota,
+      chaveDaEmpresaNoServidor: chaveDaSpedy(nota.empresa) !== null,
+      cobranca: cobranca
+        ? {
+            cobrancaId: cobranca.cobrancaId,
+            empresaId: cobranca.empresaId,
+            situacao: cobranca.situacao,
+            referencia:
+              cobranca.quitadaEm ?? (cobranca.cobranca as { criadaEm?: string | null } | null)?.criadaEm ?? null,
+          }
+        : undefined,
+    });
+    if (impedimentos.length) {
+      return {
+        ok: `Liberada, mas NÃO vai sair agora: ${impedimentos.join("; ")}. Resolvido isso, ela sai na rodada seguinte (a cada 5 minutos), sem gastar outro número.`,
+      };
+    }
   }
   return { ok: "Liberada. A mesma nota é reenviada na próxima rodada (até 5 minutos), sem gastar outro número." };
 }

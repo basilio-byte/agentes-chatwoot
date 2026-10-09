@@ -30,6 +30,7 @@ export type LinhaDeCategoria = {
  * recusada. Mesmo conserto da cobrança, da janela e do alerta de saldo.
  */
 export function NotasFiscaisConfigForm({
+  versao,
   habilitada,
   inicio,
   categorias,
@@ -42,6 +43,8 @@ export function NotasFiscaisConfigForm({
   emailNoServidor,
   somenteLeitura,
 }: {
+  /** A impressão digital da configuração gravada quando a tela foi aberta: o servidor recusa o que ficou para trás. */
+  versao: string;
   habilitada: boolean;
   inicio: string;
   categorias: LinhaDeCategoria[];
@@ -104,6 +107,7 @@ export function NotasFiscaisConfigForm({
 
   return (
     <form onSubmit={enviar} className="space-y-5">
+      <input type="hidden" name="versao" value={versao} />
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
@@ -321,7 +325,7 @@ export function NotasFiscaisConfigForm({
 
         <Field
           label="Cautela: primeiras notas conferidas uma a uma"
-          hint="Enquanto menos que este número de notas nossas tiverem sido autorizadas, elas saem uma de cada vez, e qualquer problema (rejeição, recusa ou valor diferente do planejado) desliga a emissão sozinha. 0 = sem cautela."
+          hint="Enquanto menos que este número de notas nossas tiverem sido autorizadas, elas saem uma de cada vez, e qualquer problema (rejeição, recusa ou valor diferente do planejado) desliga a emissão sozinha. Passada a cautela, a rejeição da prefeitura só avisa por e-mail; valor diferente do planejado e três recusas da Spedy na mesma rodada ainda desligam. 0 = sem cautela."
         >
           <Input
             type="number"
@@ -418,8 +422,10 @@ export function NotasFiscaisConfigForm({
           hint={
             <>
               Até 5 endereços, separados por espaço ou vírgula. Recebem um e-mail quando a prefeitura
-              <strong> rejeita</strong> uma nota, a Spedy a recusa ou o cadastro do cliente a
-              segura. Um e-mail só por rodada, com tudo que está pendente.{" "}
+              <strong> rejeita</strong> uma nota, a Spedy a recusa, o cadastro do cliente a segura,
+              uma cobrança paga fica sem nota (código em espera, sem decisão ou plano que mudou depois
+              da emissão) ou o sistema <strong>desliga a emissão sozinho</strong>. Um e-mail só por
+              rodada, com tudo que está pendente.{" "}
               {emailNoServidor ? (
                 "Envio pela Resend: configurado no servidor."
               ) : (
