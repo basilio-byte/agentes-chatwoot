@@ -16,7 +16,9 @@ import {
   lerAtendimento,
   registrarDesfecho,
 } from "@/server/conversa-encerrada/leitura";
+import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 import { recortarAtendimentoAtual } from "@/server/conversa-marcada/recorte";
+import { tasksQueAindaBarram } from "@/server/conversa-marcada/vigentes";
 import {
   DIAS_DE_REGISTRO,
   mensagemDaConversaMarcada,
@@ -35,7 +37,8 @@ import type { JobConversaMarcada } from "./conversa-marcada";
  * não gastar nem registrar à toa:
  *  1. desmarca o checkbox, lendo e mesclando os atributos da conversa;
  *  2. sem pessoa dona da conversa, não roda — nota pedindo para atribuir;
- *  3. este agente já criou task nesta conversa há pouco: não roda — nota com o link;
+ *  3. este agente já criou task nesta conversa há pouco, e ela ainda está em
+ *     andamento (não ganha, fechada nem apagada): não roda — nota com o link;
  *  4. só então lê o atendimento e chama o agente.
  */
 export async function processarConversaMarcada(job: Job<JobConversaMarcada>) {
@@ -130,7 +133,7 @@ export async function processarConversaMarcada(job: Job<JobConversaMarcada>) {
   // modelo: é o caso da 10912, em que o CRM tinha criado a task de manhã e o
   // checkbox da tarde tentou outra.
   if (conversa) {
-    const registradas = tasksRegistradas(
+    let registradas = tasksRegistradas(
       await db.toolCall.findMany({
         where: {
           toolName: "clickup_criar_tarefa",
@@ -143,6 +146,19 @@ export async function processarConversaMarcada(job: Job<JobConversaMarcada>) {
         select: { output: true, createdAt: true },
       }),
     );
+
+    // A task que já foi GANHA (ou fechada, arquivada, apagada) não barra: a cliente que
+    // reserva toda semana pela mesma conversa pede outra reserva, não uma duplicata.
+    if (registradas.length > 0) {
+      const clickup = await abrirClickUp("checkbox");
+      if (!("erro" in clickup)) {
+        const antes = registradas.length;
+        registradas = await tasksQueAindaBarram(registradas, (id) => clickup.cliente.obterTarefa(id));
+        if (registradas.length < antes) {
+          avisos.push(`${antes - registradas.length} task(s) anterior(es) já ganha(s) ou fechada(s) não barraram`);
+        }
+      }
+    }
 
     if (registradas.length > 0) {
       const notada = await deixarNota(

@@ -17,7 +17,7 @@ import { limparNome, quandoCompleto } from "@/server/conversa-encerrada/ciclo";
  */
 export const DIAS_DE_REGISTRO = 30;
 
-export type TaskRegistrada = { url: string | null; nome: string | null; em: Date };
+export type TaskRegistrada = { id: string | null; url: string | null; nome: string | null; em: Date };
 
 /**
  * As tasks que o agente já criou nesta conversa, lidas das execuções.
@@ -32,11 +32,12 @@ export function tasksRegistradas(
     const saida = chamada.output;
     if (typeof saida !== "object" || saida === null || Array.isArray(saida)) return [];
 
-    const { criada, url, nome } = saida as Record<string, unknown>;
+    const { criada, id, url, nome } = saida as Record<string, unknown>;
     if (criada !== true) return [];
 
     return [
       {
+        id: typeof id === "string" ? id : null,
         url: typeof url === "string" ? url : null,
         nome: typeof nome === "string" ? nome : null,
         em: chamada.createdAt,
@@ -103,5 +104,5 @@ export function notaJaRegistrada(args: {
     )
     .join("; ");
 
-  return `${args.agente} não criou task nova com o checkbox "${args.atributo}": já há task criada por ele nesta conversa nos últimos ${DIAS_DE_REGISTRO} dias — ${lista}. Se precisar de outra, crie à mão.`;
+  return `${args.agente} não criou task nova com o checkbox "${args.atributo}": já há task em andamento (ainda não ganha, fechada nem arquivada) criada por ele nesta conversa nos últimos ${DIAS_DE_REGISTRO} dias — ${lista}. Se precisar de outra, crie à mão.`;
 }

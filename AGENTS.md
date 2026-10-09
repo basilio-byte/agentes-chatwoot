@@ -1122,9 +1122,14 @@ sem este gatilho ligado, marcar o checkbox não faz nada.
      atribuir e marcar de novo. O dono entra no registro como vendedor ou
      responsável, e o nosso robô como dono conta como ninguém. O n8n ficava
      esperando o dono aparecer, sem limite.
-  3. **Task já criada por ESTE agente nesta conversa nos últimos 30 dias, não
-     roda**: nota com o link. Lido das `ToolCall` de `clickup_criar_tarefa` com
-     `criada: true`, sem modelo. ⚠ Caso real: na 10912 o CRM Comercial criou a
+  3. **Task já criada por ESTE agente nesta conversa nos últimos 30 dias e ainda
+     em andamento, não roda**: nota com o link. Lido das `ToolCall` de
+     `clickup_criar_tarefa` com `criada: true`, sem modelo; a task é conferida no
+     ClickUp pela MESMA régua da criação (`aindaVale`: ganha, fechada, arquivada
+     ou apagada não barra — `conversa-marcada/vigentes.ts`). ⚠ Na dúvida, barra:
+     ClickUp desligado, erro que não seja 404 ou task sem id gravado mantêm a
+     trava. Até 09/10/2026 qualquer task dos 30 dias barrava (41 de 112
+     marcações), inclusive a cliente avulsa que reserva toda semana. ⚠ Caso real: na 10912 o CRM Comercial criou a
      task às 09:19 e o checkbox das 13:28 tentou outra. Task de outra origem —
      feita à mão, pelo n8n, por outro agente — quem pega é o prompt, pelo
      telefone.
@@ -2269,7 +2274,13 @@ Regra pura e testada em `clickup/repeticao.ts`.
 - **Conta QUALQUER agente da conversa**, não só quem chama: a terceira veio de
   outro agente. Lê das `ToolCall`, sem modelo, como o checkbox já fazia.
 - **Sete dias, não um**, porque entre a venda de sábado e o checkbox de segunda
-  passaram 43 h. Task apagada (404), arquivada ou fechada não barra.
+  passaram 43 h. Task apagada (404), arquivada, fechada ou **GANHA** (etiqueta
+  `ganho`) não barra — `aindaVale`, em `clickup/repeticao.ts`. ⚠ Ganha, e não
+  "qualquer task": a duplicata que a barreira impede nasce com a primeira task
+  ainda aberta (lead, venda autônoma recém-registrada — as da conversa 14454 só
+  têm a etiqueta `venda autonoma` e continuam barrando); a cliente avulsa que já
+  pagou e pede outra reserva pela MESMA conversa de WhatsApp é negócio novo
+  (conversa 14342, 05/10/2026, chamado da Kelly no Formulário Bugs).
 - ⚠ **Compara pelo `listaId`**, que o retorno da criação passou a gravar em
   05/10/2026. Chamada anterior a isso não barra nada — comparar pelo nome da
   lista confundiria listas homônimas.

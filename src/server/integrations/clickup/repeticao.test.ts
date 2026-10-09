@@ -64,6 +64,17 @@ describe("aindaVale", () => {
     expect(aindaVale({ archived: true, status: { type: "open" } })).toBe(false);
     expect(aindaVale({ status: { type: "closed" } })).toBe(false);
   });
+
+  it("⚠ task GANHA não barra a nova (cliente avulsa que reserva toda semana, conversa 14342)", () => {
+    expect(aindaVale({ status: { type: "custom" }, tags: [{ name: "ganho" }] })).toBe(false);
+    expect(aindaVale({ status: { type: "custom" }, tags: [{ name: " Ganho " }] })).toBe(false);
+  });
+
+  it("⚠ lead ou venda autônoma ainda em andamento continua barrando (conversa 14454)", () => {
+    expect(aindaVale({ status: { type: "open" }, tags: [{ name: "venda autonoma" }] })).toBe(true);
+    expect(aindaVale({ status: { type: "custom" }, tags: [] })).toBe(true);
+    expect(aindaVale({ status: { type: "custom" }, tags: null })).toBe(true);
+  });
 });
 
 // --- de ponta a ponta -------------------------------------------------------

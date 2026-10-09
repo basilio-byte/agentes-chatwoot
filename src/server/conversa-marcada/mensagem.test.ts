@@ -63,13 +63,13 @@ describe("tasksRegistradas", () => {
     const em = new Date("2026-09-15T12:19:00Z");
     expect(
       tasksRegistradas([
-        { output: { criada: true, url: "https://app.clickup.com/t/abc", nome: "CW — Maria" }, createdAt: em },
+        { output: { criada: true, id: "abc", url: "https://app.clickup.com/t/abc", nome: "CW — Maria" }, createdAt: em },
         { output: { criada: false }, createdAt: em },
         { output: "Não consegui identificar o responsável.", createdAt: em },
         { output: null, createdAt: em },
         { output: [{ criada: true }], createdAt: em },
       ]),
-    ).toEqual([{ url: "https://app.clickup.com/t/abc", nome: "CW — Maria", em }]);
+    ).toEqual([{ id: "abc", url: "https://app.clickup.com/t/abc", nome: "CW — Maria", em }]);
   });
 });
 
@@ -89,8 +89,8 @@ describe("notas internas", () => {
       atributo: "passar_para_crm",
       agente: "Agente CRM Comercial",
       tasks: [
-        { url: "https://app.clickup.com/t/abc", nome: null, em: new Date("2026-09-15T12:19:00Z") },
-        { url: null, nome: null, em: new Date("2026-09-10T15:00:00Z") },
+        { id: "abc", url: "https://app.clickup.com/t/abc", nome: null, em: new Date("2026-09-15T12:19:00Z") },
+        { id: null, url: null, nome: null, em: new Date("2026-09-10T15:00:00Z") },
       ],
     });
 

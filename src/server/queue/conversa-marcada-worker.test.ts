@@ -46,6 +46,8 @@ let chamadasDeCriar: { output: unknown; createdAt: Date }[];
 let consultaDeRegistro: { where?: Record<string, unknown> } | null;
 let desfechos: { resultado: string; detalhe: string }[];
 let toolCallCount: number;
+/** O ClickUp do sistema: por padrão indisponível (a trava barra); os testes de vigência o ligam. */
+let clickupDoSistema: { erro: string } | { cliente: { obterTarefa: (id: string) => Promise<unknown> } };
 let entrada: EntradaExecucao | null;
 let execucao: {
   resultado?: { runId: string; toolCalls: unknown[]; iteracoes: number };
@@ -74,6 +76,10 @@ vi.mock("@/lib/db", () => ({
       },
     },
   },
+}));
+
+vi.mock("@/server/integrations/clickup/sistema", () => ({
+  abrirClickUp: async () => clickupDoSistema,
 }));
 
 vi.mock("@/server/agents/runner", () => ({
@@ -192,6 +198,7 @@ beforeEach(() => {
   consultaDeRegistro = null;
   desfechos = [];
   toolCallCount = 0;
+  clickupDoSistema = { erro: "o ClickUp está desligado" };
   entrada = null;
   execucao = { resultado: { runId: "run-1", toolCalls: [{}, {}], iteracoes: 3 } };
 });
@@ -282,6 +289,55 @@ describe("antes de gastar modelo", () => {
       isError: false,
       run: { agentId: "crm-comercial", conversationId: "conversa-local" },
     });
+  });
+
+  it("⚠ task anterior já GANHA não barra: a reserva nova da cliente avulsa sobe (conversa 14342)", async () => {
+    chamadasDeCriar = [
+      {
+        output: { criada: true, id: "86akqat2f", url: "https://app.clickup.com/t/86akqat2f", nome: "CW — Duda" },
+        createdAt: new Date("2026-09-28T15:08:00Z"),
+      },
+    ];
+    clickupDoSistema = {
+      cliente: { obterTarefa: async () => ({ status: { type: "custom" }, tags: [{ name: "ganho" }] }) },
+    };
+    await processarConversaMarcada(job());
+
+    expect(entrada).not.toBeNull();
+    expect(notas.some((n) => n.texto.includes("não criou task nova"))).toBe(false);
+  });
+
+  it("⚠ task anterior ainda em andamento continua barrando, mesmo com o ClickUp lido", async () => {
+    chamadasDeCriar = [
+      {
+        output: { criada: true, id: "86akt378p", url: "https://app.clickup.com/t/86akt378p", nome: "CW — Maria" },
+        createdAt: new Date("2026-09-28T15:08:00Z"),
+      },
+    ];
+    clickupDoSistema = {
+      cliente: { obterTarefa: async () => ({ status: { type: "open" }, tags: [{ name: "venda autonoma" }] }) },
+    };
+    await processarConversaMarcada(job());
+
+    expect(entrada).toBeNull();
+    expect(desfechos[0].detalhe).toContain("task já registrada");
+  });
+
+  it("⚠ ClickUp que falha ao conferir: na dúvida, barra", async () => {
+    chamadasDeCriar = [
+      { output: { criada: true, id: "x1", url: "https://app.clickup.com/t/x1" }, createdAt: new Date() },
+    ];
+    clickupDoSistema = {
+      cliente: {
+        obterTarefa: async () => {
+          throw new Error("queda de rede");
+        },
+      },
+    };
+    await processarConversaMarcada(job());
+
+    expect(entrada).toBeNull();
+    expect(desfechos[0].resultado).toBe("ignorado");
   });
 
   it("tentativa que não criou nada não conta como registro", async () => {

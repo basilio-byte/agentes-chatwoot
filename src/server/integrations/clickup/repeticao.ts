@@ -67,14 +67,31 @@ export function tarefasNaLista(
 }
 
 /**
+ * A etiqueta do CRM que marca a venda GANHA. Quem já fechou uma reserva volta a
+ * pedir outra pela mesma conversa de WhatsApp: é oportunidade nova, não duplicata.
+ */
+export const ETIQUETA_DE_VENDA_GANHA = "ganho";
+
+/**
  * Uma task que existiu e não vale mais não barra a nova: apagada (404),
- * arquivada, ou fechada (perdida, concluída). Barrar por ela deixaria a equipe
- * sem conseguir registrar a oportunidade por uma semana.
+ * arquivada, fechada (perdida, concluída) ou GANHA. Barrar por ela deixaria a
+ * equipe sem conseguir registrar a oportunidade por uma semana.
+ *
+ * ⚠ Ganha NÃO é o mesmo que "ainda em andamento": a duplicata que esta barreira
+ * existe para impedir nasce com a primeira task ainda aberta (um lead, uma venda
+ * autônoma recém-registrada); a segunda reserva de quem já pagou é outro negócio.
+ * Conversa 14342 (05/10/2026): a cliente avulsa reservava toda semana pela mesma
+ * conversa, a task anterior estava "ganho", e a equipe tinha de subir a nova à mão.
  */
 export function aindaVale(tarefa: {
   archived?: boolean | null;
   status?: { type?: string | null } | null;
+  tags?: Array<{ name?: string | null }> | null;
 }): boolean {
   if (tarefa.archived) return false;
-  return tarefa.status?.type !== "closed";
+  if (tarefa.status?.type === "closed") return false;
+  const ganha = (tarefa.tags ?? []).some(
+    (t) => (t.name ?? "").trim().toLowerCase() === ETIQUETA_DE_VENDA_GANHA,
+  );
+  return !ganha;
 }
