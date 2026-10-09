@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
+import {
+  EXIGE_NFSE_REFERENCIADA,
+  ROTULO_DO_TIPO_DE_OPERACAO,
+  TIPO_DE_OPERACAO_PADRAO,
+  TIPOS_DE_OPERACAO,
+} from "@/lib/tipos-de-operacao";
 import { notasFiscaisConfigSchema } from "../config";
 import {
   codigoNacional,
   codigoQueSegura,
   divergenciaDeValor,
   exigeTipoDeOperacao,
-  TIPO_DE_OPERACAO,
   motivoParaPausar,
   vagasNaCautela,
   cortar,
@@ -204,11 +209,20 @@ describe("tipo de operação (E0903 da prefeitura, 09/10/2026)", () => {
     montarCorpo({ nota: n, tomador: tomador(), cep: cepOk, hoje: "2026-10-09", enviarEmailAoCliente: true, momento });
 
   it("⚠ sala privativa (10.05.01) leva o tipo de operação que o Laércio definiu para cada momento", () => {
-    // "Para gatilhos de quitação a opção é fornecimento com pagamento já realizado"
-    expect(corpo(sala).ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
-    expect(corpo(sala, "quitacao").ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
-    // "Para NF emitidas no momento da geração é fornecimento com pagamento posterior"
-    expect(corpo(sala, "geracao").ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
+    // A ÚLTIMA resposta dele (09/10/2026, "bota a opção 1 e 4 para ver se roda"):
+    // quitação = fornecimento com pagamento posterior; geração = recebimento do
+    // pagamento com fornecimento posterior. As duas anteriores caíam na regra E0905.
+    expect(corpo(sala).ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
+    expect(corpo(sala, "quitacao").ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
+    expect(corpo(sala, "geracao").ibsCbs).toEqual({ operationType: "paymentReceivedBeforeSupply" });
+  });
+
+  it("⚠ o que está na CONFIGURAÇÃO manda: trocar o tipo não pede deploy", () => {
+    const tipos = { quitacao: "simultaneousSupplyAndPayment", geracao: "supplyWithSubsequentPayment" } as const;
+    const c = (momento: "quitacao" | "geracao") =>
+      montarCorpo({ nota: sala, tomador: tomador(), cep: cepOk, hoje: "2026-10-09", enviarEmailAoCliente: true, momento, tiposDeOperacao: tipos });
+    expect(c("quitacao").ibsCbs).toEqual({ operationType: "simultaneousSupplyAndPayment" });
+    expect(c("geracao").ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
   });
 
   it("⚠ a nota comum (03.03.02) e o Seabox (11.04.01) saem EXATAMENTE como antes, sem o campo", () => {
@@ -226,8 +240,16 @@ describe("tipo de operação (E0903 da prefeitura, 09/10/2026)", () => {
     }
   });
 
-  it("o mapa de momentos não perde um: quitação paga já, geração paga depois", () => {
-    expect(TIPO_DE_OPERACAO).toEqual({ quitacao: "supplyWithPriorPayment", geracao: "supplyWithSubsequentPayment" });
+  it("o padrão por momento é a última resposta do Laércio (e o 2 e o 3 são os que exigem NFS-e referenciada)", () => {
+    expect(TIPO_DE_OPERACAO_PADRAO).toEqual({ quitacao: "supplyWithSubsequentPayment", geracao: "paymentReceivedBeforeSupply" });
+    // ⚠ O padrão NUNCA pode ser um dos que exigem a nota referenciada: a Seahub não consegue enviá-la.
+    for (const tipo of Object.values(TIPO_DE_OPERACAO_PADRAO)) expect(EXIGE_NFSE_REFERENCIADA[tipo], tipo).toBe(false);
+    expect(Object.entries(EXIGE_NFSE_REFERENCIADA).filter(([, exige]) => exige).map(([tipo]) => tipo)).toEqual([
+      "paymentReceivedAfterSupply",
+      "supplyWithPriorPayment",
+    ]);
+    // Os cinco têm rótulo na tela, na ordem de 1 a 5.
+    expect(TIPOS_DE_OPERACAO.map((t) => ROTULO_DO_TIPO_DE_OPERACAO[t][0])).toEqual(["1", "2", "3", "4", "5"]);
   });
 });
 

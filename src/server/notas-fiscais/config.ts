@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  TIPO_DE_OPERACAO_PADRAO,
+  TIPOS_DE_OPERACAO,
+  type MomentoDaNota,
+  type TipoDeOperacao,
+} from "@/lib/tipos-de-operacao";
 
 /**
  * Configuração das notas fiscais (Spedy) — o que a tela edita.
@@ -68,8 +74,9 @@ export const emissaoSchema = z.object({
   /**
    * CAUTELA: enquanto menos de `cautela` notas NOSSAS tiverem sido autorizadas,
    * as notas saem uma de cada vez — a próxima só depois de a anterior terminar —
-   * e qualquer problema (rejeição, recusa da Spedy, valor diferente do
-   * planejado) DESLIGA a emissão sozinha. 0 = sem cautela.
+   * e QUALQUER problema (rejeição, recusa da Spedy, valor diferente do planejado)
+   * DESLIGA a emissão sozinha. Passada a cautela, nota não emitida só avisa por
+   * e-mail (ver `motivoParaPausar`). 0 = sem cautela.
    */
   cautela: z.number().int().min(0).max(50).default(3),
   /** Por que a emissão foi desligada sozinha. Salvar a tela apaga: é a pessoa dizendo que viu. */
@@ -83,6 +90,19 @@ export const emissaoSchema = z.object({
    * respondida. A cobrança continua PRONTA e sai quando o código sai da lista.
    */
   codigosEmEspera: z.array(codigo).max(20).default([]),
+  /**
+   * O TIPO DE OPERAÇÃO (tpOper, Reforma Tributária) que vai nos serviços em que a
+   * prefeitura o exige (10.05, 15.09, 17.12 e 25.05), por momento da nota. É
+   * decisão FISCAL do Laércio e já mudou duas vezes no mesmo dia (09/10/2026):
+   * por isso é configuração, e trocar não pede deploy. ⚠ O 2 e o 3 exigem a
+   * NFS-e referenciada, que não conseguimos enviar: a prefeitura rejeita (E0905).
+   */
+  tipoDeOperacao: z
+    .object({
+      quitacao: z.enum(TIPOS_DE_OPERACAO).default(TIPO_DE_OPERACAO_PADRAO.quitacao),
+      geracao: z.enum(TIPOS_DE_OPERACAO).default(TIPO_DE_OPERACAO_PADRAO.geracao),
+    })
+    .default(TIPO_DE_OPERACAO_PADRAO),
 });
 
 export type EmissaoConfig = z.infer<typeof emissaoSchema>;
@@ -168,6 +188,7 @@ export const notasFiscaisConfigSchema = z.object({
     cautela: 3,
     pausadaMotivo: null,
     codigosEmEspera: [],
+    tipoDeOperacao: TIPO_DE_OPERACAO_PADRAO,
   }),
   /**
    * O aviso do Conexa (`/api/webhooks/conexa/<token>`): a nota sai na hora do
@@ -293,6 +314,32 @@ export function lerCodigosEmEspera(texto: string): { codigos: string[] } | { err
   return { codigos };
 }
 
+/**
+ * O tipo de operação de cada momento, dos campos `tipoQuitacao` e `tipoGeracao`.
+ * Campo ausente (tela antiga) mantém o gravado; valor que não é um dos cinco
+ * recusa dizendo qual campo — gravar o padrão no lugar mudaria, em silêncio, o
+ * que vai numa nota fiscal.
+ */
+export function lerTiposDeOperacao(
+  campos: Record<string, string>,
+  atual: Record<MomentoDaNota, TipoDeOperacao>,
+): { tipos: Record<MomentoDaNota, TipoDeOperacao> } | { erro: string } {
+  const tipos = { ...atual };
+  const campo: Record<MomentoDaNota, { nome: string; rotulo: string }> = {
+    quitacao: { nome: "tipoQuitacao", rotulo: "nota emitida na quitação" },
+    geracao: { nome: "tipoGeracao", rotulo: "nota emitida na geração" },
+  };
+  for (const momento of ["quitacao", "geracao"] as const) {
+    const bruto = campos[campo[momento].nome];
+    if (bruto === undefined) continue;
+    if (!(TIPOS_DE_OPERACAO as readonly string[]).includes(bruto)) {
+      return { erro: `Tipo de operação (${campo[momento].rotulo}): escolha uma das cinco opções da lista.` };
+    }
+    tipos[momento] = bruto as TipoDeOperacao;
+  }
+  return { tipos };
+}
+
 export type RegraDeProduto = NotasFiscaisConfig["produtos"][number]["regra"];
 
 /** A exceção do produto, ou `null` quando vale a categoria. */
@@ -396,9 +443,15 @@ export function configDoFormulario(
   );
   if ("erro" in espera) return espera;
 
+  // O tipo de operação por momento. Formulário de versão antiga, sem os campos,
+  // mantém o que está gravado; valor fora da lista recusa (nunca vira o padrão).
+  const tipos = lerTiposDeOperacao(campos, atual.emissao.tipoDeOperacao);
+  if ("erro" in tipos) return tipos;
+
   const emissao = {
     emailsDeAviso: emails.emails,
     codigosEmEspera: espera.codigos,
+    tipoDeOperacao: tipos.tipos,
     ligada: campos.emissaoLigada === "on",
     soCobrancas: cobrancas.ids,
     aPartirDe: valor("aPartirDe") || null,

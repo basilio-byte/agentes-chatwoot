@@ -16,6 +16,8 @@
  *   o certo é procurar pelo id antes de mandar de novo.
  */
 
+import type { TipoDeOperacao } from "@/lib/tipos-de-operacao";
+
 const BASE_PADRAO = "https://api.spedy.com.br";
 const PRAZO_MS = 30_000;
 
@@ -76,9 +78,7 @@ export type CorpoDeNota = {
    * Reforma Tributária (NT 2025.002). Só vai nos serviços em que a prefeitura exige o
    * tipo de operação (`tpOper`): 10.05, 15.09, 17.12 e 25.05 da LC 116 (rejeição E0903).
    */
-  ibsCbs?: {
-    operationType: "supplyWithSubsequentPayment" | "paymentReceivedAfterSupply" | "supplyWithPriorPayment" | "paymentReceivedBeforeSupply" | "simultaneousSupplyAndPayment";
-  };
+  ibsCbs?: { operationType: TipoDeOperacao };
   receiver: {
     name: string;
     federalTaxNumber: string;

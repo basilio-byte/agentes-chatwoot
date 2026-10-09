@@ -5,7 +5,13 @@ import {
   salvarConfigNotasFiscais,
   type EstadoNotasFiscais,
 } from "@/server/actions/notas-fiscais";
-import { Aviso, Button, Field, Input, Textarea } from "@/components/ui";
+import { Aviso, Button, Field, Input, Select, Textarea } from "@/components/ui";
+import {
+  EXIGE_NFSE_REFERENCIADA,
+  ROTULO_DO_TIPO_DE_OPERACAO,
+  TIPOS_DE_OPERACAO,
+  type TipoDeOperacao,
+} from "@/lib/tipos-de-operacao";
 
 export type LinhaDeCategoria = {
   id: number;
@@ -56,6 +62,9 @@ export function NotasFiscaisConfigForm({
     codigosEmEspera: string;
     /** Quantas cobranças pagas estão retidas agora por causa deles. */
     retidas: number;
+    /** Tipo de operação (tpOper) da nota emitida na quitação e na geração. */
+    tipoQuitacao: TipoDeOperacao;
+    tipoGeracao: TipoDeOperacao;
   };
   /** Se a chave de cada empresa está no servidor (nunca o valor). */
   chaves: Record<string, boolean>;
@@ -84,6 +93,8 @@ export function NotasFiscaisConfigForm({
   const [avisos, setAvisos] = useState(emissao.emailsDeAviso);
   const [cautela, setCautela] = useState(emissao.cautela);
   const [espera, setEspera] = useState(emissao.codigosEmEspera);
+  const [tipoQuitacao, setTipoQuitacao] = useState<TipoDeOperacao>(emissao.tipoQuitacao);
+  const [tipoGeracao, setTipoGeracao] = useState<TipoDeOperacao>(emissao.tipoGeracao);
 
   const enviar = (evento: React.FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
@@ -353,6 +364,54 @@ export function NotasFiscaisConfigForm({
             className="font-mono tabular-nums"
           />
         </Field>
+
+        <fieldset className="space-y-3 rounded-lg border border-line p-3">
+          <legend className="px-1 text-[13px] font-medium">Tipo de operação (Reforma Tributária)</legend>
+          <p className="text-xs text-muted">
+            A prefeitura de Natal exige o tipo de operação (<code>tpOper</code>) na nota de{" "}
+            <strong>sala privativa</strong> (e nos itens 15.09, 17.12 e 25.05 da LC 116). É decisão fiscal
+            (Laércio/contador), por momento: nota emitida quando a cobrança é <strong>paga</strong> e quando é{" "}
+            <strong>gerada</strong>. Vale na rodada seguinte, sem publicar nada. As outras notas não levam o campo.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Nota emitida na quitação (cobrança paga)">
+              <Select
+                name="tipoQuitacao"
+                value={tipoQuitacao}
+                onChange={(e) => setTipoQuitacao(e.target.value as TipoDeOperacao)}
+                disabled={somenteLeitura}
+              >
+                {TIPOS_DE_OPERACAO.map((t) => (
+                  <option key={t} value={t}>
+                    {ROTULO_DO_TIPO_DE_OPERACAO[t]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Nota emitida na geração (cliente &quot;antes&quot;)">
+              <Select
+                name="tipoGeracao"
+                value={tipoGeracao}
+                onChange={(e) => setTipoGeracao(e.target.value as TipoDeOperacao)}
+                disabled={somenteLeitura}
+              >
+                {TIPOS_DE_OPERACAO.map((t) => (
+                  <option key={t} value={t}>
+                    {ROTULO_DO_TIPO_DE_OPERACAO[t]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+          {EXIGE_NFSE_REFERENCIADA[tipoQuitacao] || EXIGE_NFSE_REFERENCIADA[tipoGeracao] ? (
+            <Aviso tone="danger">
+              O tipo escolhido (<strong>2</strong> ou <strong>3</strong>) exige a <strong>NFS-e referenciada</strong>{" "}
+              (grupo de documentos referenciados), que este sistema não consegue enviar: a Spedy não tem o campo e,
+              na quitação, não existe nota anterior. A prefeitura rejeita com o erro <strong>E0905</strong>. A nota
+              fica guardada e a equipe é avisada por e-mail, mas não sai.
+            </Aviso>
+          ) : null}
+        </fieldset>
 
         <Field
           label="Avisar por e-mail quando uma nota der problema"

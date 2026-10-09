@@ -1823,18 +1823,35 @@ a tela na aba "Notas fiscais" de Integrações.
     NÃO a envia: a espera vale primeiro. Formulário de versão antiga, sem o campo,
     NÃO apaga a lista.
   - ⚠⚠ **Tipo de operação (`ibsCbs.operationType`) — decisão FISCAL do Laércio,
-    09/10/2026**, em `TIPO_DE_OPERACAO` (`emissao/regras.ts`): *"para gatilhos de
-    quitação a opção é fornecimento com pagamento já realizado; para NF emitida no
-    momento da geração é fornecimento com pagamento posterior"*. Ou seja, nota
-    emitida ao PAGAR a cobrança leva `supplyWithPriorPayment`, e a emitida ao
-    GERÁ-LA (cliente com regra "antes", `CobrancaFiscal.evento = gerada`) leva
-    `supplyWithSubsequentPayment`. Só vai nos itens que a prefeitura listou
+    CONFIGURÁVEL** (`emissao.tipoDeOperacao`, dois selects na tela de notas
+    fiscais; lista e rótulos em `lib/tipos-de-operacao.ts`). É configuração e não
+    constante porque a resposta dele **mudou três vezes no mesmo dia (09/10/2026)**
+    e cada mudança custaria um deploy: (3, 1) → rejeitada com E0905; (2, 4) →
+    o 2 também exige a nota referenciada; e por fim *"Bota a opção 1 e 4 para ver
+    se roda"*, respondendo a "A) quitação, B) geração". Por momento: nota emitida
+    ao PAGAR a cobrança (`quitacao`) e ao GERÁ-LA (cliente "antes",
+    `CobrancaFiscal.evento = gerada`, `geracao`). Padrão = essa última resposta:
+    quitação = fornecimento com pagamento posterior (1,
+    `supplyWithSubsequentPayment`); geração = recebimento do pagamento com
+    fornecimento posterior (4, `paymentReceivedBeforeSupply`). ⚠ É um teste dele
+    ("para ver se roda"), não uma opinião fiscal fechada: a leitura A=1, B=4 é a
+    ordem em que a pergunta foi feita. Na mesma conversa ele confirmou que o
+    código **10.05.01 está correto** para sala privativa e que o grupo IBS/CBS
+    "pode ir com as informações, tanto faz" (a nota segue levando o grupo; sem ele
+    só valeria desabilitar a Reforma Tributária da empresa na Spedy, decisão do
+    contador). Só vai nos itens que a prefeitura listou
     (`ITENS_COM_TIPO_DE_OPERACAO`: 10.05, 15.09, 17.12 e 25.05): a nota comum
-    (03.03.02) e o Seabox (11.04.01) saem EXATAMENTE como antes, sem o campo. Não
-    mude o mapa sem ele. ⚠ A documentação da Spedy diz que o bloco `ibsCbs` tem
-    mais campos (`cst`, `classification`, `property` para bens imóveis...) e que
-    quem indica o que a operação exige é o time fiscal: a prefeitura pode pedir
-    outro depois deste — a primeira nota real depois do ajuste é o teste, e uma
+    (03.03.02) e o Seabox (11.04.01) saem EXATAMENTE como antes, sem o campo.
+    ⚠⚠ **O 2 e o 3 exigem o grupo de documentos referenciados** (`gRefNFSe`,
+    NFS-e da outra perna da operação) e o 1, o 4 e o 5 o PROÍBEM — regras E0905 e
+    E0906 do layout nacional. A rejeição E0905 foi vista de verdade com o 3. **A
+    Seahub NÃO consegue enviar esse grupo**: o `CreateServiceInvoiceDto` da Spedy
+    não tem o campo (só a NF-e tem `referencedDocuments`) e na quitação não existe
+    nota anterior. Logo, escolher 2 ou 3 para uma nota que sai sem referência é
+    rejeição certa; a tela avisa. Os tipos que dispensam a referência são 1, 4 e
+    5. ⚠ A documentação da Spedy diz ainda que o bloco `ibsCbs` tem mais campos
+    (`cst`, `classification`, `property` para bens imóveis...): a prefeitura pode
+    pedir outro depois — a primeira nota real depois do ajuste é o teste, e uma
     rejeição não gasta número, fica guardada, avisa a equipe e pode tentar de novo.
   - ⚠ **Cobrança PAGA sem nota também avisa** (`CobrancaSemNota`, mesmo e-mail das
     notas com problema, uma lista a mais): retida por código em espera, e paga

@@ -21,6 +21,7 @@ describe("config da emissão", () => {
       cautela: 3,
       pausadaMotivo: null,
       codigosEmEspera: [],
+      tipoDeOperacao: { quitacao: "supplyWithSubsequentPayment", geracao: "paymentReceivedBeforeSupply" },
     });
     // 3 = SEAHUB COWORKING e 4 = SEATECH (conferido na configuração do Conexa).
     expect(antiga.empresas).toEqual({ "3": "SEAHUB", "4": "SEATECH" });

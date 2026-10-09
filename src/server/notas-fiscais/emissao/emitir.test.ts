@@ -544,17 +544,34 @@ describe("a rodada de emissão com cautela", () => {
       notas: [{ ...nota(n), chave: `conexa-${n}-100501`, codigo: "10.05.01" }],
     });
 
-    it("⚠ cobrança paga manda 'pagamento já realizado'; gerada (cliente antes) manda 'pagamento posterior'", async () => {
+    it("⚠ cobrança paga e cobrança gerada (cliente antes) levam o tipo de cada momento da configuração", async () => {
       const c = cenario((id) => autorizada(id), [sala(1, "quitada"), sala(2, "gerada"), sala(3), pronta(4)]);
       const r = await rodarEmissao(c.dep, config({ cautela: 0, soCobrancas: [1, 2, 3, 4] }), c.pausar);
       expect(r.enviadas).toBe(4);
       const corpos = new Map(c.spedy.criarNota.mock.calls.map(([corpo]) => [corpo.integrationId, corpo]));
-      expect(corpos.get("conexa-1-100501")?.ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
-      expect(corpos.get("conexa-2-100501")?.ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
-      // Sem evento gravado, vale o pagamento já realizado, que é o padrão.
-      expect(corpos.get("conexa-3-100501")?.ibsCbs).toEqual({ operationType: "supplyWithPriorPayment" });
+      // O padrão é a última resposta do Laércio ("opção 1 e 4"): quitação = 1, geração = 4.
+      expect(corpos.get("conexa-1-100501")?.ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
+      expect(corpos.get("conexa-2-100501")?.ibsCbs).toEqual({ operationType: "paymentReceivedBeforeSupply" });
+      // Sem evento gravado, vale a quitação, que é o padrão.
+      expect(corpos.get("conexa-3-100501")?.ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
       // A nota comum não muda.
       expect(corpos.get("conexa-4-030302")).not.toHaveProperty("ibsCbs");
+    });
+
+    it("⚠ trocar o tipo na configuração vale na rodada seguinte, sem publicar nada", async () => {
+      const c = cenario((id) => autorizada(id), [sala(1, "quitada"), sala(2, "gerada")]);
+      await rodarEmissao(
+        c.dep,
+        config({
+          cautela: 0,
+          soCobrancas: [1, 2],
+          tipoDeOperacao: { quitacao: "simultaneousSupplyAndPayment", geracao: "supplyWithSubsequentPayment" },
+        }),
+        c.pausar,
+      );
+      const corpos = new Map(c.spedy.criarNota.mock.calls.map(([corpo]) => [corpo.integrationId, corpo]));
+      expect(corpos.get("conexa-1-100501")?.ibsCbs).toEqual({ operationType: "simultaneousSupplyAndPayment" });
+      expect(corpos.get("conexa-2-100501")?.ibsCbs).toEqual({ operationType: "supplyWithSubsequentPayment" });
     });
 
     it("⚠ a nota rejeitada que foi liberada sai de novo COM o campo, no mesmo identificador", async () => {
@@ -583,7 +600,7 @@ describe("a rodada de emissão com cautela", () => {
       expect(c.spedy.criarNota).toHaveBeenCalledTimes(1);
       expect(c.spedy.criarNota.mock.calls[0][0]).toMatchObject({
         integrationId: "conexa-1-100501",
-        ibsCbs: { operationType: "supplyWithPriorPayment" },
+        ibsCbs: { operationType: "supplyWithSubsequentPayment" },
       });
       expect(c.spedy.buscarPorIntegrationId).not.toHaveBeenCalled();
     });

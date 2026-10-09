@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { diaEmSaoPaulo } from "@/lib/tempo";
+import type { MomentoDaNota, TipoDeOperacao } from "@/lib/tipos-de-operacao";
 import { abrirConexa } from "@/server/integrations/conexa/sistema";
 import {
   chaveDaSpedy,
@@ -31,7 +32,6 @@ import {
   situacaoDoStatus,
   type CepLido,
   type CobrancaSemNota,
-  type MomentoDaNota,
   type NotaComProblema,
   type Problema,
   type Tomador,
@@ -226,6 +226,8 @@ export async function enviarNota(
     enviarEmailAoCliente: boolean;
     /** Quando a nota sai: define o tipo de operação nos serviços que a prefeitura exige. */
     momento?: MomentoDaNota;
+    /** O tipo de operação de cada momento, da configuração (`emissao.tipoDeOperacao`). */
+    tiposDeOperacao?: Record<MomentoDaNota, TipoDeOperacao>;
   },
 ): Promise<ResultadoDoEnvio> {
   const { nota, empresa } = args;
@@ -282,6 +284,7 @@ export async function enviarNota(
       hoje: diaEmSaoPaulo(agora),
       enviarEmailAoCliente: args.enviarEmailAoCliente,
       momento: args.momento,
+      tiposDeOperacao: args.tiposDeOperacao,
     });
     const criada = await spedy.criarNota(corpo);
     await aplicar(dep, nota.chave, criada, { cobrancaId: args.cobrancaId, valorCentavos: nota.valorCentavos });
@@ -588,6 +591,7 @@ export async function rodarEmissao(
         empresa,
         enviarEmailAoCliente: config.emissao.enviarEmailAoCliente,
         momento: linha.evento === "gerada" ? "geracao" : "quitacao",
+        tiposDeOperacao: config.emissao.tipoDeOperacao,
       });
       if (resultado === "ja existe") continue;
       novas++;

@@ -1,5 +1,8 @@
+import { TIPO_DE_OPERACAO_PADRAO, type MomentoDaNota, type TipoDeOperacao } from "@/lib/tipos-de-operacao";
 import type { CorpoDeNota } from "@/server/integrations/spedy/client";
 import type { NotasFiscaisConfig } from "../config";
+
+export type { MomentoDaNota };
 import { formatarReais, type NotaPlanejada } from "../regras";
 
 /**
@@ -234,20 +237,6 @@ export function exigeTipoDeOperacao(codigo: string): boolean {
   return ITENS_COM_TIPO_DE_OPERACAO.some((item) => codigo.startsWith(`${item}.`));
 }
 
-/** Quando a nota sai: ao PAGAR a cobrança (o padrão) ou ao GERÁ-LA (cliente "antes"). */
-export type MomentoDaNota = "quitacao" | "geracao";
-
-/**
- * O tipo de operação por momento, como o Laércio respondeu em 09/10/2026:
- * "para gatilhos de quitação é fornecimento com pagamento já realizado; para NF
- * emitida no momento da geração é fornecimento com pagamento posterior". Decisão
- * fiscal dele — não mude sem ele.
- */
-export const TIPO_DE_OPERACAO: Record<MomentoDaNota, NonNullable<CorpoDeNota["ibsCbs"]>["operationType"]> = {
-  quitacao: "supplyWithPriorPayment",
-  geracao: "supplyWithSubsequentPayment",
-};
-
 export function montarCorpo(args: {
   nota: Pick<NotaPlanejada, "chave" | "codigo" | "valorCentavos" | "descricao" | "competencia">;
   tomador: Tomador;
@@ -255,8 +244,13 @@ export function montarCorpo(args: {
   /** Dia de hoje em São Paulo (AAAA-MM-DD). */
   hoje: string;
   enviarEmailAoCliente: boolean;
-  /** Sem isto vale o pagamento já realizado, que é a nota da maioria. */
+  /** Sem isto vale a quitação, que é a nota da maioria. */
   momento?: MomentoDaNota;
+  /**
+   * O tipo de operação de cada momento (`emissao.tipoDeOperacao`, decisão fiscal do
+   * Laércio). Sem isto vale o padrão. Só entra nos itens em que a prefeitura exige.
+   */
+  tiposDeOperacao?: Record<MomentoDaNota, TipoDeOperacao>;
 }): CorpoDeNota {
   const { nota, tomador: t, cep } = args;
   const cidade = cep.estado === "ok" ? { code: cep.ibge ?? undefined, name: cep.cidade, state: cep.uf.toLowerCase() } : t.cidade
@@ -277,7 +271,7 @@ export function montarCorpo(args: {
     // Só onde a prefeitura exige: mandar a todas mudaria a nota comum (03.03.02),
     // que o Natal já autoriza sem o campo.
     ...(exigeTipoDeOperacao(nota.codigo)
-      ? { ibsCbs: { operationType: TIPO_DE_OPERACAO[args.momento ?? "quitacao"] } }
+      ? { ibsCbs: { operationType: (args.tiposDeOperacao ?? TIPO_DE_OPERACAO_PADRAO)[args.momento ?? "quitacao"] } }
       : {}),
     receiver: {
       name: cortar(t.nome, LIMITES.nome),

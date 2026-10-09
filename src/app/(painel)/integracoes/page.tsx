@@ -1485,6 +1485,8 @@ export default async function IntegracoesPage({
                       pausadaMotivo: configNotas.emissao.pausadaMotivo,
                       codigosEmEspera: configNotas.emissao.codigosEmEspera.join(" "),
                       retidas: cobrancasRetidas,
+                      tipoQuitacao: configNotas.emissao.tipoDeOperacao.quitacao,
+                      tipoGeracao: configNotas.emissao.tipoDeOperacao.geracao,
                     }}
                     chaves={chavesDaSpedy}
                     emailNoServidor={emailNoServidor()}

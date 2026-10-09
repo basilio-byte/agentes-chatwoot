@@ -124,6 +124,51 @@ describe("formulário", () => {
   });
 });
 
+describe("tipo de operação por momento", () => {
+  it("nasce com a última resposta do Laércio: quitação = 1, geração = 4", () => {
+    expect(padrao.emissao.tipoDeOperacao).toEqual({
+      quitacao: "supplyWithSubsequentPayment",
+      geracao: "paymentReceivedBeforeSupply",
+    });
+  });
+
+  it("config gravada só com um dos momentos completa o outro com o padrão", () => {
+    const lida = lerConfigNotasFiscais({ emissao: { tipoDeOperacao: { quitacao: "simultaneousSupplyAndPayment" } } });
+    expect(lida.emissao.tipoDeOperacao).toEqual({
+      quitacao: "simultaneousSupplyAndPayment",
+      geracao: "paymentReceivedBeforeSupply",
+    });
+  });
+
+  it("o formulário grava os dois campos", () => {
+    const lido = configDoFormulario(
+      { tipoQuitacao: "simultaneousSupplyAndPayment", tipoGeracao: "supplyWithSubsequentPayment" },
+      padrao,
+    );
+    expect("config" in lido && lido.config.emissao.tipoDeOperacao).toEqual({
+      quitacao: "simultaneousSupplyAndPayment",
+      geracao: "supplyWithSubsequentPayment",
+    });
+  });
+
+  it("⚠ valor fora das cinco opções recusa dizendo o campo — nunca vira o padrão em silêncio", () => {
+    expect(configDoFormulario({ tipoQuitacao: "qualquer-coisa" }, padrao)).toEqual({
+      erro: expect.stringContaining("nota emitida na quitação"),
+    });
+    expect(configDoFormulario({ tipoGeracao: "" }, padrao)).toEqual({
+      erro: expect.stringContaining("nota emitida na geração"),
+    });
+  });
+
+  it("⚠ formulário de versão antiga, sem os campos, NÃO volta o tipo ao padrão", () => {
+    const atual = lerConfigNotasFiscais({
+      emissao: { tipoDeOperacao: { quitacao: "simultaneousSupplyAndPayment", geracao: "supplyWithSubsequentPayment" } },
+    });
+    const lido = configDoFormulario({ inicio: "" }, atual);
+    expect("config" in lido && lido.config.emissao.tipoDeOperacao).toEqual(atual.emissao.tipoDeOperacao);
+  });
+});
+
 describe("códigos em espera", () => {
   it("nascem vazios: nada fica retido sem alguém pedir", () => {
     expect(padrao.emissao.codigosEmEspera).toEqual([]);
