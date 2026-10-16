@@ -185,6 +185,21 @@ export function classificarAnexo(bruto: AnexoBruto): Anexo | null {
     tamanhoBytes: bruto.file_size ?? null,
   };
 
+  // Vazio antes de tudo: não há o que ler, seja qual for o tipo. O WhatsApp da
+  // caixa 29 entrega cerca de um por dia (sem texto, sem extensão, 0 bytes),
+  // quando o que o cliente mandou não chega inteiro ao Chatwoot. Dito como
+  // "arquivo sem extensão", o agente pedia "outro formato, como PDF" a quem
+  // tinha escrito uma mensagem (conversa 14464, 05/10/2026). Só o zero
+  // declarado: tamanho ausente não prova nada.
+  if (bruto.file_size === 0) {
+    return {
+      ...base,
+      kind: MediaKind.UNSUPPORTED,
+      motivo:
+        "a mensagem do cliente chegou VAZIA: o WhatsApp entregou um anexo sem conteúdo (0 bytes), então o que ele escreveu ou mandou não chegou até aqui. Não é questão de formato de arquivo",
+    };
+  }
+
   // Vídeo primeiro: a extensão de vídeo colide com a de áudio (`mp4`, `webm`),
   // e transcrever um vídeo de 40 MB seria caro e provavelmente inútil.
   if (tipo === "video") {

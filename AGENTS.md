@@ -658,6 +658,12 @@ Módulo em `src/server/integrations/openai/`.
 - **Vídeo, localização e contato viram texto sem chamar modelo nenhum** — "o
   cliente enviou uma localização (-23.5, -46.6)" é contexto, não é nada. E
   `.txt`/`.csv` são lidos direto, sem modelo e sem custo.
+- ⚠ **Anexo de 0 bytes é mensagem que chegou VAZIA**, antes de qualquer tipo
+  (`file_size === 0`; tamanho ausente não conta). O WhatsApp da caixa 29 entrega
+  cerca de um por dia — sem texto, sem extensão — quando o que o cliente mandou
+  não chega inteiro ao Chatwoot (23 em setembro, 18 até 16/10). Dito como
+  "arquivo sem extensão", o agente pedia "outro formato, como PDF" a quem tinha
+  escrito (conversa 14464, chamado da Kelly). A causa está no canal, não aqui.
 - **O token do Chatwoot só vai para a origem do Chatwoot.** O `data_url` vem de
   dentro de um payload; mandar a credencial de atendimento para um host
   arbitrário porque ele apareceu num JSON é vazamento. O arquivo sobe para a

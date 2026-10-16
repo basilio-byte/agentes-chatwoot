@@ -50,6 +50,29 @@ describe("classificação de anexo", () => {
     expect(a?.motivo).toContain("amr");
   });
 
+  it("⚠ anexo de 0 bytes é mensagem que chegou VAZIA, não arquivo de outro formato (conversa 14464)", () => {
+    // O que o WhatsApp da caixa 29 entregou: sem texto, sem extensão, 0 bytes.
+    const vazio = classificarAnexo({
+      id: 60023,
+      file_type: "file",
+      data_url: "https://cw/rails/blobs/x/6093c1aa-4a27-40f3-b7b5-a381b63ed29f.",
+      file_size: 0,
+    });
+    expect(vazio?.kind).toBe(MediaKind.UNSUPPORTED);
+    expect(vazio?.motivo).toContain("chegou VAZIA");
+    expect(vazio?.motivo).not.toContain("sem extensão reconhecida");
+
+    // Vale para qualquer tipo: um áudio de 0 bytes também não tem o que ouvir.
+    expect(
+      classificarAnexo({ id: 1, file_type: "audio", data_url: "https://cw/a.ogg", file_size: 0 })?.kind,
+    ).toBe(MediaKind.UNSUPPORTED);
+
+    // Tamanho AUSENTE não é vazio: o áudio de sempre continua sendo lido.
+    expect(
+      classificarAnexo({ id: 2, file_type: "audio", data_url: "https://cw/a.ogg" })?.kind,
+    ).toBe(MediaKind.AUDIO);
+  });
+
   it("classifica vídeo como não suportado mesmo com extensão de áudio", () => {
     // `mp4` e `webm` valem para os dois. Se o vídeo caísse no ramo do áudio,
     // mandaríamos o arquivo inteiro para transcrever.
