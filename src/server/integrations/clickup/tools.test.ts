@@ -241,6 +241,44 @@ describe("buscar tarefas por telefone", () => {
     expect(r.foraDaJanela).toBe(1);
   });
 
+  it("⚠ diz se cada task ainda está em andamento — ganha, fechada ou arquivada não está (conversa 9958)", async () => {
+    stub((rota) => {
+      if (rota.includes("/field")) return { fields: [CELULAR] };
+      return {
+        tasks: [
+          // A 9958: "aguardando pagamento" com a etiqueta de venda ganha.
+          {
+            ...tarefa("t-ganha", 4, "+55 84 987654321"),
+            status: { status: "aguardando pagamento", type: "custom" },
+            tags: [{ name: "ganho" }],
+          },
+          { ...tarefa("t-fechada", 3, "+55 84 987654321"), status: { status: "complete", type: "closed" } },
+          { ...tarefa("t-arquivada", 2, "+55 84 987654321"), archived: true },
+          {
+            ...tarefa("t-aberta", 1, "+55 84 987654321"),
+            status: { status: "em qualificação", type: "custom" },
+            tags: [{ name: "venda autonoma" }],
+          },
+        ],
+      };
+    });
+
+    const r = (await tool("clickup_buscar_tarefas_por_telefone").execute(
+      { telefone: "+5584987654321", listas: ["l1"] },
+      ctx,
+    )) as { total: number; tarefas: { id: string; emAndamento: boolean }[] };
+
+    // Informa, não filtra: quem grava nota (Olho de Tudo, NPS) precisa achar a ganha.
+    expect(r.total).toBe(4);
+    const emAndamento = Object.fromEntries(r.tarefas.map((t) => [t.id, t.emAndamento]));
+    expect(emAndamento).toEqual({
+      "t-ganha": false,
+      "t-fechada": false,
+      "t-arquivada": false,
+      "t-aberta": true,
+    });
+  });
+
   it("só tasks fora da janela: nada para gravar, e o motivo aparece", async () => {
     const dia = 86_400_000;
     stub((rota) => {

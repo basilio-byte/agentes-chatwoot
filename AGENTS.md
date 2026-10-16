@@ -1132,7 +1132,11 @@ sem este gatilho ligado, marcar o checkbox não faz nada.
      marcações), inclusive a cliente avulsa que reserva toda semana. ⚠ Caso real: na 10912 o CRM Comercial criou a
      task às 09:19 e o checkbox das 13:28 tentou outra. Task de outra origem —
      feita à mão, pelo n8n, por outro agente — quem pega é o prompt, pelo
-     telefone.
+     telefone. ⚠ E o prompt só conta a que vier com `emAndamento: true`: a
+     busca por telefone diz isso em cada task, pela MESMA `aindaVale`. Até
+     16/10/2026 ela não mostrava a etiqueta, e o CRM Comercial barrou a venda
+     nova da conversa 9958 por uma task antiga "aguardando pagamento" com a
+     etiqueta `ganho` — a terceira trava, que a correção de 09/10 não alcançou.
   4. Só então lê o atendimento e chama o agente.
 - **O atendimento é o ATUAL** (`recortarAtendimentoAtual`): na conversa aberta,
   o que veio depois da última resolução até a marcação. ⚠ Na conversa já
@@ -2281,6 +2285,11 @@ Regra pura e testada em `clickup/repeticao.ts`.
   têm a etiqueta `venda autonoma` e continuam barrando); a cliente avulsa que já
   pagou e pede outra reserva pela MESMA conversa de WhatsApp é negócio novo
   (conversa 14342, 05/10/2026, chamado da Kelly no Formulário Bugs).
+  ⚠ **São TRÊS travas, e as três usam `aindaVale`:** esta, a do checkbox
+  (`conversa-marcada/vigentes.ts`) e a do prompt dos CRMs, que procura pelo
+  telefone e lê o `emAndamento` que `clickup_buscar_tarefas_por_telefone`
+  devolve em cada task (16/10/2026, conversa 9958). A busca INFORMA e não
+  filtra: o Olho de Tudo e o NPS gravam nota justamente na task ganha.
 - ⚠ **Compara pelo `listaId`**, que o retorno da criação passou a gravar em
   05/10/2026. Chamada anterior a isso não barra nada — comparar pelo nome da
   lista confundiria listas homônimas.
