@@ -13,6 +13,7 @@ import { conferirCobrancas } from "@/server/cobranca/conferir";
 import { conferirPresentes } from "@/server/aniversario/conferir";
 import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
 import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
+import { conferirAutoVendas } from "@/server/auto-venda/conferir";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -31,8 +32,9 @@ import { esperouDemais, minutosDeEspera } from "./espera";
  * reinício deixou marcadas como rodando (`execucoes/orfas.ts`), confere o saldo
  * da OpenRouter para o alerta por WhatsApp (`alerta-de-saldo/alerta.ts`), a
  * janela de 24 h do WhatsApp (`janela/conferir.ts`), as etiquetas de cobrança
- * do ClickUp (`cobranca/conferir.ts`) e os pedidos de presente de aniversário
- * (`aniversario/conferir.ts`).
+ * do ClickUp (`cobranca/conferir.ts`), os pedidos de presente de aniversário
+ * (`aniversario/conferir.ts`) e o ganho da venda autônoma paga
+ * (`auto-venda/conferir.ts`).
  */
 const INTERVALO_MS = 60_000;
 
@@ -259,6 +261,14 @@ export function iniciarVigia(): NodeJS.Timeout {
       }
     } catch (erro) {
       logger.error({ erro }, "presentes de aniversário falharam");
+    }
+
+    // Venda autônoma paga vira "ganho" no CRM Comercial. Confere de hora em hora,
+    // em horário comercial; só abre o Conexa com reserva esperando pagamento.
+    try {
+      await conferirAutoVendas();
+    } catch (erro) {
+      logger.error({ erro }, "auto venda: a conferência falhou ao iniciar");
     }
   };
 

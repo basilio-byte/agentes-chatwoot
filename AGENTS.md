@@ -1662,6 +1662,37 @@ ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
 - **Ainda é prompt, não código**: "Auto Venda" quando o próprio agente fecha e
   `CPF:`/`Sala:` no pedido do Salas ao CRM — dependem de alterar os prompts.
 
+### Venda autônoma paga vira "ganho" no CRM Comercial
+
+Pedido do Diego (task "Ajustes Auto Venda", 16/10/2026): *"Dar ganho (quando
+houver pagamento) para as vendas de auto venda"*. A equipe marca o ganho das
+vendas dela à mão; a que o agente fechou sozinho ficava sem ninguém para marcar.
+Regras puras e testadas em `auto-venda/regras.ts`; a rodada em
+`auto-venda/conferir.ts`, no vigia, de hora em hora e em horário comercial.
+
+- **A venda é a reserva que um agente criou numa conversa** (`ToolCall` de
+  `conexa_criar_reserva` com `criada: true`, 60 dias para trás). A task é a do
+  CRM Comercial que a MESMA conversa criou, recebeu da barreira de task em dobro
+  (`jaExistia`) ou passou para Auto Venda — a mais próxima no tempo, até 24 h de
+  distância. A conversa pode ter task no CRM de Atendimentos também: a rodada lê
+  as candidatas até achar a da lista certa.
+- **Pago é o `status: paid` da RESERVA no Conexa**, e a data vem da cobrança
+  (`paymentDate`): a que o agente gerou ou, se a equipe faturou, a cobrança paga
+  do cliente que contém a venda da reserva. Pago em parte espera; pacote de
+  horas e cancelada saem da fila sem ganho.
+- **O que escreve:** etiqueta `ganho`, "Data ganho" (só se estiver vazia) e um
+  comentário com reserva, cobrança, valor e data. **O status não muda** — as
+  ganhas da equipe ficam em "aguardando pagamento".
+- **Só VENDEDOR "Auto Venda"**, relido a cada rodada: a task antiga que a equipe
+  corrigir para Auto Venda entra sozinha. Task já ganha sai da fila sem escrita.
+- **Cada reserva sai da fila uma vez** (`WebhookEvent`, provider `AUTO_VENDA`,
+  `reserva:<id>`, "ganho" ou "encerrado" com o motivo). Reserva antes de
+  escrever; etiqueta que não entrou desfaz a reserva. Sem pagamento 45 dias
+  depois do horário da reserva, sai da fila.
+- **Só abre o Conexa com reserva esperando pagamento**, e o ClickUp só com
+  reserva paga. ClickUp ou Conexa desligado no painel vale para a rodada também.
+- Só reserva por enquanto: a venda de Endereço Fiscal (contrato) não passa por aqui.
+
 ### Notas fiscais (Spedy): modo sombra primeiro
 
 Integração `NOTAS_FISCAIS`, fora do registry como o NPS e a cobrança: sem
