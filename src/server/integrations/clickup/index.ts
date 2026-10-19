@@ -1,6 +1,11 @@
-import { espelharTaskNoContato } from "@/server/contato/espelho";
+import { atributosDoContatoDaConversa, espelharTaskNoContato } from "@/server/contato/espelho";
 import { fatosDoClienteDaConversa } from "@/server/contato/fatos";
-import { camposComOsFatos, camposVaziosParaPreencher, LISTAS_DO_CRM } from "@/server/contato/regras";
+import {
+  camposComOsFatos,
+  camposDoContatoQueFaltam,
+  camposVaziosParaPreencher,
+  LISTAS_DO_CRM,
+} from "@/server/contato/regras";
 import { z } from "zod";
 import { IntegrationProvider, MediaKind, RunSource, RunStatus } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
@@ -365,14 +370,23 @@ export const clickupIntegration: IntegrationDefinition = {
 
         // Resolve nome → id antes de criar. Se algum campo não casar, não cria:
         // tarefa órfã com metade dos dados é pior do que pedir a correção.
-        // Na lista do CRM, o que o sistema já sabe do cliente (Conexa, reserva)
-        // preenche o que o agente deixou em branco — só campo que existe na lista,
-        // só o vazio, e cada fato é validado sozinho: um campo ruim não impede a task.
+        // Na lista do CRM, o que o sistema já sabe do cliente (Conexa, reserva e,
+        // depois, o contato do Chatwoot) preenche o que o agente deixou em branco —
+        // só campo que existe na lista, só o vazio, e cada fato é validado
+        // sozinho: um campo ruim não impede a task.
         const doCrm = LISTAS_DO_CRM.includes(listaId) && !!ctx.conversationId;
-        const fatos = doCrm ? await fatosDoClienteDaConversa(ctx.conversationId) : {};
+        const [fatos, doContato] = doCrm
+          ? await Promise.all([
+              fatosDoClienteDaConversa(ctx.conversationId),
+              atributosDoContatoDaConversa(ctx),
+            ])
+          : [{}, {}];
 
         let custom_fields: { id: string; value: unknown }[] | undefined;
-        if (args.camposPersonalizados?.length || (doCrm && Object.keys(fatos).length)) {
+        if (
+          args.camposPersonalizados?.length ||
+          (doCrm && (Object.keys(fatos).length || Object.keys(doContato).length))
+        ) {
           const { fields } = await cliente.listarCamposPersonalizados(listaId);
           const { prontos, problemas } = prepararCampos(
             args.camposPersonalizados ?? [],
@@ -393,6 +407,14 @@ export const clickupIntegration: IntegrationDefinition = {
               (args.camposPersonalizados ?? []).map((c) => [c.campo, c.valor]),
             );
             for (const extra of camposVaziosParaPreencher(fatos, fields, dados)) {
+              const um = prepararCampos([extra], fields);
+              if (um.problemas.length === 0) {
+                custom_fields.push(...um.prontos);
+                dados[extra.campo] = extra.valor;
+              }
+            }
+            // O contato vem por último: o agente e o Conexa valem mais.
+            for (const extra of camposDoContatoQueFaltam(doContato, fields, dados)) {
               const um = prepararCampos([extra], fields);
               if (um.problemas.length === 0) custom_fields.push(...um.prontos);
             }

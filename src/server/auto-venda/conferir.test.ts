@@ -26,10 +26,15 @@ let tarefas: Record<string, Record<string, unknown>> = {};
 let escritas: string[] = [];
 let conexaAberto = 0;
 let falhaNaEtiqueta = false;
+let doContato: Record<string, unknown> = {};
+let camposExtras: Array<Record<string, unknown>> = [];
 
 vi.mock("@/lib/db", () => ({
   db: {
     toolCall: { findMany: async () => chamadasDoBanco },
+    conversation: {
+      findUnique: async () => ({ chatwootConversationId: 14592, portaAgentId: "porta", agentId: null }),
+    },
     webhookEvent: {
       findMany: async ({ where }: { where: { externalId: { in: string[] } } }) =>
         eventos.filter((e) => where.externalId.in.includes(e.externalId)),
@@ -51,6 +56,10 @@ vi.mock("@/lib/db", () => ({
       },
     },
   },
+}));
+
+vi.mock("@/server/contato/espelho", () => ({
+  atributosDoContatoDaConversa: async () => doContato,
 }));
 
 vi.mock("@/server/integrations/conexa/sistema", () => ({
@@ -79,6 +88,7 @@ vi.mock("@/server/integrations/clickup/sistema", () => ({
             type_config: { options: [{ id: "op-alan", name: "Alan", orderindex: 0 }, { id: "op-auto", name: "Auto Venda", orderindex: 4 }] },
           },
           { id: "dg", name: "Data ganho", type: "date" },
+          ...camposExtras,
         ],
       }),
     },
@@ -127,6 +137,8 @@ beforeEach(() => {
   escritas = [];
   conexaAberto = 0;
   falhaNaEtiqueta = false;
+  doContato = {};
+  camposExtras = [];
 });
 
 const rodar = () => conferirAutoVendas(AGORA, { esperar: true });
@@ -250,5 +262,36 @@ describe("conferirAutoVendas", () => {
   it("fora do horário comercial não roda", async () => {
     const sabado = new Date("2026-10-17T13:00:00Z");
     expect(await conferirAutoVendas(sabado)).toEqual({ acao: "fora do horário" });
+  });
+});
+
+describe("os campos que o ganho preenche", () => {
+  it("Status CRM, valor pago e o canal do contato; opção que não existe fica de fora sozinha", async () => {
+    camposExtras = [
+      {
+        id: "st",
+        name: "Status CRM",
+        type: "drop_down",
+        type_config: { options: [{ id: "g", name: "Ganho", orderindex: 1 }, { id: "a", name: "Em andamento", orderindex: 2 }] },
+      },
+      { id: "v", name: "VALOR CONTRATO", type: "currency" },
+      { id: "c", name: "CANAL", type: "drop_down", type_config: { options: [{ id: "rs", name: "Redes sociais", orderindex: 7 }] } },
+      { id: "r", name: "RAMO DE ATIVIDADE", type: "drop_down", type_config: { options: [{ id: "f", name: "Finaceiro", orderindex: 0 }] } },
+    ];
+    doContato = { canal: "Redes sociais", ramo_de_atividade: "Financeiro" };
+    vendaAutonoma(29181, "t1");
+    reservas[29181] = { status: "paid" };
+    cobrancas[31735] = { chargeId: 31735, status: "paid", paymentDate: "2026-10-15", paidAmount: 140 };
+    tarefaAutoVenda("t1");
+
+    expect(await rodar()).toMatchObject({ ganhos: 1 });
+    const campos = JSON.parse(escritas[1].slice(escritas[1].indexOf(":") + 1)).campos;
+    expect(campos).toEqual([
+      { campo: "Status CRM", valor: "Ganho" },
+      { campo: "Data ganho", valor: "2026-10-15" },
+      { campo: "VALOR CONTRATO", valor: 140 },
+      { campo: "CANAL", valor: "Redes sociais" },
+    ]);
+    expect(escritas[2]).toContain("Campos preenchidos: Status CRM, Data ganho, VALOR CONTRATO, CANAL.");
   });
 });

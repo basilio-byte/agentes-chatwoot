@@ -62,6 +62,30 @@ export async function espelharTaskNoContato(args: {
   }
 }
 
+/**
+ * Os atributos do contato desta conversa no Chatwoot — o que a equipe já
+ * preencheu (canal, qualificação, responsável…) e vai para a task do CRM.
+ * Nunca lança: sem leitura, a task segue sem eles.
+ */
+export async function atributosDoContatoDaConversa(
+  ctx: Pick<ToolContext, "chatwootConversationId" | "canalAgentId" | "agentId">,
+): Promise<Record<string, unknown>> {
+  try {
+    if (!ctx.chatwootConversationId) return {};
+    const cliente = await clienteDoAgente(ctx.canalAgentId ?? ctx.agentId);
+    if (!cliente) return {};
+    const conversa = await cliente.obterConversa(ctx.chatwootConversationId);
+    if (!conversa.contactId) return {};
+    return (await cliente.obterContato(conversa.contactId)).atributos;
+  } catch (erro) {
+    logger.warn(
+      { erro: erro instanceof Error ? erro.message.slice(0, 200) : String(erro) },
+      "task do CRM: atributos do contato não lidos",
+    );
+    return {};
+  }
+}
+
 async function definicoesDosAtributos(
   ler: () => Promise<DefinicaoDeAtributo[]>,
   agora = Date.now(),

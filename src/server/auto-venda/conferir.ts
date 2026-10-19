@@ -2,13 +2,15 @@ import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { diaEmSaoPaulo } from "@/lib/tempo";
 import { dentroDoHorario } from "@/server/cobranca/regras";
+import { atributosDoContatoDaConversa } from "@/server/contato/espelho";
 import { ClickUpApiError } from "@/server/integrations/clickup/client";
+import { prepararCampos } from "@/server/integrations/clickup/campos";
 import { abrirClickUp, type ClickUpDoSistema } from "@/server/integrations/clickup/sistema";
 import type { ClickUpCampoPersonalizado } from "@/server/integrations/clickup/tipos";
 import { ConexaApiError } from "@/server/integrations/conexa/client";
 import { abrirConexa, type ConexaDoSistema } from "@/server/integrations/conexa/sistema";
 import {
-  CAMPO_DATA_GANHO,
+  camposDoGanho,
   chaveDaReserva,
   cobrancaDaVenda,
   comentarioDoGanho,
@@ -207,7 +209,15 @@ async function rodar(agora: Date): Promise<RodadaDeAutoVenda> {
       }
 
       const pagamento = await pagamentoDaReserva(conexa, reserva, bruta);
-      const resultado = await darGanho({ clickup, reserva, tarefaId: achada.id, estado: achada.estado, pagamento, agora });
+      const resultado = await darGanho({
+        clickup,
+        reserva,
+        tarefaId: achada.id,
+        estado: achada.estado,
+        campos: achada.campos,
+        pagamento,
+        agora,
+      });
       if (resultado === "ganho") rodada.ganhos! += 1;
       else if (resultado === "falhou") rodada.falhas! += 1;
     } catch (erro) {
@@ -268,7 +278,7 @@ async function tarefaDoCrm(
   clickup: ClickUpDoSistema,
   candidatas: string[],
   camposDaLista: Map<string, ClickUpCampoPersonalizado[]>,
-): Promise<{ id: string; estado: EstadoDaTarefa } | null> {
+): Promise<{ id: string; estado: EstadoDaTarefa; campos: ClickUpCampoPersonalizado[] } | null> {
   for (const id of candidatas) {
     let tarefa;
     try {
@@ -286,7 +296,7 @@ async function tarefaDoCrm(
       camposDaLista.set(listaId, campos);
     }
     const estado = estadoDaTarefa(tarefa, campos);
-    if (estado.noCrmComercial && !estado.arquivada) return { id, estado };
+    if (estado.noCrmComercial && !estado.arquivada) return { id, estado, campos };
   }
   return null;
 }
@@ -331,6 +341,7 @@ async function darGanho(args: {
   reserva: ReservaDoAgente;
   tarefaId: string;
   estado: EstadoDaTarefa;
+  campos: ClickUpCampoPersonalizado[];
   pagamento: Pagamento | null;
   agora: Date;
 }): Promise<"ganho" | "falhou" | "outra rodada"> {
@@ -366,21 +377,31 @@ async function darGanho(args: {
   }
 
   const problemas: string[] = [];
-  if (!args.estado.dataGanhoPreenchida) {
+  // Cada campo é validado sozinho antes: no lote da ferramenta, um campo ruim
+  // abortaria todos — e um valor do contato fora das opções não pode custar o
+  // Status CRM.
+  const desejados = camposDoGanho({
+    campos: args.campos,
+    valores: args.estado.valores,
+    pagamento,
+    dataGanho,
+    doContato: await atributosDoContatoDaReserva(reserva),
+  });
+  const validos = desejados.filter((c) => prepararCampos([c], args.campos).problemas.length === 0);
+  let preenchidos: string[] = [];
+  if (validos.length) {
     try {
-      const r = await clickup.executar("clickup_definir_campo_personalizado", {
-        tarefaId,
-        campos: [{ campo: CAMPO_DATA_GANHO, valor: dataGanho }],
-      });
-      if (r && typeof r === "object" && "erro" in r) problemas.push(`"${CAMPO_DATA_GANHO}" não preenchida`);
+      const r = await clickup.executar("clickup_definir_campo_personalizado", { tarefaId, campos: validos });
+      if (r && typeof r === "object" && "erro" in r) problemas.push("campos não preenchidos");
+      else preenchidos = validos.map((c) => c.campo);
     } catch (erro) {
-      problemas.push(`"${CAMPO_DATA_GANHO}" não preenchida: ${mensagem(erro)}`);
+      problemas.push(`campos não preenchidos: ${mensagem(erro)}`);
     }
   }
   try {
     await clickup.executar("clickup_comentar_tarefa", {
       tarefaId,
-      texto: comentarioDoGanho({ reservaId: reserva.reservaId, pagamento, dataGanho }),
+      texto: comentarioDoGanho({ reservaId: reserva.reservaId, pagamento, dataGanho, preenchidos }),
     });
   } catch (erro) {
     problemas.push(`comentário não publicado: ${mensagem(erro)}`);
@@ -391,6 +412,7 @@ async function darGanho(args: {
     (pagamento
       ? `cobrança ${pagamento.cobrancaId}${pagamento.pagaEm ? ` paga em ${pagamento.pagaEm}` : ""}`
       : "cobrança não lida") +
+    (preenchidos.length ? ` · ${preenchidos.join(", ")}` : "") +
     (problemas.length ? ` · ${problemas.join("; ")}` : "");
   await db.webhookEvent.update({
     where: { id: linhaId },
@@ -398,6 +420,26 @@ async function darGanho(args: {
   });
   logger.info({ reserva: reserva.reservaId, tarefa: tarefaId, detalhe }, "auto venda: ganho dado");
   return "ganho";
+}
+
+/** O contato do Chatwoot da conversa da reserva. Nunca lança: sem leitura, nada. */
+async function atributosDoContatoDaReserva(reserva: ReservaDoAgente): Promise<Record<string, unknown>> {
+  try {
+    const conversa = await db.conversation.findUnique({
+      where: { id: reserva.conversaId },
+      select: { chatwootConversationId: true, portaAgentId: true, agentId: true },
+    });
+    const agenteId = conversa?.portaAgentId ?? conversa?.agentId;
+    if (!conversa || !agenteId) return {};
+    return await atributosDoContatoDaConversa({
+      chatwootConversationId: conversa.chatwootConversationId,
+      canalAgentId: agenteId,
+      agentId: agenteId,
+    });
+  } catch (erro) {
+    logger.warn({ reserva: reserva.reservaId, erro: mensagem(erro) }, "auto venda: contato não lido");
+    return {};
+  }
 }
 
 async function encerrar(

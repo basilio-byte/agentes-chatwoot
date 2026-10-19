@@ -135,6 +135,63 @@ export function camposComOsFatos(
 }
 
 /**
+ * O caminho de volta: atributo do CONTATO no Chatwoot → campo da task do CRM.
+ *
+ * Pedido do Diego (19/10/2026): Canal, Qualificação, Responsável e outros que a
+ * equipe preenche no contato não chegavam à task. Os atributos do contato
+ * espelham os campos do CRM, um a um.
+ *
+ * ⚠ **Só o que é da PESSOA, nunca o que é do NEGÓCIO.** Tipo de produto,
+ * categoria, espaço, valor, faturamento, início e vencimento de contrato também
+ * moram no contato, mas são do último negócio — copiá-los para a task de hoje
+ * poria a venda de agosto na reserva de outubro.
+ */
+export const DO_CONTATO_PARA_A_TASK: { chave: string; campo: string; documento?: 11 | 14 }[] = [
+  { chave: "canal", campo: "CANAL" },
+  { chave: "qualificao", campo: "Qualificação" },
+  { chave: "responsvel", campo: "RESPONSÁVEL" },
+  { chave: "ramo_de_atividade", campo: "RAMO DE ATIVIDADE" },
+  { chave: "estado_civil", campo: "Estado Civil" },
+  { chave: "contador", campo: "CONTADOR" },
+  { chave: "nome_do_parceiro", campo: "NOME DO PARCEIRO" },
+  { chave: "sede_da_empresa", campo: "Sede da Empresa" },
+  { chave: "link_conexa", campo: "CONEXA LINK" },
+  { chave: "nome_completo", campo: "NOME CLIENTE" },
+  { chave: "email", campo: "E-mail" },
+  { chave: "cpf", campo: "CPF", documento: 11 },
+  { chave: "cnpj", campo: "CNPJ [CADASTRO]", documento: 14 },
+];
+
+/**
+ * Campos da task que estão VAZIOS e que o contato preenche, no nome do campo da
+ * lista. Quem valida a opção de lista e o número é `prepararCampos`, campo a
+ * campo, do lado de quem grava: um valor que não casa fica de fora sozinho.
+ */
+export function camposDoContatoQueFaltam(
+  atributos: Record<string, unknown>,
+  camposDaLista: { name?: string }[],
+  valoresAtuais: Record<string, unknown>,
+): { campo: string; valor: string }[] {
+  const saida: { campo: string; valor: string }[] = [];
+  for (const { chave, campo, documento } of DO_CONTATO_PARA_A_TASK) {
+    const bruto = atributos[chave];
+    if (vazio(bruto) || typeof bruto === "object" || typeof bruto === "boolean") continue;
+    let valor = String(bruto).trim();
+    if (documento) {
+      // Número no Chatwoot perde o zero à esquerda: só vale com os dígitos todos.
+      valor = valor.replace(/\D/g, "");
+      if (valor.length !== documento) continue;
+    }
+    const existente = camposDaLista.find((c) => normalizar(c.name ?? "") === normalizar(campo));
+    if (!existente?.name) continue;
+    const atual = Object.entries(valoresAtuais).find(([nome]) => normalizar(nome) === normalizar(existente.name!));
+    if (atual && !vazio(atual[1])) continue;
+    saida.push({ campo: existente.name, valor: valor.slice(0, 500) });
+  }
+  return saida;
+}
+
+/**
  * Campos da task que estão VAZIOS e que os fatos preenchem. Só campo que existe
  * na lista, só o que está em branco, nunca sobrescreve o que a equipe escreveu.
  */

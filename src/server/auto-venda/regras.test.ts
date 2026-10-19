@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ClickUpCampoPersonalizado, ClickUpTarefa } from "@/server/integrations/clickup/tipos";
 import {
+  camposDoGanho,
   cobrancaDaVenda,
   comentarioDoGanho,
   decidirTarefa,
@@ -125,7 +126,7 @@ describe("estado e decisão da task", () => {
 
   it("Auto Venda sem ganho no CRM Comercial: dar ganho", () => {
     const estado = estadoDaTarefa(tarefa({ custom_fields: [{ id: "vend", value: 4 }] }), [VENDEDOR, DATA_GANHO]);
-    expect(estado).toMatchObject({ autoVenda: true, ganha: false, dataGanhoPreenchida: false });
+    expect(estado).toMatchObject({ autoVenda: true, ganha: false, valores: { "Data ganho": undefined } });
     expect(decidirTarefa(estado)).toEqual({ acao: "dar ganho" });
   });
 
@@ -134,7 +135,7 @@ describe("estado e decisão da task", () => {
       tarefa({ tags: [{ name: " Ganho " }], custom_fields: [{ id: "vend", value: 4 }, { id: "dg", value: "1791000000000" }] }),
       [VENDEDOR, DATA_GANHO],
     );
-    expect(estado.dataGanhoPreenchida).toBe(true);
+    expect(estado.valores["Data ganho"]).toBe("1791000000000");
     expect(decidirTarefa(estado).acao).toBe("encerrar");
   });
 
@@ -177,5 +178,52 @@ describe("pagamento", () => {
     expect(comentarioDoGanho({ reservaId: 1, pagamento: null, dataGanho: "2026-10-16" })).toContain(
       "vista como paga em 16/10/2026 (a data do pagamento não veio do Conexa)",
     );
+  });
+});
+
+describe("camposDoGanho", () => {
+  const STATUS: ClickUpCampoPersonalizado = {
+    id: "st",
+    name: "Status CRM",
+    type: "drop_down",
+    type_config: { options: [{ id: "p", name: "Perdido", orderindex: 0 }, { id: "g", name: "Ganho", orderindex: 1 }, { id: "a", name: "Em andamento", orderindex: 2 }] as never },
+  };
+  const VALOR: ClickUpCampoPersonalizado = { id: "v", name: "VALOR CONTRATO", type: "currency" };
+  const CANAL: ClickUpCampoPersonalizado = { id: "c", name: "CANAL", type: "drop_down" };
+  const QUALIFICACAO: ClickUpCampoPersonalizado = { id: "q", name: "Qualificação", type: "emoji" };
+  const campos = [VENDEDOR, DATA_GANHO, STATUS, VALOR, CANAL, QUALIFICACAO];
+  const pagamento = { cobrancaId: 1, pagaEm: "2026-10-15", valor: 140 };
+
+  it("task vazia: Status CRM Ganho, data, valor pago e o que o contato tem", () => {
+    expect(
+      camposDoGanho({
+        campos,
+        valores: { "Status CRM": 2 },
+        pagamento,
+        dataGanho: "2026-10-15",
+        doContato: { canal: "Redes sociais", qualificao: "5", tipo_de_produto_novo: "Sala Privativa " },
+      }),
+    ).toEqual([
+      { campo: "Status CRM", valor: "Ganho" },
+      { campo: "Data ganho", valor: "2026-10-15" },
+      { campo: "VALOR CONTRATO", valor: 140 },
+      { campo: "CANAL", valor: "Redes sociais" },
+      { campo: "Qualificação", valor: "5" },
+    ]);
+  });
+
+  it("não troca o que já está preenchido, nem Perdido nem Ganho", () => {
+    expect(
+      camposDoGanho({
+        campos,
+        valores: { "Status CRM": 0, "Data ganho": "1790000000000", "VALOR CONTRATO": 200, CANAL: 3 },
+        pagamento,
+        dataGanho: "2026-10-15",
+        doContato: { canal: "Site" },
+      }),
+    ).toEqual([]);
+    expect(
+      camposDoGanho({ campos, valores: { "Status CRM": "g" }, pagamento: null, dataGanho: "2026-10-16", doContato: {} }),
+    ).toEqual([{ campo: "Data ganho", valor: "2026-10-16" }]);
   });
 });

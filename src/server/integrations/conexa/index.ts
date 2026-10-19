@@ -15,6 +15,7 @@ import {
 } from "./entrada";
 import { conferirHorario, instanteEmSaoPaulo } from "./agenda";
 import { escolherSolicitante, pessoaDaApi } from "./solicitante";
+import { cadastroExistente } from "./duplicidade";
 import { acharCobrancaDaVenda, situacaoDeFaturamento } from "./faturamento";
 import {
   exigenciaDeIdentidade,
@@ -320,7 +321,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_criar_cliente",
       categoria: "Clientes",
       description:
-        "Cadastra um cliente novo no ERP. Use só depois de conferir com conexa_buscar_cliente que ele ainda não existe — cadastro duplicado bagunça cobrança e contrato.",
+        "Cadastra um cliente novo no ERP. Use só depois de conferir com conexa_buscar_cliente que ele ainda não existe — cadastro duplicado bagunça cobrança e contrato. Se o CPF ou CNPJ já tiver cadastro na unidade, não cria outro: devolve o clienteId que já existe.",
       requiresConfirmation: true,
       inputSchema: z.object({
         nome: z
@@ -350,6 +351,35 @@ export const conexaIntegration: IntegrationDefinition = {
           telefone: args.telefone,
         });
         if ("erro" in montado) return montado;
+
+        // A trava contra o cadastro em dobro é do código (`duplicidade.ts`): o
+        // modelo não vê, no turno seguinte, que já cadastrou.
+        const cpf = args.cpf?.replace(/\D/g, "") || undefined;
+        const cnpj = args.cnpj?.replace(/\D/g, "") || undefined;
+        let existentes: Array<Record<string, unknown>>;
+        try {
+          ({ itens: existentes } = await cliente.buscarClientes(
+            cpf ? { cpf, limit: 50 } : { cnpj, limit: 50 },
+          ));
+        } catch {
+          return {
+            criado: false,
+            erro: "Não consegui conferir se este CPF/CNPJ já tem cadastro, então não cadastrei — para não duplicar.",
+            comoSeguir: "Procure com conexa_buscar_cliente pelo documento; se não achar, tente cadastrar de novo.",
+          };
+        }
+        const existente = cadastroExistente(existentes, unidade.companyId);
+        if (existente) {
+          return {
+            criado: false,
+            jaExistia: true,
+            clienteId: existente.id,
+            ...(existente.ativo ? {} : { inativo: true }),
+            observacao: existente.ativo
+              ? "Este CPF/CNPJ já tem cadastro nesta unidade: use este clienteId e NÃO cadastre de novo."
+              : "Este CPF/CNPJ já tem cadastro nesta unidade, mas está INATIVO: não cadastre de novo; passe para a equipe reativar.",
+          };
+        }
 
         let id: number;
         try {

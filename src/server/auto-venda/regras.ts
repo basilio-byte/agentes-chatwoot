@@ -1,3 +1,4 @@
+import { camposDoContatoQueFaltam } from "@/server/contato/regras";
 import { ETIQUETA_DE_VENDA_GANHA } from "@/server/integrations/clickup/repeticao";
 import type {
   ClickUpCampoPersonalizado,
@@ -200,20 +201,19 @@ export type EstadoDaTarefa = {
   arquivada: boolean;
   ganha: boolean;
   autoVenda: boolean;
-  dataGanhoPreenchida: boolean;
+  /** O valor de cada campo da task, pelo NOME do campo na lista. */
+  valores: Record<string, unknown>;
 };
 
 export function estadoDaTarefa(
   tarefa: ClickUpTarefa,
   campos: ClickUpCampoPersonalizado[],
 ): EstadoDaTarefa {
-  const porNome = (nome: string) =>
-    campos.find((c) => comparavel(c.name) === comparavel(nome));
-  const valor = (campo: ClickUpCampoPersonalizado | undefined) =>
-    campo ? tarefa.custom_fields?.find((v) => v.id === campo.id)?.value : undefined;
-
-  const vendedor = porNome(CAMPO_VENDEDOR);
-  const dataGanho = valor(porNome(CAMPO_DATA_GANHO));
+  const valores: Record<string, unknown> = {};
+  for (const campo of campos) {
+    valores[campo.name] = tarefa.custom_fields?.find((v) => v.id === campo.id)?.value;
+  }
+  const vendedor = porNome(campos, CAMPO_VENDEDOR);
   return {
     noCrmComercial: tarefa.list?.id === LISTA_CRM_COMERCIAL,
     arquivada: tarefa.archived === true,
@@ -221,9 +221,64 @@ export function estadoDaTarefa(
       (t) => comparavel(t.name) === comparavel(ETIQUETA_DE_VENDA_GANHA),
     ),
     autoVenda:
-      comparavel(opcaoEscolhida(vendedor, valor(vendedor))) === comparavel(VENDEDOR_AUTO_VENDA),
-    dataGanhoPreenchida: dataGanho !== undefined && dataGanho !== null && dataGanho !== "",
+      comparavel(opcaoEscolhida(vendedor, vendedor ? valores[vendedor.name] : undefined)) ===
+      comparavel(VENDEDOR_AUTO_VENDA),
+    valores,
   };
+}
+
+export const CAMPO_STATUS_CRM = "Status CRM";
+export const STATUS_GANHO = "Ganho";
+export const CAMPO_VALOR = "VALOR CONTRATO";
+
+/**
+ * O que o ganho escreve nos campos, além da etiqueta (pedido do Diego,
+ * 19/10/2026: a task ficava "ganha" com Status CRM e valor em branco).
+ *
+ * - **Status CRM vira Ganho**, salvo se já for Ganho ou se a equipe marcou
+ *   Perdido — pagamento numa venda dada como perdida é para uma pessoa olhar.
+ * - **Data ganho e VALOR CONTRATO só se estiverem vazios**: o que a equipe ou o
+ *   CRM já escreveu vale mais. O valor é o PAGO.
+ * - **O contato do Chatwoot completa o resto** (canal, qualificação,
+ *   responsável…), também só o vazio — `camposDoContatoQueFaltam`.
+ */
+export function camposDoGanho(args: {
+  campos: ClickUpCampoPersonalizado[];
+  valores: Record<string, unknown>;
+  pagamento: Pagamento | null;
+  dataGanho: string;
+  doContato: Record<string, unknown>;
+}): { campo: string; valor: string | number }[] {
+  const { campos, valores } = args;
+  const saida: { campo: string; valor: string | number }[] = [];
+  const vazio = (nome: string) => {
+    const v = valores[nome];
+    return v === undefined || v === null || v === "";
+  };
+
+  const status = porNome(campos, CAMPO_STATUS_CRM);
+  if (status) {
+    const atual = comparavel(opcaoEscolhida(status, valores[status.name]));
+    if (atual !== comparavel(STATUS_GANHO) && atual !== "perdido") {
+      saida.push({ campo: status.name, valor: STATUS_GANHO });
+    }
+  }
+  const data = porNome(campos, CAMPO_DATA_GANHO);
+  if (data && vazio(data.name)) saida.push({ campo: data.name, valor: args.dataGanho });
+  const valor = porNome(campos, CAMPO_VALOR);
+  if (valor && vazio(valor.name) && args.pagamento?.valor) {
+    saida.push({ campo: valor.name, valor: args.pagamento.valor });
+  }
+
+  const jaVao = new Set(saida.map((s) => s.campo));
+  for (const extra of camposDoContatoQueFaltam(args.doContato, campos, valores)) {
+    if (!jaVao.has(extra.campo)) saida.push(extra);
+  }
+  return saida;
+}
+
+function porNome(campos: ClickUpCampoPersonalizado[], nome: string) {
+  return campos.find((c) => comparavel(c.name) === comparavel(nome));
 }
 
 export type Decisao =
@@ -274,6 +329,8 @@ export function comentarioDoGanho(args: {
   reservaId: number;
   pagamento: Pagamento | null;
   dataGanho: string;
+  /** Os campos que a rodada preencheu, pelo nome. */
+  preenchidos?: string[];
 }): string {
   const { pagamento } = args;
   const valor =
@@ -284,9 +341,10 @@ export function comentarioDoGanho(args: {
   const data = pagamento?.pagaEm
     ? `paga em ${dataBr(pagamento.pagaEm)}`
     : `vista como paga em ${dataBr(args.dataGanho)} (a data do pagamento não veio do Conexa)`;
+  const campos = args.preenchidos?.length ? ` Campos preenchidos: ${args.preenchidos.join(", ")}.` : "";
   return (
     `🤖 Venda autônoma paga no Conexa: reserva ${args.reservaId}${cobranca}, ${data}. ` +
-    `Etiqueta "${ETIQUETA_DE_VENDA_GANHA}" aplicada pelo sistema.`
+    `Etiqueta "${ETIQUETA_DE_VENDA_GANHA}" aplicada pelo sistema.${campos}`
   );
 }
 

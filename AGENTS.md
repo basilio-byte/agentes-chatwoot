@@ -1661,6 +1661,14 @@ ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
   log, e a nota interna (pelo robô da caixa) só sai quando algo mudou ou deu erro.
 - **Ainda é prompt, não código**: "Auto Venda" quando o próprio agente fecha e
   `CPF:`/`Sala:` no pedido do Salas ao CRM — dependem de alterar os prompts.
+- **O caminho de volta, contato → task** (`DO_CONTATO_PARA_A_TASK`, pedido do
+  Diego em 19/10/2026): canal, qualificação, responsável, ramo, contador e os
+  outros atributos que a equipe preenche no contato do Chatwoot entram nos campos
+  VAZIOS da task, depois do agente e do Conexa (que valem mais). ⚠ **Só o que é
+  da PESSOA**: produto, categoria, espaço, valor, faturamento e datas de contrato
+  também moram no contato, mas são do último negócio — copiados, poriam a venda
+  de agosto na reserva de outubro. Opção de lista que não existe na task (o
+  "Financeiro" do contato é "Finaceiro" no ClickUp) fica de fora sozinha.
 
 ### Venda autônoma paga vira "ganho" no CRM Comercial
 
@@ -1680,9 +1688,14 @@ Regras puras e testadas em `auto-venda/regras.ts`; a rodada em
   (`paymentDate`): a que o agente gerou ou, se a equipe faturou, a cobrança paga
   do cliente que contém a venda da reserva. Pago em parte espera; pacote de
   horas e cancelada saem da fila sem ganho.
-- **O que escreve:** etiqueta `ganho`, "Data ganho" (só se estiver vazia) e um
-  comentário com reserva, cobrança, valor e data. **O status não muda** — as
-  ganhas da equipe ficam em "aguardando pagamento".
+- **O que escreve:** etiqueta `ganho`; o campo **Status CRM = Ganho** (salvo se
+  a equipe marcou Perdido); "Data ganho" e **VALOR CONTRATO** (o pago) só se
+  estiverem vazios; os campos que o contato do Chatwoot completa (ver "Cadastro
+  completo"); e um comentário com reserva, cobrança, valor, data e os campos
+  preenchidos. Cada campo é validado sozinho antes do lote — um valor ruim não
+  custa os outros. **O status da task não muda** — as ganhas da equipe ficam em
+  "aguardando pagamento". Status CRM e valor entraram em 19/10/2026, a pedido do
+  Diego.
 - **Só VENDEDOR "Auto Venda"**, relido a cada rodada: a task antiga que a equipe
   corrigir para Auto Venda entra sozinha. Task já ganha sai da fila sem escrita.
 - **Cada reserva sai da fila uma vez** (`WebhookEvent`, provider `AUTO_VENDA`,
@@ -2188,6 +2201,14 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
     encerrada, marcada e parada recusam — não agem em nome de ninguém.
   - O que isto NÃO é: autenticação. CPF não é segredo; a régua passou de
     "saber o nome" para "saber o documento", que é a que o usuário escolheu.
+- ⚠ **`conexa_criar_cliente` não cadastra CPF/CNPJ que já tem cadastro na
+  unidade** (`conexa/duplicidade.ts`, 19/10/2026): procura pelo documento antes
+  e devolve o `clienteId` existente (`jaExistia`). Aconteceu três vezes, sempre
+  igual — o agente de Salas cadastrava num turno e de novo no turno seguinte da
+  mesma conversa, e a reserva caía no segundo cadastro (5932/5933, 5945/5946,
+  5976/5977). A descrição já mandava procurar antes; instrução o modelo pula.
+  Unidade é empresa: cadastro na OUTRA unidade não barra. Sem conseguir conferir,
+  não cadastra. A busca por CPF aceita só os dígitos (conferido na API real).
 - ⚠ **`emailsMessage` e `phones` são substituídos inteiros no PATCH** — quarta
   aparição do campo de terceiro que apaga ao escrever. `atualizar_cliente` lê,
   acrescenta e grava.

@@ -422,8 +422,10 @@ describe("conexa_criar_reserva", () => {
 });
 
 describe("clientes", () => {
+  const semCadastro = { data: [], pagination: { hasNext: false } };
+
   it("criar manda documento e contato onde a documentação pede", async () => {
-    responder(() => ({ corpo: { id: 6001 } }));
+    responder(({ metodo }) => (metodo === "GET" ? { corpo: semCadastro } : { corpo: { id: 6001 } }));
 
     const r = await tool("conexa_criar_cliente").execute(
       {
@@ -436,7 +438,8 @@ describe("clientes", () => {
     );
 
     expect(r).toEqual({ criado: true, clienteId: 6001 });
-    expect(chamadas[0].corpo).toEqual({
+    expect(chamadas[0].url.searchParams.get("cpf")).toBe("01731631499");
+    expect(chamadas[1].corpo).toEqual({
       companyId: 3,
       name: "Arthur Pereira da Rocha Lopes",
       naturalPerson: { cpf: "017.316.314-99" },
@@ -446,7 +449,7 @@ describe("clientes", () => {
   });
 
   it("criar: falha do servidor manda procurar antes de cadastrar de novo", async () => {
-    responder(() => ({ status: 503, corpo: {} }));
+    responder(({ metodo }) => (metodo === "GET" ? { corpo: semCadastro } : { status: 503, corpo: {} }));
 
     const r = (await tool("conexa_criar_cliente").execute(
       { nome: "Arthur Lopes", cpf: "01731631499" },
@@ -455,6 +458,46 @@ describe("clientes", () => {
 
     expect(r.resultado).toBe("indeterminado");
     expect(String(r.comoSeguir)).toContain("conexa_buscar_cliente");
+  });
+
+  it("criar: CPF que já tem cadastro na unidade devolve o existente e NÃO cadastra", async () => {
+    // O caso 5976/5977 (08/10/2026): o mesmo CPF cadastrado de novo três minutos depois.
+    responder(({ metodo }) =>
+      metodo === "GET"
+        ? { corpo: { data: [{ customerId: 5977, companyId: 3, isActive: true }, { customerId: 5976, companyId: 3, isActive: true }], pagination: { hasNext: false } } }
+        : { corpo: { id: 9999 } },
+    );
+
+    const r = (await tool("conexa_criar_cliente").execute(
+      { nome: "Arthur Lopes", cpf: "017.316.314-99" },
+      ctx(),
+    )) as Record<string, unknown>;
+
+    expect(r).toMatchObject({ criado: false, jaExistia: true, clienteId: 5976 });
+    expect(chamadas.some((c) => c.metodo === "POST")).toBe(false);
+  });
+
+  it("criar: cadastro na OUTRA unidade não barra", async () => {
+    responder(({ metodo }) =>
+      metodo === "GET"
+        ? { corpo: { data: [{ customerId: 800, companyId: 4, isActive: true }], pagination: { hasNext: false } } }
+        : { corpo: { id: 6002 } },
+    );
+
+    const r = await tool("conexa_criar_cliente").execute({ nome: "Arthur Lopes", cpf: "01731631499" }, ctx());
+    expect(r).toEqual({ criado: true, clienteId: 6002 });
+  });
+
+  it("criar: sem conseguir conferir o documento, não cadastra", async () => {
+    responder(({ metodo }) => (metodo === "GET" ? { status: 500, corpo: {} } : { corpo: { id: 6003 } }));
+
+    const r = (await tool("conexa_criar_cliente").execute(
+      { nome: "Arthur Lopes", cpf: "01731631499" },
+      ctx(),
+    )) as Record<string, unknown>;
+
+    expect(r.criado).toBe(false);
+    expect(chamadas.some((c) => c.metodo === "POST")).toBe(false);
   });
 
   it("atualizar lê o cliente e ACRESCENTA o e-mail", async () => {
