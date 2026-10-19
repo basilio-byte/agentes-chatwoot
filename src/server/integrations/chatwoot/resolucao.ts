@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { ConversationStatus } from "@/generated/prisma/enums";
+import { CaminhoDoRepasse, ConversationStatus } from "@/generated/prisma/enums";
 import { eventoChatwootSchema } from "./eventos";
 import { ehResolvida } from "./regras";
 
@@ -53,7 +53,13 @@ export async function marcarResolvida(chatwootConversationId: number) {
 export async function entregarAoHumano(
   chatwootConversationId: number,
   motivo: string,
+  /** Por onde a conversa chegou à pessoa; nulo quando não é repasse a ninguém
+   * (a regra global vê a conversa adiada, por exemplo). */
+  caminho: CaminhoDoRepasse | null,
 ) {
+  // Lida ANTES de gravar: é o estado anterior que diz se houve repasse.
+  const antes = caminho ? await conversasAntesDoRepasse(chatwootConversationId) : [];
+
   await db.conversation.updateMany({
     where: { chatwootConversationId },
     data: {
@@ -67,6 +73,63 @@ export async function entregarAoHumano(
       retomadaPendente: false,
     },
   });
+
+  if (caminho) await registrarRepasse(chatwootConversationId, caminho, antes);
+}
+
+/**
+ * Se a passagem para uma pessoa vira um evento do histórico de repasses
+ * (`RepasseParaPessoa`, lido pelo contrato de métricas).
+ *
+ * Conversa que já estava com uma pessoa não conta de novo: o webhook de conta
+ * reafirma "uma pessoa assumiu" a cada atualização, e cada uma viraria um
+ * repasse. A exceção é o prazo vencido, que passa de uma pessoa para OUTRA.
+ */
+export function contaComoRepasse(
+  statusAntes: ConversationStatus,
+  caminho: CaminhoDoRepasse,
+): boolean {
+  return statusAntes !== ConversationStatus.HUMAN || caminho === CaminhoDoRepasse.PRAZO_VENCIDO;
+}
+
+type EstadoAntes = { id: string; status: ConversationStatus; agentId: string | null };
+
+async function conversasAntesDoRepasse(chatwootConversationId: number): Promise<EstadoAntes[]> {
+  try {
+    return await db.conversation.findMany({
+      where: { chatwootConversationId },
+      select: { id: true, status: true, agentId: true },
+    });
+  } catch (err) {
+    logger.warn({ err, chatwootConversationId }, "repasse: não li a conversa antes de entregar");
+    return [];
+  }
+}
+
+/**
+ * Grava o evento. Nunca lança: o histórico é métrica, e a entrega da conversa a
+ * uma pessoa não pode falhar por causa dele. Duas entregas no mesmo instante
+ * podem gerar dois eventos (a leitura e a gravação não são atômicas) — aceito.
+ */
+async function registrarRepasse(
+  chatwootConversationId: number,
+  caminho: CaminhoDoRepasse,
+  antes: EstadoAntes[],
+) {
+  const repasses = antes.filter((c) => contaComoRepasse(c.status, caminho));
+  if (repasses.length === 0) return;
+  try {
+    await db.repasseParaPessoa.createMany({
+      data: repasses.map((c) => ({
+        conversationId: c.id,
+        chatwootConversationId,
+        agentId: c.agentId,
+        caminho,
+      })),
+    });
+  } catch (err) {
+    logger.warn({ err, chatwootConversationId, caminho }, "repasse: evento não gravado");
+  }
 }
 
 /**

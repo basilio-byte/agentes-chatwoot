@@ -191,6 +191,7 @@ model Agent {
   handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
   handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
   conversasEmTransicao Conversation[] @relation("HandoffDestino")
+  repassesParaPessoas  RepasseParaPessoa[]
 
   @@index([isEntry])
   @@index([archivedAt])
@@ -686,6 +687,7 @@ model Conversation {
   handoffPara    Agent?         @relation("HandoffDestino", fields: [handoffParaAgentId], references: [id], onDelete: SetNull)
   runs           AgentRun[]
   handoffs       AgentHandoff[]
+  repasses       RepasseParaPessoa[]
 
   @@index([agentId])
   @@index([agentId, createdAt(sort: Desc)])
@@ -853,6 +855,72 @@ model ToolCall {
   run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId])
+}
+
+/// Por onde a conversa chegou a uma pessoa (`entregarAoHumano`). É CATEGORIA, e
+/// não o motivo: o motivo em texto cita nomes de funcionários e fica de fora do
+/// contrato de métricas (`docs/04-contrato-de-metricas.md`).
+enum CaminhoDoRepasse {
+  /// `atribuir_por_rodizio`.
+  RODIZIO
+  /// `atribuir_para_atendente`.
+  ATRIBUICAO_DIRETA
+  /// `transferir_para_humano`.
+  TRANSFERENCIA
+  /// O vigia: o cliente esperou além do tempo configurado.
+  VIGIA_DE_ESPERA
+  /// O prazo da equipe ou do cliente venceu e a conversa foi (re)atribuída.
+  PRAZO_VENCIDO
+  /// As travas da equipe de agentes pararam o atendimento.
+  EQUIPE_DE_AGENTES
+  /// Uma pessoa assumiu no Chatwoot e o sistema só registrou.
+  PESSOA_ASSUMIU
+  /// O pedido de presente de aniversário passou para a equipe.
+  PRESENTE_DE_ANIVERSARIO
+  /// Só na reconstrução do histórico anterior a 19/10/2026: motivo antigo que
+  /// não diz o caminho (em geral `transferir_para_humano`, que grava o motivo
+  /// do modelo sem prefixo).
+  NAO_IDENTIFICADO
+}
+
+/// Cada passagem da conversa para uma PESSOA, como evento próprio (19/10/2026).
+/// `Conversation.handoffAt` guarda só a última, e com ela não dá para medir o
+/// tempo entre o primeiro repasse e a primeira resposta da equipe.
+///
+/// Gravado por `entregarAoHumano`, a única porta para o estado `HUMAN`: conta
+/// quando a conversa ainda não estava com uma pessoa, e sempre no prazo vencido
+/// (que passa de uma pessoa para outra). Falhar aqui nunca impede a entrega.
+model RepasseParaPessoa {
+  id                     String           @id @default(cuid())
+  conversationId         String
+  chatwootConversationId Int
+  /// O agente dono da conversa no momento do repasse.
+  agentId                String?
+  caminho                CaminhoDoRepasse
+  /// Reconstruído do último repasse de cada conversa na migration de 19/10/2026;
+  /// antes disso não havia histórico.
+  reconstruido           Boolean          @default(false)
+  criadoEm               DateTime         @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent        Agent?       @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([criadoEm])
+  @@index([conversationId, criadoEm])
+}
+
+/// Linha apagada de uma tabela do contrato de métricas, gravada por gatilho do
+/// banco (`metricas_interno.registrar_exclusao`). É o que deixa a exclusão VISÍVEL
+/// para a sincronização, em vez de a linha simplesmente sumir — excluir um
+/// agente leva junto as execuções dele.
+model ExclusaoDeRegistro {
+  id          BigInt   @id @default(autoincrement())
+  /// O nome da view do contrato (`execucoes`, `conversas`…).
+  entidade    String
+  registroId  String
+  excluidoEm  DateTime @default(now())
+
+  @@index([excluidoEm])
 }
 
 // ---------------------------------------------------------------------------
@@ -1097,6 +1165,9 @@ model PesquisaNps {
   tentativas             Int               @default(0)
   criadaEm               DateTime          @default(now())
   finalizadaEm           DateTime?
+  /// Última alteração, para a sincronização incremental do contrato de métricas
+  /// (19/10/2026): várias mudanças de situação não tocam nenhuma outra data.
+  atualizadaEm           DateTime          @default(now()) @updatedAt
 
   @@unique([chatwootConversationId, marcadaEm])
   @@index([status, venceEm])

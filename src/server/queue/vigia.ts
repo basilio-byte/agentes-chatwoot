@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { ConversationStatus } from "@/generated/prisma/enums";
+import { CaminhoDoRepasse, ConversationStatus } from "@/generated/prisma/enums";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
 import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
@@ -106,6 +106,7 @@ async function escalar(conversa: Parada, minutos: number): Promise<boolean> {
         await entregarAoHumano(
           conversaId,
           `vigia: ${veredito.motivo} — não escalou por cima`,
+          CaminhoDoRepasse.PESSOA_ASSUMIU,
         );
       } else {
         // Resolvida ou adiada: ninguém espera o bot numa conversa em que ele não
@@ -159,6 +160,7 @@ async function escalar(conversa: Parada, minutos: number): Promise<boolean> {
   await entregarAoHumano(
     conversaId,
     `vigia: cliente esperou mais de ${minutos} min sem resposta`,
+    CaminhoDoRepasse.VIGIA_DE_ESPERA,
   );
 
   logger.warn(

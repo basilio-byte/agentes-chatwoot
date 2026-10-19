@@ -10,6 +10,7 @@ Plataforma de agentes de I.A. que atendem no Chatwoot da Seahub Coworking.
 
 - Stack e arquitetura: **`docs/00-stack-e-arquitetura.md`** — leia antes de mudar estrutura.
 - Deploy: **`docs/01-deploy-easypanel.md`** — imagem publicada no GHCR a cada push na `main`.
+- Contrato de métricas (o banco central lê daqui): **`docs/04-contrato-de-metricas.md`**.
 
 ### Contexto que não dá para inferir do código
 
@@ -3645,6 +3646,58 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
 - **O token do MCP tem o papel da conta**, relido a cada chamada, mas não carrega
   o que é só de OWNER: credencial, conta e exclusão ficam fora do servidor
   inteiro. As três descrições de `papeis.ts` dizem isso.
+
+### Contrato de métricas: a porta de leitura do banco central
+
+Pedido do usuário em 19/10/2026: o `seahub-sync` (banco central da Seahub) puxa
+as métricas dos agentes; este sistema não envia nada. Schema `metricas_v1`, só
+views, e o papel `metricas_leitor`, que só lê esse schema. Tudo em
+**`docs/04-contrato-de-metricas.md`**, e cada coluna tem `COMMENT ON` no banco.
+
+- ⚠ **Mudar uma tabela que uma view lê é mudar o contrato.** Renomear ou tirar
+  coluna de `AgentRun`, `ToolCall`, `Conversation`, `AgentHandoff`,
+  `PesquisaNps`, `NotaFiscalEmitida`, `CobrancaFiscal`, `MediaAnalysis` ou
+  `Agent` faz a migration falhar na view (o Postgres recusa alterar coluna de
+  que uma view depende) ou, pior, muda o sentido em silêncio. Ajuste a view NA
+  MESMA migration, mantendo o nome e o sentido da coluna do contrato. Mudança
+  no contrato só acrescenta; quebrar é `metricas_v2` ao lado.
+  ⚠ **Tirar valor de um enum que as views leem** (`RunSource`, `RunStatus`,
+  `ConversationStatus`, `MotorDaExecucao`, `PesquisaNpsStatus`,
+  `SituacaoDaNota`, `MediaKind`, `MediaStatus`, `IntegrationProvider`,
+  `CaminhoDoRepasse`) faz o Prisma recriar o tipo com `ALTER COLUMN TYPE`, e o
+  Postgres recusa por causa da view: a migration precisa derrubar a view antes
+  e recriá-la depois (com os `COMMENT ON` e o `GRANT`). Acrescentar valor não
+  quebra nada — as views têm `ELSE lower(...)`.
+- ⚠ **Coluna nova com dado pessoal ou texto livre NÃO entra.** Telefone,
+  e-mail, nome de contato, motivo, texto de erro e nome de arquivo ficam de
+  fora de propósito — o motivo do repasse cita nomes de funcionários. Por isso
+  o erro sai como `categoria_do_erro` e o repasse como `caminho`.
+- **`RepasseParaPessoa` é o único dado NOVO** (o resto já existia): um evento
+  por passagem da conversa a uma pessoa, gravado por `entregarAoHumano` com o
+  `CaminhoDoRepasse` que quem chama informa. Caminho nulo = não é repasse (a
+  conversa adiada, por exemplo). Conversa que já estava com uma pessoa não
+  conta de novo — o webhook de conta reafirma o dono a cada atualização —,
+  salvo `PRAZO_VENCIDO`, que passa de uma pessoa para outra. Gravar o evento
+  nunca impede a entrega. Antes de 19/10 só existe o último repasse de cada
+  conversa, reconstruído do motivo (`reconstruido = true`).
+  ⚠ Chamada nova a `entregarAoHumano` precisa do caminho certo: é ele que a
+  métrica lê, e o compilador só cobra que exista um.
+- **`atualizado_em` de `execucoes` é `GREATEST(createdAt, finishedAt)`**, sem
+  coluna nova: toda escrita numa execução depois de criada é a que a termina.
+  Se algum dia uma execução terminada voltar a ser alterada, ela precisa de um
+  `updatedAt` de verdade.
+- **Exclusões por gatilho** (`metricas_interno.registrar_exclusao`, `AFTER
+  DELETE` nas nove tabelas). Excluir agente apaga em cascata execuções e
+  chamadas, e cada linha vira um registro em `ExclusaoDeRegistro`.
+- **O papel nasce SEM login.** A senha é dada por quem tem o servidor, fora do
+  repositório (`ALTER ROLE metricas_leitor LOGIN PASSWORD …`, de preferência o
+  verificador SCRAM), e revogar é `NOLOGIN`. A sessão nasce somente leitura,
+  mas o que segura de verdade é a permissão: ele pode religar a escrita na
+  própria sessão e continua sem poder escrever em nada. A migration tirou
+  `TEMPORARY` do `PUBLIC` no banco (a única escrita que todo papel tem); quem
+  roda a migration o recebe de volta explicitamente.
+- **A porta do Postgres não é publicada**: só a rede interna do Easypanel
+  alcança (`seahub_agentes-seahub-postgres:5432`, banco `seahub`).
 
 ### Regras do projeto
 

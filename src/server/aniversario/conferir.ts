@@ -1,4 +1,5 @@
 import {
+  CaminhoDoRepasse,
   IntegrationProvider,
   IntegrationStatus,
   PresenteStatus,
@@ -374,7 +375,11 @@ async function entregar(
         } else {
           rastro.push(`"${ctx.config.atendente}" não foi achado no Chatwoot`);
         }
-        await entregarAoHumano(conversa, `presente de aniversário: ${args.motivo}`);
+        await entregarAoHumano(
+          conversa,
+          `presente de aniversário: ${args.motivo}`,
+          CaminhoDoRepasse.PRESENTE_DE_ANIVERSARIO,
+        );
       } else {
         rastro.push(`nada foi dito ao cliente (${veredito.motivo})`);
       }

@@ -67,6 +67,10 @@ export function humanidadeDoDono(
   return tipo === "user";
 }
 
+/** O motivo da regra 1. É por ele que quem entrega a conversa a uma pessoa sabe
+ * que alguém ASSUMIU (e não que ela está adiada ou resolvida). */
+export const MOTIVO_DONO_HUMANO = "conversa atribuída a um humano";
+
 export function podeAgir(estado: EstadoDaConversa): Veredito {
   const donoNaoHumano = donoNaoEhHumano(estado);
 
@@ -75,7 +79,7 @@ export function podeAgir(estado: EstadoDaConversa): Veredito {
   // Dono que NÃO é gente não conta: é o próprio bot, e um bot não "assume"
   // conversa de ninguém — muito menos da gente.
   if (estado.assigneeId != null && !donoNaoHumano) {
-    return { pode: false, motivo: "conversa atribuída a um humano" };
+    return { pode: false, motivo: MOTIVO_DONO_HUMANO };
   }
 
   const status = estado.status?.toLowerCase();

@@ -6,10 +6,14 @@ import {
   clienteDoAgente,
   obterSecretDaConta,
 } from "@/server/integrations/chatwoot/credenciais";
-import { humanidadeDoDono, podeAgir } from "@/server/integrations/chatwoot/regras";
+import {
+  humanidadeDoDono,
+  MOTIVO_DONO_HUMANO,
+  podeAgir,
+} from "@/server/integrations/chatwoot/regras";
 import { eventoChatwootSchema } from "@/server/integrations/chatwoot/eventos";
 import { entregarAoHumano, sincronizarResolucao } from "@/server/integrations/chatwoot/resolucao";
-import { ConversationStatus } from "@/generated/prisma/enums";
+import { CaminhoDoRepasse, ConversationStatus } from "@/generated/prisma/enums";
 import { dispararGatilhosDeConversa } from "@/server/conversa-encerrada/disparar";
 import { dispararGatilhosDeCheckbox } from "@/server/conversa-marcada/disparar";
 import { dispararPesquisaNps } from "@/server/nps/disparar";
@@ -122,6 +126,7 @@ export async function POST(req: Request) {
     await entregarAoHumano(
       conversationId,
       veredito.motivo ?? "assumida no Chatwoot",
+      veredito.motivo === MOTIVO_DONO_HUMANO ? CaminhoDoRepasse.PESSOA_ASSUMIU : null,
     );
   }
 

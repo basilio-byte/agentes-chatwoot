@@ -71,6 +71,7 @@ import {
   donoNaoEhHumano,
   ehResolvida,
   humanidadeDoDono,
+  MOTIVO_DONO_HUMANO,
   podeAgir,
   precisaAbrir,
 } from "@/server/integrations/chatwoot/regras";
@@ -89,7 +90,7 @@ import {
   registrarVisita,
   type MotivoDeParada,
 } from "@/server/agents/travas";
-import { ConversationStatus, RunSource } from "@/generated/prisma/enums";
+import { CaminhoDoRepasse, ConversationStatus, RunSource } from "@/generated/prisma/enums";
 import type { SinalDeHandoff } from "@/server/integrations/types";
 
 export { marcarResolvida };
@@ -363,6 +364,7 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
       await entregarAoHumano(
         chatwootConversationId,
         veredito.motivo ?? "assumida por uma pessoa",
+        veredito.motivo === MOTIVO_DONO_HUMANO ? CaminhoDoRepasse.PESSOA_ASSUMIU : null,
       );
     }
     return;
@@ -872,7 +874,11 @@ async function escalarParaHumano(args: {
 
     await cliente.alternarStatus(chatwootConversationId, "open");
 
-    await entregarAoHumano(chatwootConversationId, `equipe de agentes: ${motivo}`);
+    await entregarAoHumano(
+      chatwootConversationId,
+      `equipe de agentes: ${motivo}`,
+      CaminhoDoRepasse.EQUIPE_DE_AGENTES,
+    );
 
     await cliente.enviarMensagem(
       chatwootConversationId,

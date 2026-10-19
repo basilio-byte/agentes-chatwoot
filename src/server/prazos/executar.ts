@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { IntegrationProvider, PrazoStatus } from "@/generated/prisma/enums";
+import { CaminhoDoRepasse, IntegrationProvider, PrazoStatus } from "@/generated/prisma/enums";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
@@ -268,7 +268,11 @@ async function agir(
           ...linhasDoCrm(crm),
         ].join("\n"),
       );
-      await entregarAoHumano(conversaId, `prazo vencido: reatribuída a ${nome}`);
+      await entregarAoHumano(
+        conversaId,
+        `prazo vencido: reatribuída a ${nome}`,
+        CaminhoDoRepasse.PRAZO_VENCIDO,
+      );
       return {
         status: PrazoStatus.EXECUTADO,
         resultado: `reatribuída a ${nome}${resumoDoCrm(crm)}`,
@@ -329,6 +333,7 @@ async function agir(
         await entregarAoHumano(
           conversaId,
           "prazo vencido, mas a conversa ficou com uma pessoa ao ser devolvida",
+          CaminhoDoRepasse.PESSOA_ASSUMIU,
         );
         await notaInterna(
           cliente,
@@ -426,6 +431,7 @@ async function agir(
       await entregarAoHumano(
         conversaId,
         `prazo vencido: cliente sem responder, atribuída a ${nome}`,
+        CaminhoDoRepasse.PRAZO_VENCIDO,
       );
       return { status: PrazoStatus.EXECUTADO, resultado: `atribuída a ${nome}` };
     }

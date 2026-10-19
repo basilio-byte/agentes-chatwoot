@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { IntegrationProvider, RunSource } from "@/generated/prisma/enums";
+import { CaminhoDoRepasse, IntegrationProvider, RunSource } from "@/generated/prisma/enums";
 import type { IntegrationDefinition } from "../types";
 import { chatwootConfigSchema } from "./config";
 import { clienteDoAgente } from "./credenciais";
@@ -374,7 +374,11 @@ export const chatwootIntegration: IntegrationDefinition = {
         await cliente.alternarStatus(conversa, "open");
         await cliente.atribuir(conversa, { assigneeId: achado.atendente.id });
 
-        await entregarAoHumano(conversa, `atribuído a ${nome}: ${args.motivo}`);
+        await entregarAoHumano(
+          conversa,
+          `atribuído a ${nome}: ${args.motivo}`,
+          CaminhoDoRepasse.ATRIBUICAO_DIRETA,
+        );
 
         logger.info({ conversa, atendente: nome }, "conversa atribuída a pessoa");
 
@@ -501,6 +505,7 @@ export const chatwootIntegration: IntegrationDefinition = {
         await entregarAoHumano(
           conversa,
           `rodízio ${chave} → ${nome}: ${args.motivo}`,
+          CaminhoDoRepasse.RODIZIO,
         );
 
         logger.info({ conversa, rodizio: chave, atendente: nome }, "rodízio girou");
@@ -751,7 +756,7 @@ export const chatwootIntegration: IntegrationDefinition = {
         await cliente.adicionarLabel(conversa, "transferido-pelo-bot");
 
         // Cala o bot nesta conversa até alguém devolver para `pending`.
-        await entregarAoHumano(conversa, motivo);
+        await entregarAoHumano(conversa, motivo, CaminhoDoRepasse.TRANSFERENCIA);
 
         logger.info({ conversa, motivo, dono }, "conversa transferida para humano");
 
