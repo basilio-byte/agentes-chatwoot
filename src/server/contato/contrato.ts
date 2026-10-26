@@ -50,6 +50,10 @@ function texto(valor: unknown): string {
   return typeof valor === "string" ? valor.trim() : "";
 }
 
+/** Checkbox desmarcado não conta como preenchido: a regra "is checked" o recusaria. */
+const desmarcado = (v: unknown) =>
+  v === false || (typeof v === "string" && ["false", "nao", "não", "0", "no"].includes(v.trim().toLowerCase()));
+
 /**
  * Os campos da LISTA que já têm valor, pelo nome normalizado. O agente escreve o
  * campo como o conhece ("Razão Social"), e a lista o chama de "✍️ Razão Social":
@@ -61,7 +65,7 @@ function camposPreenchidos(campos: Campo[], camposDaLista: CampoDaLista[]): Set<
   const nomes = camposDaLista.flatMap((c) => (c.name ? [normalizar(c.name)] : []));
   const preenchidos = new Set<string>();
   for (const { campo, valor } of campos) {
-    if (vazio(valor)) continue;
+    if (vazio(valor) || desmarcado(valor)) continue;
     const alvo = normalizar(campo);
     if (nomes.includes(alvo)) {
       preenchidos.add(alvo);
@@ -125,22 +129,41 @@ type Exigido = {
 const igual = (alvo: string) => (n: string) => n === alvo;
 
 /**
- * Tudo que a venda precisa ter na task para o ClickBot passar à Base de clientes
- * e para o agente de contratos gerar o documento. A ordem é a de leitura da
- * mensagem à equipe.
+ * Tudo que a venda precisa ter na task para subir ao contrato.
+ *
+ * Lido da regra "EV SB SP" do ClickBot (Configurações → Automações do CRM
+ * Comercial), que cria a task na Base de clientes: quando o status vira
+ * "Aguardando pagamento" E estes campos estão preenchidos — RESPONSÁVEL, CELULAR,
+ * E-mail do responsável, VALOR CONTRATO, CPF ou CNPJ Preenchidos (marcado), Estado
+ * Civil, DATA INICIO CONTRATO, FATURAMENTO, RAMO DE ATIVIDADE, DATA DE
+ * ENCERRAMENTO, Endereço Sócio, RG / ID / RNE e Razão Social. Faltando um só, a
+ * regra não faz nada, e nada reavalia depois.
+ *
+ * Mais três que a regra da Base não confere mas travam logo adiante: VENCIMENTO
+ * (outra regra do ClickBot devolve a task ao Backlog sem ele) e CPF e Sede da
+ * Empresa (o agente de contratos os exige para gerar o documento).
+ *
+ * ⚠ Nenhum campo da lista está marcado como obrigatório na configuração do
+ * ClickUp: a lista mora DENTRO da regra. Mudou a regra? Muda aqui, e só aqui.
+ * A ordem é a de leitura da mensagem à equipe.
  */
 const EXIGIDOS: Exigido[] = [
   { rotulo: "Razão Social", casa: (n) => n.includes("razao social") },
   { rotulo: "RESPONSÁVEL", casa: igual("responsavel") },
   { rotulo: "E-mail do responsável", casa: igual("e-mail do responsavel") },
+  { rotulo: "CELULAR", casa: igual("celular") },
+  { rotulo: "VALOR CONTRATO", casa: igual("valor contrato") },
+  { rotulo: "CPF ou CNPJ Preenchidos", casa: igual("cpf ou cnpj preenchidos") },
+  { rotulo: "Estado Civil", casa: igual("estado civil") },
+  { rotulo: "FATURAMENTO", casa: igual("faturamento") },
   { rotulo: "RG / ID / RNE", casa: (n) => n.startsWith("rg") },
-  { rotulo: "CPF", casa: igual("cpf") },
   { rotulo: "Endereço Sócio", casa: (n) => n.includes("endereco socio") },
   { rotulo: "RAMO DE ATIVIDADE", casa: igual("ramo de atividade") },
-  { rotulo: "Sede da Empresa", casa: igual("sede da empresa"), soEmpresa: true },
   { rotulo: "DATA INICIO CONTRATO", casa: igual("data inicio contrato") },
   { rotulo: "DATA DE ENCERRAMENTO CONTRATO", casa: (n) => n.startsWith("data de encerramento contrato") },
   { rotulo: "VENCIMENTO", casa: igual("vencimento") },
+  { rotulo: "CPF", casa: igual("cpf") },
+  { rotulo: "Sede da Empresa", casa: igual("sede da empresa"), soEmpresa: true },
 ];
 
 const nomeNaLista = (lista: CampoDaLista[], casa: (n: string) => boolean) =>
@@ -173,13 +196,13 @@ export function camposDoContratoParaPreencher(args: {
   hoje: string;
   /** Consulta de CNPJ: `null` quando não houve consulta ou ela não respondeu. */
   razaoSocial?: string | null;
-}): { campo: string; valor: string | number }[] {
+}): { campo: string; valor: string | number | boolean }[] {
   const { campos, camposDaLista, hoje } = args;
-  const saida: { campo: string; valor: string | number }[] = [];
+  const saida: { campo: string; valor: string | number | boolean }[] = [];
   if (!ehVendaDeEnderecoDoAgente(campos)) return saida;
 
   const preenchidos = camposPreenchidos(campos, camposDaLista);
-  const poe = (casa: (n: string) => boolean, valor: string | number | null | undefined) => {
+  const poe = (casa: (n: string) => boolean, valor: string | number | boolean | null | undefined) => {
     const nome = nomeNaLista(camposDaLista, casa);
     if (!nome || valor === null || valor === undefined || valor === "") return;
     if (preenchidos.has(normalizar(nome))) return;
@@ -191,6 +214,10 @@ export function camposDoContratoParaPreencher(args: {
 
   const email = lerEmail(texto(valorDe(campos, "E-mail")));
   poe(igual("e-mail do responsavel"), email.tipo === "um" ? email.email : null);
+
+  // A regra do ClickBot marca a caixa quando o CPF é gravado; com CNPJ ninguém a marca.
+  const cpf = texto(valorDe(campos, "CPF")).replace(/\D/g, "");
+  poe(igual("cpf ou cnpj preenchidos"), temCnpj(campos) || cpf.length === 11 ? true : null);
 
   poe(igual("data inicio contrato"), hoje);
   poe(igual("vencimento"), Number(hoje.slice(8, 10)));

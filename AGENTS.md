@@ -1686,21 +1686,47 @@ ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
     responsável (o e-mail), DATA INICIO CONTRATO e VENCIMENTO (o dia da venda; o
     prompt já diz que o vencimento é a data da contratação), DATA DE ENCERRAMENTO
     (início + a duração da descrição − 1 dia) e Razão Social (consulta de CNPJ;
-    sem CNPJ, o nome completo). ⚠ **A convenção do "− 1 dia" vem de UMA amostra**
-    (26/10/2026 por 24 meses → 25/10/2028, gravada pela equipe): se a equipe
-    disser outra, muda em `fimDoContrato`. Só 12 e 24 meses viram data; outro
-    número, ou nenhuma duração na descrição, deixa o campo em branco.
+    sem CNPJ, o nome completo) e a caixa "CPF ou CNPJ Preenchidos" (a regra do
+    ClickBot só a marca quando há CPF). A convenção do "− 1 dia" é a da equipe e
+    a da própria automação: a regra "início do contrato alterado → data de
+    reajuste" também dá +1 ano − 1 dia (26/10/2026 por 24 meses → 25/10/2028).
+    Se a equipe disser outra, muda em `fimDoContrato`. Só 12 e 24 meses viram
+    data; outro número, ou nenhuma duração na descrição, deixa o campo em branco.
   - ⚠ **O que só o cliente sabe NÃO é inventado:** RG, CPF de quem assina e
     endereço do sócio. O retorno da criação traz `contrato.faltam` e uma
     `observacao` mandando o agente dizer ao cliente que a equipe confirma o
     envio, e deixar nota interna com o que falta. Retorno de tool vence o prompt:
     funciona sem mexer em prompt nenhum. Enquanto o prompt do Everton não pedir
     esses dados, a lista nunca vem vazia — é de propósito: a venda de fato não
-    sobe sozinha.
-  - **Os campos exigidos foram lidos de duas fontes em 26/10/2026**: os avisos
-    do ClickBot e o mapeamento do prompt do agente de contratos (EV). Se a
-    automação do ClickUp mudar, a lista muda em `EXIGIDOS`, e só ali. Não há
-    como ler as automações do ClickUp pelo MCP: a regra é inferida.
+    sobe sozinha. ⚠ **"📍 Endereço Sócio" é campo de LOCALIZAÇÃO**, e a API do
+    ClickUp pede coordenadas além do texto: o código ainda não sabe gravá-lo
+    (`converterValor` manda o texto cru). Antes de o Everton passar a coletá-lo,
+    é preciso provar como gravar — ou a criação da task pode falhar.
+  - **A cadeia do ClickBot, lida da Atividade e das regras em 26/10/2026** (o
+    MCP e a API NÃO expõem a Atividade nem as automações; os prints vieram do
+    usuário). Tudo roda em ~2 s depois da criação: regras de criação (prioridade,
+    "Precisa de contrato", Status CRM, datas) → regra "Etiqueta = venda autonoma +
+    VENDEDOR = auto venda > Aguardando Pagamento" → **três regras devolvem a
+    Backlog**: sem Ramo de Atividade, sem VENCIMENTO, sem Razão Social → a regra
+    **"EV SB SP"** (status vira "Aguardando pagamento" E RESPONSÁVEL, CELULAR,
+    E-mail do responsável, VALOR CONTRATO, "CPF ou CNPJ Preenchidos" marcado, Estado
+    Civil, DATA INICIO CONTRATO, FATURAMENTO, RAMO DE ATIVIDADE, DATA DE
+    ENCERRAMENTO, Endereço Sócio, RG e Razão Social preenchidos) comenta "✅ Base de
+    clientes ✅" e duplica a task na Base. Os "Falta preencher…" são regras
+    separadas, só de comentário. A regra da Base é por MUDANÇA DE STATUS: nada
+    reavalia quando um campo é preenchido depois (o Everton completou o Ramo às
+    12:44 e nada aconteceu); para re-disparar, tirar a task do status e voltar.
+  - ⚠ **Risco conhecido, não provado:** com os campos que o sistema preenche, sobram
+    só RG e Endereço Sócio. As três regras de Backlog não disparam e a da Base
+    não cria a task — a venda FICA em "Aguardando pagamento", sem task na Base, o
+    que engana mais do que o Backlog de antes. Saídas: o Everton coletar RG e
+    endereço do sócio, e/ou uma regra no ClickUp "Aguardando pagamento + RG ou
+    Endereço Sócio vazio → Backlog". Decisão do Diego.
+  - **Os campos exigidos** (`EXIGIDOS`) são os 13 da regra "EV SB SP" mais
+    VENCIMENTO, CPF e Sede da Empresa (que a regra da Base não confere, mas travam
+    adiante: outra regra do ClickBot e o agente de contratos). Nenhum campo da
+    lista está marcado como obrigatório na configuração do ClickUp: a lista mora
+    DENTRO da regra. Se a regra mudar, muda em `EXIGIDOS`, e só ali.
   - **Consulta de CNPJ que falha nunca impede a task**: a razão social fica em
     branco e o retorno a cobra. Cada campo extra é validado sozinho.
 

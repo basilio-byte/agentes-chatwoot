@@ -46,6 +46,11 @@ const CAMPOS = [
   { id: "f-ini", name: "DATA INICIO CONTRATO", type: "date" },
   { id: "f-fim", name: "DATA DE ENCERRAMENTO CONTRATO [BASE CLIENTES]", type: "date" },
   { id: "f-venc", name: "VENCIMENTO", type: "number" },
+  { id: "f-cel", name: "CELULAR", type: "phone" },
+  { id: "f-valor", name: "VALOR CONTRATO", type: "currency" },
+  { id: "f-ec", ...sim("Estado Civil", "Solteiro", "Casado") },
+  { id: "f-fat", ...sim("FATURAMENTO", "Mensal (a cada mês)", "Anual (a cada 12 meses)") },
+  { id: "f-caixa", name: "CPF ou CNPJ Preenchidos", type: "checkbox" },
 ];
 
 type Chamada = { url: string; method: string; body?: { custom_fields?: { id: string; value: unknown }[] } };
@@ -99,6 +104,11 @@ const DO_EVERTON = [
   { campo: "Sede da Empresa", valor: "Rua das Flores, 100, Natal/RN, CEP 59000-000" },
   { campo: "TIPO DE PRODUTO", valor: "Endereço Fiscal Litoral" },
   { campo: "RAMO DE ATIVIDADE", valor: "Outros serviços" },
+  { campo: "CELULAR", valor: "+55 84 90000 0000" },
+  { campo: "VALOR CONTRATO", valor: 96.9 },
+  { campo: "Estado Civil", valor: "Casado" },
+  { campo: "FATURAMENTO", valor: "Mensal (a cada mês)" },
+  { campo: "CPF ou CNPJ Preenchidos", valor: true },
 ];
 
 type Retorno = {
@@ -164,6 +174,15 @@ describe("venda de endereço fechada pelo agente", () => {
     expect(valor("f-razao")).toBeUndefined();
     expect(valor("f-resp")).toBe("Maria Souza Exemplo");
     expect(r.contrato?.faltam).toContain("Razão Social");
+  });
+
+  it("⚠ sem o celular a task não sobe: o retorno cobra o campo, e a caixa do documento o sistema marca", async () => {
+    const r = await executar(
+      DO_EVERTON.filter((c) => c.campo !== "CELULAR" && c.campo !== "CPF ou CNPJ Preenchidos"),
+    );
+    expect(r.contrato?.faltam).toContain("CELULAR");
+    expect(r.contrato?.faltam).not.toContain("CPF ou CNPJ Preenchidos");
+    expect(valor("f-caixa")).toBe(true);
   });
 
   it("ramo de atividade que o agente não mandou aparece como falta", async () => {

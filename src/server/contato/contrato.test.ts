@@ -27,6 +27,11 @@ const LISTA = [
   { name: "DATA INICIO CONTRATO" },
   { name: "DATA DE ENCERRAMENTO CONTRATO [BASE CLIENTES]" },
   { name: "VENCIMENTO" },
+  { name: "CELULAR" },
+  { name: "VALOR CONTRATO" },
+  { name: "Estado Civil" },
+  { name: "FATURAMENTO" },
+  { name: "CPF ou CNPJ Preenchidos" },
 ];
 
 /** O que o Everton mandou na venda da conversa 14818 (sem o ramo, que a 1ª tentativa recusou). */
@@ -37,6 +42,11 @@ const DO_AGENTE = [
   { campo: "CNPJ [CADASTRO]", valor: "11.222.333/0001-81" },
   { campo: "Sede da Empresa", valor: "Rua das Flores, 100, Natal/RN, CEP 59000-000" },
   { campo: "TIPO DE PRODUTO", valor: "Endereço Fiscal Litoral" },
+  { campo: "CELULAR", valor: "+55 84 90000 0000" },
+  { campo: "VALOR CONTRATO", valor: 96.9 },
+  { campo: "Estado Civil", valor: "Casado" },
+  { campo: "FATURAMENTO", valor: "Mensal (a cada mês)" },
+  { campo: "CPF ou CNPJ Preenchidos", valor: true },
 ];
 
 const DESCRICAO =
@@ -192,6 +202,19 @@ describe("camposDoContratoParaPreencher", () => {
     expect(r.some((c) => c.campo === "RESPONSÁVEL")).toBe(true);
   });
 
+  it("o sistema marca 'CPF ou CNPJ Preenchidos' quando há documento e o agente esqueceu a caixa", () => {
+    const semCaixa = DO_AGENTE.filter((c) => c.campo !== "CPF ou CNPJ Preenchidos");
+    expect(preencher({ campos: semCaixa }).find((c) => c.campo === "CPF ou CNPJ Preenchidos")?.valor).toBe(true);
+    // Sem CPF nem CNPJ, não há o que marcar.
+    const semDocumento = semCaixa.filter((c) => c.campo !== "CNPJ [CADASTRO]");
+    expect(preencher({ campos: semDocumento }).some((c) => c.campo === "CPF ou CNPJ Preenchidos")).toBe(false);
+  });
+
+  it("caixa que o agente desmarcou de propósito é marcada pelo sistema quando há documento", () => {
+    const desmarcada = DO_AGENTE.map((c) => (c.campo === "CPF ou CNPJ Preenchidos" ? { ...c, valor: false } : c));
+    expect(preencher({ campos: desmarcada }).find((c) => c.campo === "CPF ou CNPJ Preenchidos")?.valor).toBe(true);
+  });
+
   it("e-mail que não é um e-mail não vira e-mail do responsável", () => {
     const r = preencher({
       campos: DO_AGENTE.map((c) => (c.campo === "E-mail" ? { ...c, valor: "não tenho" } : c)),
@@ -222,8 +245,8 @@ describe("faltamParaOContrato", () => {
   it("depois do que o sistema preenche, sobra o que só o cliente sabe", () => {
     expect(faltamParaOContrato({ campos: completa, camposDaLista: LISTA })).toEqual([
       "RG / ID / RNE",
-      "CPF",
       "Endereço Sócio",
+      "CPF",
     ]);
   });
 
@@ -233,12 +256,12 @@ describe("faltamParaOContrato", () => {
       "RESPONSÁVEL",
       "E-mail do responsável",
       "RG / ID / RNE",
-      "CPF",
       "Endereço Sócio",
       "RAMO DE ATIVIDADE",
       "DATA INICIO CONTRATO",
       "DATA DE ENCERRAMENTO CONTRATO",
       "VENCIMENTO",
+      "CPF",
     ]);
   });
 
@@ -250,6 +273,20 @@ describe("faltamParaOContrato", () => {
       { campo: "📍 Endereço Sócio", valor: "Rua das Palmeiras, 200, Natal - RN" },
     ];
     expect(faltamParaOContrato({ campos: tudo, camposDaLista: LISTA })).toEqual([]);
+  });
+
+  it("⚠ cada campo da regra da Base de clientes é cobrado: sem celular, valor, estado civil ou faturamento a task não sobe", () => {
+    for (const nome of ["CELULAR", "VALOR CONTRATO", "Estado Civil", "FATURAMENTO"]) {
+      const sem = completa.filter((c) => c.campo !== nome);
+      expect(faltamParaOContrato({ campos: sem, camposDaLista: LISTA })).toContain(nome);
+    }
+  });
+
+  it("⚠ 'CPF ou CNPJ Preenchidos' desmarcado não conta: a regra exige a caixa marcada", () => {
+    for (const desmarcado of [false, "false", "não"]) {
+      const sem = completa.map((c) => (c.campo === "CPF ou CNPJ Preenchidos" ? { ...c, valor: desmarcado } : c));
+      expect(faltamParaOContrato({ campos: sem, camposDaLista: LISTA })).toContain("CPF ou CNPJ Preenchidos");
+    }
   });
 
   it("pessoa física não é cobrada pela sede da empresa", () => {
