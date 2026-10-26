@@ -23,8 +23,16 @@ import {
 } from "@/server/consumo/periodo";
 import { tokensProcessados, type Totais } from "@/server/openclaws/agregacao";
 import { NOMES_DOS_DIAS } from "@/server/openclaws/config";
+import { rotuloDaJanela } from "@/server/openclaws/cota-real";
 import { lerConfig, lerHistorico, TETO_DE_LINHAS } from "@/server/openclaws/consulta";
-import { duracaoEmHoras, haQuanto, percentual, usd } from "@/server/openclaws/formato";
+import {
+  aoMinuto,
+  duracaoEmHoras,
+  haQuanto,
+  horaDoResetEmSaoPaulo,
+  percentual,
+  usd,
+} from "@/server/openclaws/formato";
 import { montarPanorama } from "@/server/openclaws/panorama";
 import { Filtros, type Campo } from "@/components/filtros";
 import { GraficoDiario } from "@/components/consumo/grafico-diario";
@@ -130,6 +138,34 @@ export default async function OpenClawsPage({
         </section>
 
         <section className="space-y-2">
+          <TituloDeBloco descricao="Opcional, recomendado: com ele a tela mostra a % que a Anthropic mede, em vez de estimar pelos bloqueios.">
+            Login da conta (cota real)
+          </TituloDeBloco>
+          <div className="space-y-2 text-sm text-muted">
+            <p>
+              O token que os OpenClaws usam para conversar não consegue ler a
+              utilização. No servidor deles, rode{" "}
+              <code className="text-foreground">coletor-cota-login</code>, abra a
+              URL, entre com a conta <strong>dos OpenClaws</strong> e cole o código.{" "}
+              <code className="text-foreground">coletor-cota-login status</code> mostra
+              se o login vale.
+            </p>
+            <p>
+              <strong>Trocar de conta:</strong>{" "}
+              <code className="text-foreground">coletor-cota-login logout &amp;&amp; coletor-cota-login</code>{" "}
+              e entre com a conta nova. Não há variável de ambiente para isso: o par de
+              tokens deste login gira a cada renovação, e quem o reescreve é o coletor.
+            </p>
+            <p>
+              Conferência de que é a conta certa: o reset que a Anthropic informa
+              precisa cair em {NOMES_DOS_DIAS[config.reset.diaSemana]},{" "}
+              {horaDoResetEmSaoPaulo(config.reset.horaUtc)} (São Paulo). Se não cair, a
+              tela avisa.
+            </p>
+          </div>
+        </section>
+
+        <section className="space-y-2">
           <TituloDeBloco descricao="O nome mora aqui, no banco — o coletor só conhece o id do contêiner.">
             Quem é quem, e a cota
           </TituloDeBloco>
@@ -176,6 +212,7 @@ export default async function OpenClawsPage({
     cotaManualUsd: config.cotaManualUsd,
     periodo: { inicio: intervalo.inicio, fim: intervalo.fim },
     dias,
+    leituras: historico.leituras,
   });
 
   const campos: Campo[] = [
@@ -227,12 +264,35 @@ export default async function OpenClawsPage({
         </Aviso>
       ) : null}
 
+      {p.real?.atrasada ? (
+        <Aviso tone="warning">
+          A última leitura da cota real foi <strong>{haQuanto(p.real.lidaEm, agora)}</strong>{" "}
+          ({quando(p.real.lidaEm)}). Os percentuais abaixo voltaram a ser a estimativa
+          pelos bloqueios. O login da conta, no servidor dos OpenClaws, pode ter
+          vencido: <code>coletor-cota-login status</code>.
+        </Aviso>
+      ) : null}
+
+      {p.divergeDoReset && p.real?.semanal?.resetaEm ? (
+        <Aviso tone="warning">
+          A Anthropic informa que a cota recomeça em{" "}
+          <strong>{quando(aoMinuto(p.real.semanal.resetaEm))}</strong>, mas a tela está
+          configurada para <strong>{quando(p.proximoReset)}</strong>. A conta lida pode
+          não ser a dos OpenClaws, ou o horário mudou — confira em Configuração.
+        </Aviso>
+      ) : null}
+
       {bloqueioEmCurso ? (
         <Aviso tone="danger">
           <strong>A conta está bloqueada por cota desde {quando(bloqueioEmCurso.inicio)}.</strong>{" "}
           Os OpenClaws de {bloqueioEmCurso.conteineres.map(nomeDe).join(", ")} estão
           recebendo recusa da Anthropic e não respondem. A cota volta no próximo
           reset: {diaDoReset}, {quando(p.proximoReset)}.
+        </Aviso>
+      ) : p.bloqueadoAgora ? (
+        <Aviso tone="danger">
+          <strong>A Anthropic informa que uma janela da cota chegou a 100%.</strong>{" "}
+          Os OpenClaws devem estar recebendo recusa. Veja a janela na leitura abaixo.
         </Aviso>
       ) : p.projecao?.acabaEm ? (
         <Aviso tone="warning">
@@ -245,10 +305,22 @@ export default async function OpenClawsPage({
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           rotulo="Cota usada nesta semana"
-          valor={p.cota.usd ? percentual(p.doCiclo.fracaoDaCota) : "—"}
+          valor={p.doCiclo.medida || p.cota.usd ? percentual(p.doCiclo.fracaoDaCota) : "—"}
           destaque
           detalhe={
-            p.cota.usd ? (
+            p.doCiclo.medida && p.real ? (
+              <span className="block space-y-1.5">
+                <Barra
+                  fracao={p.doCiclo.fracaoDaCota ?? 0}
+                  titulo="Medida pela Anthropic"
+                />
+                <span className="block">
+                  <strong>Medida pela Anthropic</strong>, lida{" "}
+                  {haQuanto(p.real.lidaEm, agora)}. É a conta inteira, não só os
+                  OpenClaws ({usd(p.doCiclo.totais.usd)} equivalentes deles).
+                </span>
+              </span>
+            ) : p.cota.usd ? (
               <span className="block space-y-1.5">
                 <Barra
                   fracao={p.doCiclo.fracaoDaCota ?? 0}
@@ -258,7 +330,9 @@ export default async function OpenClawsPage({
                   {usd(p.doCiclo.totais.usd)} de ~{usd(p.cota.usd)}
                   {p.cota.origem === "manual"
                     ? " (cota informada)"
-                    : ` (estimada por ${p.cota.amostras} bloqueio${p.cota.amostras === 1 ? "" : "s"})`}
+                    : p.cota.origem === "medida"
+                      ? ` (calibrada por ${p.cota.amostras} leitura${p.cota.amostras === 1 ? "" : "s"} da Anthropic)`
+                      : ` (estimada por ${p.cota.amostras} bloqueio${p.cota.amostras === 1 ? "" : "s"})`}
                 </span>
               </span>
             ) : (
@@ -281,7 +355,7 @@ export default async function OpenClawsPage({
           detalhe={
             p.projecao
               ? p.projecao.acabaEm
-                ? `Se mantiver, a cota acaba em ${quando(p.projecao.acabaEm)}.`
+                ? `Se mantiver, a cota acaba em ${quando(p.projecao.acabaEm)}${p.projecao.base === "medida" ? " (pela % medida)" : ""}.`
                 : p.cota.usd
                   ? "No ritmo atual a cota dura até o reset."
                   : "Sem cota medida, não dá para prever quando acaba."
@@ -300,6 +374,53 @@ export default async function OpenClawsPage({
           }
         />
       </div>
+
+      {/* O que a Anthropic mede, janela por janela. Só existe com o login da
+          conta no servidor dos OpenClaws; sem ele a tela estima pelos bloqueios. */}
+      {p.real ? (
+        <Card className="space-y-3 p-4">
+          <TituloDeBloco
+            icone={<Gauge size={15} aria-hidden />}
+            descricao={`Lida ${haQuanto(p.real.lidaEm, agora)} (${quando(p.real.lidaEm)})${p.real.plano ? ` · plano ${p.real.plano}` : ""}. É a conta INTEIRA: Claude Code em qualquer máquina, claude.ai e o Open Design também gastam daqui. A divisão entre pessoas é proporcional ao consumo dos OpenClaws.`}
+          >
+            Cota medida pela Anthropic
+          </TituloDeBloco>
+          <Tabela
+            cabecalho={
+              <>
+                <th scope="col">Janela</th>
+                <th scope="col" className="w-64">
+                  Usado
+                </th>
+                <th scope="col">Recomeça</th>
+              </>
+            }
+          >
+            {p.real.janelas.map((j) => (
+              <tr key={j.janela}>
+                <td className="whitespace-nowrap">{rotuloDaJanela(j.janela)}</td>
+                <td>
+                  <span className="flex items-center gap-2">
+                    <Barra fracao={j.utilizacao / 100} titulo={`${j.utilizacao}%`} />
+                    <span className="w-12 shrink-0 text-right text-xs font-medium tabular-nums">
+                      {percentual(j.utilizacao / 100)}
+                    </span>
+                  </span>
+                </td>
+                <td className="whitespace-nowrap">
+                  {j.resetaEm ? quando(aoMinuto(j.resetaEm)) : <Meta>—</Meta>}
+                </td>
+              </tr>
+            ))}
+          </Tabela>
+        </Card>
+      ) : (
+        <Aviso tone="neutral">
+          Os percentuais abaixo são <strong>estimados</strong> pelos bloqueios. Para a
+          leitura que a Anthropic mede, faça o login da conta no servidor dos OpenClaws
+          (<code>coletor-cota-login</code> — passo a passo em Configuração).
+        </Aviso>
+      )}
 
       <Filtros campos={campos} valores={busca} />
 
@@ -507,7 +628,17 @@ export default async function OpenClawsPage({
                 {c.atual ? <Badge className="ml-2">em curso</Badge> : null}
               </td>
               <td className="text-right font-medium tabular-nums">{usd(c.totais.usd)}</td>
-              <td className="text-right text-muted tabular-nums">{percentual(c.fracaoDaCota)}</td>
+              <td className="text-right text-muted tabular-nums">
+                {c.fracaoDaCota === null ? (
+                  "—"
+                ) : c.medida ? (
+                  percentual(c.fracaoDaCota)
+                ) : (
+                  <span title="Estimada pelo gasto em US$: não há leitura da Anthropic nesta semana.">
+                    ~{percentual(c.fracaoDaCota)}
+                  </span>
+                )}
+              </td>
               <td className="text-right whitespace-nowrap">
                 {c.horasBloqueadas > 0 ? (
                   <Badge tone="danger">{duracaoEmHoras(c.horasBloqueadas)}</Badge>

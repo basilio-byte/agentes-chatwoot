@@ -60,8 +60,9 @@ dos OpenClaws.
 Pré-requisitos: `python3` e `zstd` (já existem), e o contêiner `docker`.
 
 ```bash
-# 1. o script
+# 1. os scripts
 install -m 755 coletor-consumo-openclaw.py /usr/local/bin/coletor-consumo-openclaw
+install -m 755 coletor-cota-login /usr/local/bin/coletor-cota-login
 
 # 2. o token (gerado em Painel → OpenClaws → Configuração e coletor)
 install -d -m 700 /root/.config/coletor-openclaw
@@ -80,9 +81,55 @@ EOF
 de teste). `--dry-run` mostra o que enviaria; `--salvar-em arquivo.json` grava os
 lotes em vez de enviar (serve para conferir ou testar contra um painel local).
 
-## 4. Operação
+## 4. A % real: o login da conta (opcional, recomendado)
 
-- **Rotacionar o token**: gerar outro na tela e gravar em
+Sem isto a tela **estima** a cota pelos bloqueios. Com isto ela mostra o que a
+Anthropic mede (janela de 5 horas, semana, Opus, Sonnet) e o horário exato do
+reset.
+
+O token que os OpenClaws usam para conversar (`setup-token`) é **só de
+inferência**: pedir a utilização com ele dá `HTTP 403 … user:profile`. A leitura
+precisa de um **segundo login, completo**, feito de propósito:
+
+```bash
+coletor-cota-login            # mostra uma URL; abra, entre com a conta DOS OPENCLAWS,
+                              # autorize e cole o código de volta
+coletor-cota-login status     # o login vale? mostra também a leitura da cota
+```
+
+(`coletor-cota-login` fica em `/usr/local/bin`; o script é
+`scripts/openclaws/coletor-cota-login`.)
+
+⚠ **Tem que ser a MESMA conta dos OpenClaws.** A conferência é o reset: a tela
+mostra um aviso se o que a Anthropic informa não bate com o configurado (o ciclo
+dos OpenClaws recomeça no domingo, 16h de São Paulo). Reset diferente = conta
+errada; saia e entre de novo com a certa.
+
+⚠ **Por que não numa variável de ambiente.** O par de tokens deste login **gira**:
+o acesso dura ~8 h e cada renovação emite um refresh token novo. O coletor
+reescreve o arquivo (`/root/.config/coletor-openclaw/claude/.credentials.json`,
+`600`, com cópia `.bak`); uma variável é fixa e guardaria um token que deixa de
+valer na primeira renovação.
+
+⚠ **O diretório é próprio de propósito.** Os contêineres dos OpenClaws montam o
+`/root/.claude` do servidor, e um login ali trocaria a credencial que eles usam.
+
+**Trocar de conta** (a que os OpenClaws usam mudou):
+
+```bash
+coletor-cota-login logout && coletor-cota-login
+```
+
+e entre no navegador com a conta NOVA. Não há variável nem arquivo para editar.
+Trocar o `setup-token` dos OpenClaws **não** troca este login: são credenciais
+separadas, e a leitura passa a descrever a conta antiga até alguém refazê-lo.
+
+Se o login vencer (refresh recusado), o coletor segue enviando o consumo e a tela
+mostra "leitura atrasada" depois de 6 horas, voltando à cota estimada.
+
+## 5. Operação
+
+- **Rotacionar o token do painel**: gerar outro na tela e gravar em
   `/root/.config/coletor-openclaw/token`. Enquanto isso o coletor leva `401` (fica
   no log) e **não perde nada**: a rodada seguinte relê as últimas 8 horas.
 - **Coletor parou**: a tela avisa quando a última coleta tem mais de 5 horas.

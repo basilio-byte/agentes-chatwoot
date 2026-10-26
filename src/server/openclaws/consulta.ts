@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { LinhaDeLimite, LinhaDeUso } from "./agregacao";
 import { RESET_PADRAO, type Reset } from "./ciclo";
+import type { LeituraDeCota } from "./cota-real";
 import {
   lerConteineres,
   resetValido,
@@ -42,21 +43,32 @@ export async function lerConfig(): Promise<ConfigLida> {
 export type HistoricoLido = {
   linhas: LinhaDeUso[];
   limites: LinhaDeLimite[];
+  /** A cota REAL medida pela Anthropic, de todas as coletas. Vazia sem o login da conta. */
+  leituras: LeituraDeCota[];
   /** Passou do teto: o que veio é parte do histórico, e a tela não deve somar. */
   cortado: boolean;
 };
 
 export async function lerHistorico(): Promise<HistoricoLido> {
-  const [uso, limites] = await Promise.all([
+  const [uso, limites, leituras] = await Promise.all([
     db.openClawUso.findMany({
       orderBy: { hora: "desc" },
       take: TETO_DE_LINHAS + 1,
     }),
     db.openClawLimite.findMany({ orderBy: { hora: "desc" }, take: TETO_DE_LINHAS }),
+    // ~4 janelas × 12 leituras por dia: 20 mil linhas são anos de histórico.
+    db.openClawCota.findMany({ orderBy: { lidaEm: "desc" }, take: 20_000 }),
   ]);
 
   return {
     cortado: uso.length > TETO_DE_LINHAS,
+    leituras: leituras.map((l) => ({
+      lidaEm: l.lidaEm,
+      janela: l.janela,
+      utilizacao: l.utilizacao,
+      resetaEm: l.resetaEm,
+      plano: l.plano,
+    })),
     linhas: uso.slice(0, TETO_DE_LINHAS).map((l) => ({
       hora: l.hora,
       conteiner: l.conteiner,

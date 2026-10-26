@@ -1,3 +1,5 @@
+import { FUSO_SEAHUB } from "@/lib/tempo";
+
 /**
  * `0.214` → `21%`; `0.0466` → `4,7%`; `0.0002` → `<0,1%`. Sem base, `—` em vez de
  * um zero que pareceria folga; e quem gastou pouco NÃO aparece como `0,0%`, que
@@ -7,8 +9,10 @@ export function percentual(fracao: number | null | undefined): string {
   if (fracao == null || !Number.isFinite(fracao)) return "—";
   const pct = fracao * 100;
   if (pct > 0 && pct < 0.1) return "<0,1%";
-  // Abaixo de 10% uma casa decimal faz diferença (4,7% ≠ 5%); acima, é ruído.
-  const casas = pct > 0 && pct < 10 ? 1 : 0;
+  // Abaixo de 10% uma casa decimal faz diferença (4,7% ≠ 5%); acima, é ruído. E
+  // número inteiro não ganha `,0`: a Anthropic informa `4`, não `4,0`.
+  const inteiro = Math.abs(pct - Math.round(pct)) < 1e-9;
+  const casas = pct > 0 && pct < 10 && !inteiro ? 1 : 0;
   return `${new Intl.NumberFormat("pt-BR", {
     minimumFractionDigits: casas,
     maximumFractionDigits: casas,
@@ -21,6 +25,26 @@ export function duracaoEmHoras(horas: number): string {
   if (horas < 48) return `${h} h`;
   const dias = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(horas / 24);
   return `${h} h (${dias} dias)`;
+}
+
+/**
+ * `19` (UTC) → `16:00`, a hora no relógio de São Paulo. Pelo `Intl` e não por
+ * "menos 3": o fuso não tem verão hoje, mas a regra do projeto é não supor isso.
+ */
+export function horaDoResetEmSaoPaulo(horaUtc: number): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: FUSO_SEAHUB,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(Date.UTC(2026, 0, 4, horaUtc)));
+}
+
+/**
+ * O minuto mais próximo. A Anthropic informa o reset segundos ANTES da hora
+ * (`18:59:59`), e exibi-lo sem arredondar mostraria `15:59` em vez de `16:00`.
+ */
+export function aoMinuto(d: Date): Date {
+  return new Date(Math.round(d.getTime() / 60_000) * 60_000);
 }
 
 /** Há quanto tempo foi `quando`, em linguagem de gente: `há 3 h`, `há 2 dias`. */

@@ -127,6 +127,57 @@ describe("validarLote", () => {
   });
 });
 
+describe("validarLote com a leitura real da cota", () => {
+  const cota = {
+    lidaEm: "2026-10-26T11:37:42Z",
+    plano: "max",
+    janelas: [
+      { chave: "seven_day", utilizacao: 5.4, resetaEm: "2026-11-01T18:59:59.617Z" },
+      { chave: "five_hour", utilizacao: 3, resetaEm: null },
+    ],
+  };
+
+  it("aceita e devolve datas, com a leitura truncada ao minuto", () => {
+    const r = validarLote(loteValido({ cota }), AGORA);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.lote.cota?.lidaEm.toISOString()).toBe("2026-10-26T11:37:00.000Z");
+    expect(r.lote.cota?.plano).toBe("max");
+    expect(r.lote.cota?.janelas[0].resetaEm).toBeInstanceOf(Date);
+    expect(r.lote.cota?.janelas[1].resetaEm).toBeNull();
+  });
+
+  it("o lote antigo, sem cota, continua valendo (coletor sem login da conta)", () => {
+    const r = validarLote(loteValido(), AGORA);
+    expect(r.ok && r.lote.cota).toBeNull();
+  });
+
+  it("recusa leitura no futuro e leitura velha demais", () => {
+    expect(erroDe(loteValido({ cota: { ...cota, lidaEm: "2026-10-26T13:00:00Z" } }))).toMatch(/futuro/);
+    expect(erroDe(loteValido({ cota: { ...cota, lidaEm: "2026-10-24T11:00:00Z" } }))).toMatch(/mais de um dia/);
+  });
+
+  it("recusa janela repetida, utilização negativa e chave estranha", () => {
+    const repetida = { ...cota, janelas: [cota.janelas[0], cota.janelas[0]] };
+    expect(erroDe(loteValido({ cota: repetida }))).toMatch(/repetida/);
+    const negativa = { ...cota, janelas: [{ chave: "seven_day", utilizacao: -1 }] };
+    expect(erroDe(loteValido({ cota: negativa }))).toMatch(/inválido/);
+    const estranha = { ...cota, janelas: [{ chave: "../x", utilizacao: 1 }] };
+    expect(erroDe(loteValido({ cota: estranha }))).toMatch(/inválido/);
+  });
+
+  it("recusa leitura sem janela nenhuma e campo que não conhece", () => {
+    expect(erroDe(loteValido({ cota: { ...cota, janelas: [] } }))).toMatch(/inválido/);
+    expect(erroDe(loteValido({ cota: { ...cota, token: "x" } }))).toMatch(/inválido/);
+  });
+
+  it("o resumo diz que veio cota real", () => {
+    const r = validarLote(loteValido({ cota }), AGORA);
+    if (!r.ok) throw new Error(r.erro);
+    expect(resumoDoLote(r.lote)).toContain("cota real de 2 janela(s)");
+  });
+});
+
 describe("resumoDoLote", () => {
   it("diz quantas linhas e a janela, em UTC", () => {
     const r = validarLote(loteValido(), AGORA);

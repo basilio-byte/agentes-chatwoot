@@ -10,6 +10,13 @@ import {
 } from "./agregacao";
 import { detectarBloqueios, horasBloqueadasEntre, type Bloqueio } from "./bloqueios";
 import { amostrasDeCota, estimarCota } from "./calibragem";
+import {
+  calibrarPelasLeituras,
+  cotaRealMaisRecente,
+  utilizacaoSemanalNoCiclo,
+  type CotaReal,
+  type LeituraDeCota,
+} from "./cota-real";
 import { ciclosRecentes, fimDoCiclo, inicioDoCiclo, type Ciclo, type Reset } from "./ciclo";
 import {
   idsDaContaCompartilhada,
@@ -42,15 +49,24 @@ export type EntradaDoPanorama = {
   dias: readonly string[];
   /** Quantos ciclos a tabela de histórico mostra. */
   quantosCiclos?: number;
+  /**
+   * As leituras da cota REAL (o que a Anthropic informa), de todas as coletas.
+   * Ausentes ou velhas: a tela cai na cota estimada pelos bloqueios.
+   */
+  leituras?: readonly LeituraDeCota[];
 };
 
 export type Cota = {
-  /** Nula quando ainda não houve bloqueio para medir e ninguém informou. */
+  /** Em US$ equivalentes dos OpenClaws. Nula quando nada mediu e ninguém informou. */
   usd: number | null;
-  origem: "manual" | "estimada" | "nenhuma";
+  /**
+   * `manual`: informada na tela. `medida`: calibrada pelas leituras reais da
+   * Anthropic. `estimada`: pelos bloqueios da conta. Nessa ordem de preferência.
+   */
+  origem: "manual" | "medida" | "estimada" | "nenhuma";
   minimo: number | null;
   maximo: number | null;
-  /** Quantos bloqueios entraram na estimativa. */
+  /** Quantas leituras (`medida`) ou bloqueios (`estimada`) entraram no número. */
   amostras: number;
   /** De onde veio cada número, para a tela mostrar a conta e não só o resultado. */
   detalhe: {
@@ -75,7 +91,11 @@ export type PessoaNoPanorama = {
   compartilhada: boolean;
   ciclo: Totais;
   periodo: Totais;
-  /** Fração da COTA que esta pessoa gastou no ciclo. Nulo sem cota ou fora da conta. */
+  /**
+   * Fração da COTA que esta pessoa gastou no ciclo. Nulo sem cota ou fora da
+   * conta. Com leitura real, é a % que a Anthropic mediu repartida pelo consumo
+   * dos OpenClaws; sem ela, o gasto em US$ sobre a cota estimada.
+   */
   fracaoDaCota: number | null;
   /** Fração do que a conta gastou no ciclo. Nulo fora da conta ou sem gasto. */
   parteDoCiclo: number | null;
@@ -87,6 +107,8 @@ export type CicloNoHistorico = Ciclo & {
   /** Só a conta compartilhada. */
   totais: Totais;
   fracaoDaCota: number | null;
+  /** A % veio de leitura real da Anthropic (e não da estimativa em US$). */
+  medida: boolean;
   horasBloqueadas: number;
   porPessoa: { conteiner: string; nome: string; compartilhada: boolean; usd: number }[];
 };
@@ -96,6 +118,8 @@ export type Projecao = {
   usdPorHora: number;
   /** Quando a cota acaba, se o ritmo se mantiver e isso acontecer antes do reset. */
   acabaEm: Date | null;
+  /** De onde saiu a previsão: a % medida da Anthropic ou a cota estimada em US$. */
+  base: "medida" | "estimada" | null;
 };
 
 export type Panorama = {
@@ -104,7 +128,14 @@ export type Panorama = {
   proximoReset: Date;
   cota: Cota;
   /** O ciclo atual, só da conta compartilhada. */
-  doCiclo: { totais: Totais; fracaoDaCota: number | null };
+  doCiclo: { totais: Totais; fracaoDaCota: number | null; medida: boolean };
+  /** A leitura real mais recente, mesmo velha (a tela diz que está atrasada). */
+  real: CotaReal | null;
+  /**
+   * O reset que a Anthropic informa não bate com o configurado: a conta lida pode
+   * ser outra, ou o horário mudou. A tela avisa; o ciclo continua o configurado.
+   */
+  divergeDoReset: boolean;
   projecao: Projecao | null;
   bloqueadoAgora: boolean;
   bloqueios: Bloqueio[];
@@ -124,6 +155,16 @@ const HORA_MS = 3_600_000;
 
 const porUsdDecrescente = (a: Totais, b: Totais) =>
   b.usd - a.usd || b.chamadas - a.chamadas;
+
+/** A Anthropic informa o reset com décimos de segundo antes da hora (`18:59:59.6`): vale o minuto mais próximo. */
+const MINUTO_MS = 60_000;
+const TOLERANCIA_DO_RESET_MS = 10 * MINUTO_MS;
+
+function divergeDoReset(medido: Date | null, configurado: Date): boolean {
+  if (!medido) return false;
+  const arredondado = Math.round(medido.getTime() / MINUTO_MS) * MINUTO_MS;
+  return Math.abs(arredondado - configurado.getTime()) > TOLERANCIA_DO_RESET_MS;
+}
 
 export function montarPanorama(e: EntradaDoPanorama): Panorama {
   const { agora, linhas, limites, conteineres, reset } = e;
@@ -147,6 +188,14 @@ export function montarPanorama(e: EntradaDoPanorama): Panorama {
     descartada: !estimativa || estimativa.descartadas.includes(a),
   }));
 
+  // --- A cota REAL, quando a conta foi lida ----------------------------------
+  const leituras = e.leituras ?? [];
+  const real = cotaRealMaisRecente(leituras, agora);
+  // Leitura atrasada aparece na tela, mas não manda nos números: ela descreve
+  // uma hora que já passou.
+  const realAgora = real && !real.atrasada ? real : null;
+  const calibragem = calibrarPelasLeituras(leituras, usdPorHora(daConta), reset);
+
   const cota: Cota =
     e.cotaManualUsd != null && e.cotaManualUsd > 0
       ? {
@@ -157,7 +206,16 @@ export function montarPanorama(e: EntradaDoPanorama): Panorama {
           amostras: 0,
           detalhe,
         }
-      : estimativa
+      : calibragem
+        ? {
+            usd: calibragem.usd,
+            origem: "medida",
+            minimo: null,
+            maximo: null,
+            amostras: calibragem.leituras,
+            detalhe,
+          }
+        : estimativa
         ? {
             usd: estimativa.usd,
             origem: "estimada",
@@ -169,6 +227,8 @@ export function montarPanorama(e: EntradaDoPanorama): Panorama {
         : { usd: null, origem: "nenhuma", minimo: null, maximo: null, amostras: 0, detalhe };
 
   const fracaoDe = (usd: number) => (cota.usd ? usd / cota.usd : null);
+  /** A % da semana que a Anthropic mediu agora, de 0 a 1. */
+  const fracaoMedida = realAgora?.semanal ? realAgora.semanal.utilizacao / 100 : null;
 
   // --- O ciclo em curso ------------------------------------------------------
   const inicio = inicioDoCiclo(agora, reset);
@@ -188,12 +248,21 @@ export function montarPanorama(e: EntradaDoPanorama): Panorama {
   if (horasDecorridas >= HORAS_MINIMAS_PARA_PROJETAR && doCicloCompartilhado.usd > 0) {
     const porHora = doCicloCompartilhado.usd / horasDecorridas;
     let acabaEm: Date | null = null;
-    if (cota.usd && doCicloCompartilhado.usd < cota.usd) {
+    let base: Projecao["base"] = null;
+
+    if (fracaoMedida !== null && fracaoMedida > 0 && fracaoMedida < 1) {
+      // Pelo ritmo da % que a Anthropic mede — a conta inteira, não só os OpenClaws.
+      const horasAteAcabar = ((1 - fracaoMedida) / fracaoMedida) * horasDecorridas;
+      const quando = new Date(agora.getTime() + horasAteAcabar * HORA_MS);
+      if (quando.getTime() < cicloAtual.fim.getTime()) acabaEm = quando;
+      base = "medida";
+    } else if (cota.usd && doCicloCompartilhado.usd < cota.usd) {
       const horasAteAcabar = (cota.usd - doCicloCompartilhado.usd) / porHora;
       const quando = new Date(agora.getTime() + horasAteAcabar * HORA_MS);
       if (quando.getTime() < cicloAtual.fim.getTime()) acabaEm = quando;
+      base = "estimada";
     }
-    projecao = { usdPorHora: porHora, acabaEm };
+    projecao = { usdPorHora: porHora, acabaEm, base };
   }
 
   // --- Por pessoa -------------------------------------------------------------
@@ -216,17 +285,27 @@ export function montarPanorama(e: EntradaDoPanorama): Panorama {
       })
       .sort((a, b) => porUsdDecrescente(a.ciclo, b.ciclo) || porUsdDecrescente(a.periodo, b.periodo));
 
+    const parteDoCiclo =
+      compartilhada && doCicloCompartilhado.usd > 0
+        ? ciclo.usd / doCicloCompartilhado.usd
+        : null;
+
+    // Com leitura real, a % da conta é repartida pelo consumo de cada um (a soma
+    // das pessoas dá a % medida). Sem ela, o gasto em US$ sobre a cota estimada.
+    let fracaoDaCota: number | null = null;
+    if (compartilhada) {
+      fracaoDaCota =
+        fracaoMedida !== null ? fracaoMedida * (parteDoCiclo ?? 0) : fracaoDe(ciclo.usd);
+    }
+
     return {
       conteiner: id,
       nome: nomeDoConteiner(id, conteineres),
       compartilhada,
       ciclo,
       periodo,
-      fracaoDaCota: compartilhada ? fracaoDe(ciclo.usd) : null,
-      parteDoCiclo:
-        compartilhada && doCicloCompartilhado.usd > 0
-          ? ciclo.usd / doCicloCompartilhado.usd
-          : null,
+      fracaoDaCota,
+      parteDoCiclo,
       agentes,
     };
   });
@@ -267,11 +346,16 @@ export function montarPanorama(e: EntradaDoPanorama): Panorama {
         .filter((p) => p.usd > 0)
         .sort((a, b) => b.usd - a.usd);
 
+      // Semana com leitura real mostra o que a Anthropic mediu no fim dela; as
+      // anteriores à primeira leitura seguem pela estimativa em US$.
+      const lida = utilizacaoSemanalNoCiclo(leituras, ciclo);
+
       return {
         ...ciclo,
         atual: i === 0,
         totais,
-        fracaoDaCota: fracaoDe(totais.usd),
+        fracaoDaCota: lida !== null ? lida / 100 : fracaoDe(totais.usd),
+        medida: lida !== null,
         horasBloqueadas: horasBloqueadasEntre(
           bloqueios,
           ciclo.inicio,
@@ -289,10 +373,18 @@ export function montarPanorama(e: EntradaDoPanorama): Panorama {
     cota,
     doCiclo: {
       totais: doCicloCompartilhado,
-      fracaoDaCota: fracaoDe(doCicloCompartilhado.usd),
+      fracaoDaCota: fracaoMedida ?? fracaoDe(doCicloCompartilhado.usd),
+      medida: fracaoMedida !== null,
     },
+    real,
+    divergeDoReset: divergeDoReset(realAgora?.semanal?.resetaEm ?? null, cicloAtual.fim),
     projecao,
-    bloqueadoAgora: bloqueios[0]?.emCurso ?? false,
+    // O bloqueio sai dos 429 recebidos OU de a Anthropic dizer que uma janela chegou a 100%.
+    bloqueadoAgora:
+      (bloqueios[0]?.emCurso ?? false) ||
+      (realAgora?.janelas ?? []).some(
+        (j) => (j.janela === "seven_day" || j.janela === "five_hour") && j.utilizacao >= 100,
+      ),
     bloqueios,
     pessoas,
     porModelo,

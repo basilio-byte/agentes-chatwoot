@@ -37,6 +37,18 @@ export async function gravarLote(lote: Lote, agora: Date = new Date()) {
     }),
     db.openClawLimite.deleteMany({ where: { hora: janela, conteiner: dosContainers } }),
     db.openClawLimite.createMany({ data: lote.limites }),
+    // A leitura real da cota, quando veio. `skipDuplicates`: reenviar o mesmo lote
+    // (ou duas rodadas no mesmo minuto) não pode derrubar a transação.
+    db.openClawCota.createMany({
+      data: (lote.cota?.janelas ?? []).map((j) => ({
+        lidaEm: lote.cota!.lidaEm,
+        janela: j.chave,
+        utilizacao: j.utilizacao,
+        resetaEm: j.resetaEm,
+        plano: lote.cota!.plano,
+      })),
+      skipDuplicates: true,
+    }),
     // `upsert`: a linha única existe desde que o token foi gerado, mas a coleta
     // não deve depender disso para guardar o que leu.
     db.openClawConfig.upsert({

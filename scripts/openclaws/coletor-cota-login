@@ -1,0 +1,52 @@
+#!/bin/sh
+# Login da conta Claude dos OpenClaws, só para LER a cota — roda no SERVIDOR DOS
+# OPENCLAWS.
+#
+# O token que os OpenClaws usam para conversar (setup-token) é só de inferência:
+# a Anthropic não deixa ele ler a utilização (`HTTP 403 ... user:profile`). Este
+# comando faz um SEGUNDO login, completo, num diretório próprio. O coletor o usa
+# para ler a cota e nada mais; a inferência dos OpenClaws nunca toca nele.
+#
+#   coletor-cota-login            entra: mostra uma URL, abra no navegador, autorize e cole o código
+#   coletor-cota-login status     o login existe e vale? mostra também a leitura da cota
+#   coletor-cota-login logout     remove o login
+#
+# TROCAR DE CONTA (a que os OpenClaws usam mudou):
+#   coletor-cota-login logout && coletor-cota-login
+# e entre no navegador com a conta NOVA. Nada de variável de ambiente nem de editar
+# arquivo: este login gira de sozinho (o acesso vale ~8 h e cada renovação emite um
+# refresh token novo), então não cabe numa variável fixa.
+#
+# ⚠ O diretório é próprio de propósito. Os contêineres dos OpenClaws montam o
+# /root/.claude do servidor, e um login ali trocaria a credencial deles.
+set -e
+
+DIR="${COLETOR_CLAUDE_DIR:-/root/.config/coletor-openclaw/claude}"
+mkdir -p "$DIR"
+chmod 700 "$DIR"
+
+# Sem os tokens de inferência no ambiente, para o CLI usar (e escrever) só este login.
+run() {
+  exec env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR="$DIR" "$@"
+}
+
+case "${1:-login}" in
+  login)
+    echo "Login da cota dos OpenClaws (só leitura da cota; a inferência não usa este login)."
+    echo "Abra a URL abaixo no navegador, entre com a conta dos OpenClaws, autorize e cole o código aqui."
+    echo
+    run claude auth login --claudeai
+    ;;
+  status)
+    env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR="$DIR" claude auth status --text || true
+    echo
+    exec /usr/bin/python3 /usr/local/bin/coletor-consumo-openclaw --ver-cota
+    ;;
+  logout)
+    run claude auth logout
+    ;;
+  *)
+    echo "uso: coletor-cota-login [login|status|logout]" >&2
+    exit 2
+    ;;
+esac

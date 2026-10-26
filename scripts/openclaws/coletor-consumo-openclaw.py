@@ -198,6 +198,179 @@ def recusas_do_log(conteiner, dia, desde, ate, limites, falhas):
         limites[k] = max(limites[k], n)
 
 
+# --- A cota REAL da conta ----------------------------------------------------
+#
+# O token de inferência dos OpenClaws (setup-token) só serve para inferir: pedir a
+# utilização com ele dá `HTTP 403 ... user:profile`. Por isso a leitura usa um
+# SEGUNDO login, completo, feito de propósito por `coletor-cota-login` num
+# diretório próprio — nunca no `/root/.claude`, que os contêineres montam.
+#
+# Esse login tem um par de tokens que GIRA: o acesso dura umas 8 h e cada
+# renovação emite um refresh token novo. Por isso ele mora num arquivo que o
+# coletor reescreve, e não numa variável de ambiente, que é fixa.
+
+DIRETORIO_DO_LOGIN = "/root/.config/coletor-openclaw/claude"
+URL_DO_USO = "https://api.anthropic.com/api/oauth/usage"
+URL_DA_RENOVACAO = "https://platform.claude.com/v1/oauth/token"
+# Cliente público do próprio Claude Code (o mesmo do login que gerou o arquivo).
+CLIENT_ID_DO_CLAUDE_CODE = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+# Renova com folga: um token que vence no meio da leitura daria 401 à toa.
+MARGEM_DA_RENOVACAO_MS = 10 * 60 * 1000
+JANELAS_CONHECIDAS = ("five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps")
+CHAVE_VALIDA = re.compile(r"^[\w:.-]{1,60}$")
+
+
+def _json_http(url, metodo="GET", corpo=None, cabecalhos=None, tempo=30):
+    dados = json.dumps(corpo).encode("utf-8") if corpo is not None else None
+    req = urllib.request.Request(url, data=dados, method=metodo, headers=cabecalhos or {})
+    try:
+        with urllib.request.urlopen(req, timeout=tempo) as r:
+            return r.status, json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as erro:
+        try:
+            return erro.code, json.loads(erro.read().decode("utf-8") or "{}")
+        except ValueError:
+            return erro.code, {}
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as erro:
+        return 0, {"erro": str(erro)}
+
+
+def _gravar_credencial(caminho, dados):
+    """Reescreve o arquivo do login sem nunca deixá-lo pela metade: cópia, temporário, troca atômica."""
+    if os.path.exists(caminho):
+        copia = caminho + ".bak"
+        with open(caminho, "rb") as origem, open(copia, "wb") as destino:
+            destino.write(origem.read())
+        os.chmod(copia, 0o600)
+    temporario = caminho + ".novo"
+    with open(temporario, "w", encoding="utf-8") as saida:
+        json.dump(dados, saida)
+    os.chmod(temporario, 0o600)
+    os.replace(temporario, caminho)
+
+
+def _renovar(caminho, dados, avisos):
+    """Troca o refresh token por um acesso novo e guarda o par novo. `None` se não deu."""
+    oauth = dados.get("claudeAiOauth") or {}
+    refresh = oauth.get("refreshToken")
+    if not refresh:
+        avisos.append("cota real: o login não tem refresh token; refaça com coletor-cota-login")
+        return None
+    status, resposta = _json_http(
+        URL_DA_RENOVACAO,
+        "POST",
+        {"grant_type": "refresh_token", "refresh_token": refresh, "client_id": CLIENT_ID_DO_CLAUDE_CODE},
+        {"Content-Type": "application/json", "User-Agent": "claude-code/2.1"},
+    )
+    acesso = resposta.get("access_token") if isinstance(resposta, dict) else None
+    if status != 200 or not acesso:
+        avisos.append(f"cota real: a renovação do login falhou (HTTP {status}); refaça com coletor-cota-login")
+        return None
+    oauth["accessToken"] = acesso
+    # A Anthropic gira o refresh token; se vier um novo, é ele que vale a partir de agora.
+    if resposta.get("refresh_token"):
+        oauth["refreshToken"] = resposta["refresh_token"]
+    if isinstance(resposta.get("expires_in"), (int, float)):
+        oauth["expiresAt"] = int(time.time() * 1000 + resposta["expires_in"] * 1000)
+    dados["claudeAiOauth"] = oauth
+    _gravar_credencial(caminho, dados)
+    return acesso
+
+
+def _janelas_da_resposta(corpo):
+    """Aceita o corpo cru do endpoint e o embrulhado em `rate_limits`. Devolve só o que tem percentual."""
+    limites = corpo.get("rate_limits") if isinstance(corpo.get("rate_limits"), dict) else corpo
+    janelas = []
+
+    def acrescentar(chave, bruto):
+        if not isinstance(bruto, dict) or not CHAVE_VALIDA.match(chave):
+            return
+        uso = bruto.get("utilization")
+        if isinstance(uso, bool) or not isinstance(uso, (int, float)):
+            return
+        reseta = None
+        if isinstance(bruto.get("resets_at"), str) and bruto["resets_at"]:
+            try:
+                # A Anthropic informa o reset com décimos ANTES da hora (18:59:59,6): vale o segundo mais próximo.
+                reseta = iso(datetime.datetime.fromtimestamp(round(analisar_data(bruto["resets_at"]).timestamp()), datetime.timezone.utc))
+            except ValueError:
+                reseta = None
+        janelas.append({"chave": chave, "utilizacao": float(uso), "resetaEm": reseta})
+
+    for chave in JANELAS_CONHECIDAS:
+        acrescentar(chave, limites.get(chave))
+    escopadas = limites.get("model_scoped")
+    if isinstance(escopadas, list):
+        for entrada in escopadas:
+            nome = entrada.get("display_name") if isinstance(entrada, dict) else None
+            if isinstance(nome, str) and nome.strip():
+                acrescentar("model:" + re.sub(r"[^\w.-]+", "-", nome.strip().lower()), entrada)
+    return janelas
+
+
+def ler_cota(avisos, diretorio=DIRETORIO_DO_LOGIN):
+    """A cota real da conta, ou `None` (sem login, login vencido ou a Anthropic não respondeu)."""
+    caminho = os.path.join(diretorio, ".credentials.json")
+    if not os.path.exists(caminho):
+        return None  # sem o login da conta: a tela segue na cota estimada, sem reclamar
+
+    try:
+        import fcntl
+
+        trava = open(os.path.join(diretorio, ".trava"), "w")
+        fcntl.flock(trava, fcntl.LOCK_EX | fcntl.LOCK_NB)  # duas rodadas ao mesmo tempo girariam o token em dobro
+    except (ImportError, OSError):
+        avisos.append("cota real: outra rodada está lendo a cota; pulei")
+        return None
+
+    try:
+        with open(caminho, encoding="utf-8") as f:
+            dados = json.load(f)
+        oauth = dados.get("claudeAiOauth") or {}
+        acesso = oauth.get("accessToken")
+        vence = oauth.get("expiresAt")
+        if not acesso:
+            avisos.append("cota real: o arquivo do login não tem token; refaça com coletor-cota-login")
+            return None
+        if isinstance(vence, (int, float)) and vence - time.time() * 1000 < MARGEM_DA_RENOVACAO_MS:
+            acesso = _renovar(caminho, dados, avisos)
+            if not acesso:
+                return None
+
+        cabecalhos = {
+            "Authorization": f"Bearer {acesso}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json",
+            "User-Agent": "claude-code/2.1",
+        }
+        status, corpo = _json_http(URL_DO_USO, "GET", None, cabecalhos)
+        if status == 401:
+            acesso = _renovar(caminho, dados, avisos)
+            if not acesso:
+                return None
+            cabecalhos["Authorization"] = f"Bearer {acesso}"
+            status, corpo = _json_http(URL_DO_USO, "GET", None, cabecalhos)
+        if status != 200 or not isinstance(corpo, dict):
+            avisos.append(f"cota real: a leitura de uso falhou (HTTP {status})")
+            return None
+
+        janelas = _janelas_da_resposta(corpo)
+        if not janelas:
+            avisos.append("cota real: a resposta não trouxe nenhuma janela com percentual")
+            return None
+        plano = corpo.get("subscription_type") or oauth.get("subscriptionType")
+        return {
+            "lidaEm": iso(agora_utc()),
+            "plano": str(plano)[:40] if plano else None,
+            "janelas": janelas,
+        }
+    except (OSError, ValueError) as erro:
+        avisos.append(f"cota real: {erro}")
+        return None
+    finally:
+        trava.close()
+
+
 def montar_lote(desde, ate, conteineres, uso, limites):
     return {
         "desde": iso(desde),
@@ -268,9 +441,26 @@ def main():
     ap.add_argument("--ignorar", default=os.environ.get("COLETOR_IGNORAR", ""), help="ids de contêiner, separados por vírgula")
     ap.add_argument("--url", default=None)
     ap.add_argument("--arquivo-do-token", default=ARQUIVO_DO_TOKEN)
+    ap.add_argument("--sem-cota", action="store_true", help="não lê a cota real, mesmo com o login da conta feito")
+    ap.add_argument("--ver-cota", action="store_true", help="só lê e mostra a cota real da conta; não lê nem envia o consumo")
+    ap.add_argument("--diretorio-do-login", default=DIRETORIO_DO_LOGIN)
     args = ap.parse_args()
 
     t0 = time.time()
+
+    if args.ver_cota:
+        avisos = []
+        cota = ler_cota(avisos, args.diretorio_do_login)
+        for a in avisos:
+            print(f"aviso: {a}", file=sys.stderr)
+        if not cota:
+            print("sem leitura da cota real (login da conta ausente, vencido ou sem resposta)")
+            return 1
+        print(f"lida em {cota['lidaEm']}, plano {cota['plano']}")
+        for j in cota["janelas"]:
+            print(f"  {j['chave']}: {j['utilizacao']:g}% — recomeça {j['resetaEm']}")
+        return 0
+
     ignorar = {i.strip() for i in args.ignorar.split(",") if i.strip()}
     conteineres = sorted(
         c
@@ -310,6 +500,11 @@ def main():
         inicio = fim
 
     falhas, falhou_envio, enviados, guardados = [], False, 0, []
+
+    # A cota real vai SÓ no último lote (o que cobre agora). Sem o login da conta,
+    # ou com ele vencido, o lote segue sem ela e o painel fica na cota estimada.
+    cota = None if args.sem_cota else ler_cota(falhas, args.diretorio_do_login)
+
     for (a, b) in janelas:
         vistos, uso, limites = set(), collections.defaultdict(lambda: [0, 0, 0, 0, 0]), collections.defaultdict(int)
         for c in conteineres:
@@ -324,8 +519,14 @@ def main():
             dia += datetime.timedelta(days=1)
 
         lote = montar_lote(a, b, conteineres, uso, limites)
-        for parte in partir_em_lotes(lote):
-            resumo = f"{parte['desde']} -> {parte['ate']}: {len(parte['uso'])} linhas de uso, {len(parte['limites'])} de recusa"
+        partes = partir_em_lotes(lote)
+        if cota and b == ate:
+            partes[-1]["cota"] = cota
+        for parte in partes:
+            resumo = (
+                f"{parte['desde']} -> {parte['ate']}: {len(parte['uso'])} linhas de uso, {len(parte['limites'])} de recusa"
+                + (f", cota real de {len(parte['cota']['janelas'])} janela(s)" if parte.get("cota") else "")
+            )
             if args.dry_run or args.salvar_em:
                 print(f"[sem envio] {resumo}")
                 guardados.append(parte)

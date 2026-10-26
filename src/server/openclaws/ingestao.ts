@@ -47,6 +47,28 @@ const limiteSchema = z
   })
   .strict();
 
+const janelaDaCotaSchema = z
+  .object({
+    chave: z.string().regex(/^[\w:.-]{1,60}$/),
+    // Pode passar de 100 em plano com uso extra liberado.
+    utilizacao: z.number().min(0).max(1000),
+    resetaEm: hora.nullable().optional(),
+  })
+  .strict();
+
+/**
+ * A leitura REAL da cota, feita pelo coletor com o login completo da conta.
+ * Opcional: o coletor sem esse login (ou com ele vencido) manda o lote sem ela, e
+ * o painel segue na cota estimada pelos bloqueios.
+ */
+const cotaSchema = z
+  .object({
+    lidaEm: hora,
+    plano: z.string().max(40).nullable().optional(),
+    janelas: z.array(janelaDaCotaSchema).min(1).max(12),
+  })
+  .strict();
+
 const loteSchema = z
   .object({
     desde: hora,
@@ -54,6 +76,7 @@ const loteSchema = z
     conteineres: z.array(idDoConteiner).min(1).max(20),
     uso: z.array(usoSchema).max(MAX_DE_LINHAS_POR_LOTE),
     limites: z.array(limiteSchema).max(MAX_DE_LINHAS_POR_LOTE),
+    cota: cotaSchema.optional(),
   })
   .strict();
 
@@ -77,13 +100,25 @@ export type LimiteDoLote = {
   quantidade: number;
 };
 
+export type CotaDoLote = {
+  /** Truncada ao minuto: é a metade da chave única da leitura. */
+  lidaEm: Date;
+  plano: string | null;
+  janelas: { chave: string; utilizacao: number; resetaEm: Date | null }[];
+};
+
 export type Lote = {
   desde: Date;
   ate: Date;
   conteineres: string[];
   uso: UsoDoLote[];
   limites: LimiteDoLote[];
+  cota: CotaDoLote | null;
 };
+
+/** Leitura datada de mais de um dia atrás não descreve o presente: recusar evita regravar o passado. */
+const MAX_DE_IDADE_DA_LEITURA_MS = 24 * HORA_MS;
+const MINUTO_MS = 60_000;
 
 export type ResultadoDaValidacao =
   | { ok: true; lote: Lote }
@@ -104,7 +139,7 @@ export function validarLote(bruto: unknown, agora: Date = new Date()): Resultado
     const onde = primeiro?.path.length ? primeiro.path.join(".") : "corpo";
     return { ok: false, erro: `Lote inválido em ${onde}: ${primeiro?.message ?? "formato"}.` };
   }
-  const { desde: d, ate: a, conteineres, uso, limites } = lido.data;
+  const { desde: d, ate: a, conteineres, uso, limites, cota } = lido.data;
   const desde = new Date(d);
   const ate = new Date(a);
 
@@ -158,11 +193,39 @@ export function validarLote(bruto: unknown, agora: Date = new Date()): Resultado
     limitesLidos.push({ ...linha, hora: h });
   }
 
-  return { ok: true, lote: { desde, ate, conteineres, uso: usoLido, limites: limitesLidos } };
+  let cotaLida: CotaDoLote | null = null;
+  if (cota) {
+    const lidaEm = new Date(Math.floor(new Date(cota.lidaEm).getTime() / MINUTO_MS) * MINUTO_MS);
+    if (lidaEm.getTime() > agora.getTime() + 10 * MINUTO_MS) {
+      return { ok: false, erro: "cota.lidaEm está no futuro." };
+    }
+    if (agora.getTime() - lidaEm.getTime() > MAX_DE_IDADE_DA_LEITURA_MS) {
+      return { ok: false, erro: "cota.lidaEm tem mais de um dia: leitura velha não entra." };
+    }
+    const chaves = new Set(cota.janelas.map((j) => j.chave));
+    if (chaves.size !== cota.janelas.length) {
+      return { ok: false, erro: "cota.janelas tem janela repetida." };
+    }
+    cotaLida = {
+      lidaEm,
+      plano: cota.plano?.trim() || null,
+      janelas: cota.janelas.map((j) => ({
+        chave: j.chave,
+        utilizacao: j.utilizacao,
+        resetaEm: j.resetaEm ? new Date(j.resetaEm) : null,
+      })),
+    };
+  }
+
+  return {
+    ok: true,
+    lote: { desde, ate, conteineres, uso: usoLido, limites: limitesLidos, cota: cotaLida },
+  };
 }
 
 /** O que o coletor vê na tela depois de cada lote. */
 export function resumoDoLote(lote: Lote): string {
   const fmt = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
-  return `${lote.uso.length} linhas de uso e ${lote.limites.length} de recusa, ${fmt(lote.desde)} a ${fmt(lote.ate)} UTC`;
+  const cota = lote.cota ? `, cota real de ${lote.cota.janelas.length} janela(s)` : "";
+  return `${lote.uso.length} linhas de uso e ${lote.limites.length} de recusa, ${fmt(lote.desde)} a ${fmt(lote.ate)} UTC${cota}`;
 }

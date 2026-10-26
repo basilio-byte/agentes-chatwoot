@@ -3678,6 +3678,24 @@ parte deste sistema de atendimento, só são medidos por ele. Tela **`/openclaws
   (≈ US$ 1.050, ±16%). A estimativa descarta amostra abaixo de metade da mediana
   (ciclo com dados incompletos) e se ajusta a cada bloqueio novo. Cota informada à
   mão na tela vence a estimada.
+- ⚠ **A % REAL vem de um segundo login, completo, e NÃO cabe numa variável de
+  ambiente** (pedido do usuário em 26/10/2026, que perguntou). O token de
+  inferência (`setup-token`, 1 ano) não lê a utilização; o login completo
+  (`coletor-cota-login`, `claude auth login --claudeai` num diretório PRÓPRIO,
+  `/root/.config/coletor-openclaw/claude`) gera um par que **gira**: o acesso dura
+  ~8 h e cada renovação emite um refresh token novo, que só um arquivo reescrito
+  pelo coletor acompanha. **Trocar de conta = `coletor-cota-login logout &&
+  coletor-cota-login`.** Nunca logar no `/root/.claude`: os contêineres o montam, e
+  o login ali trocaria a credencial dos OpenClaws.
+- **Ordem de preferência da cota**: informada na tela > calibrada pelas leituras
+  reais > estimada pelos bloqueios. A % da semana é a medida quando há leitura de
+  menos de 6 h; mais velha que isso a tela a mostra como "atrasada" e volta à
+  estimativa. A divisão entre pessoas é proporcional ao consumo dos OpenClaws (a
+  % medida é da CONTA INTEIRA: Claude Code, claude.ai e o Open Design também
+  gastam dela). Leitura de 100% numa janela conta como bloqueio mesmo sem 429.
+- ⚠ **Conferência de que a conta lida é a dos OpenClaws: o reset.** O deles cai no
+  domingo 19:00 UTC; o do proxy da Seahub, às 10:59. Reset informado fora de 10 min
+  do configurado vira aviso na tela (`divergeDoReset`).
 - ⚠ **Bloqueio é recusa CONTÍNUA, não 429 solto** (`bloqueios.ts`): ao menos 10
   recusas ao longo de ao menos 3 horas, sem buraco de mais de 3 h. Pico de
   requisições por minuto também devolve 429 e passa sozinho.

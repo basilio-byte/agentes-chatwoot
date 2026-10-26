@@ -1486,6 +1486,29 @@ model OpenClawLimite {
   @@index([hora])
 }
 
+/// A cota REAL da conta Claude, como a Anthropic informa: uma linha por janela a
+/// cada coleta. Só existe depois do login completo da conta no servidor dos
+/// OpenClaws (o token de inferência deles não consegue ler a utilização).
+///
+/// Sem estas linhas a tela cai na cota ESTIMADA pelos bloqueios — que continua
+/// sendo a rede de segurança, e a referência para conferir a leitura real.
+model OpenClawCota {
+  id         String    @id @default(cuid())
+  /// Instante da leitura, com minuto cheio.
+  lidaEm     DateTime
+  /// five_hour · seven_day · seven_day_opus · seven_day_sonnet · …
+  janela     String
+  /// Percentual usado da janela, de 0 a 100 (pode passar de 100 em plano com uso extra).
+  utilizacao Float
+  /// Quando a janela recomeça, segundo a Anthropic.
+  resetaEm   DateTime?
+  /// O plano que a conta informou (max, team, pro…).
+  plano      String?
+
+  @@unique([lidaEm, janela])
+  @@index([lidaEm])
+}
+
 /// Linha ÚNICA (`id = "unico"`): token do coletor e o que a tela edita.
 model OpenClawConfig {
   id             String    @id @default("unico")
