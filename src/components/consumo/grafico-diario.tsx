@@ -69,7 +69,33 @@ function topoDoEixo(maximo: number) {
   return 10 * magnitude;
 }
 
-export function GraficoDiario({ pontos: diarios }: { pontos: PontoDoDia[] }) {
+/**
+ * Os textos de `/consumo` são os padrões. `/openclaws` reaproveita o gráfico e
+ * troca "Custo" por "Custo equivalente" e "execução" por "chamada": o número é a
+ * tarifa de API aplicada a uma assinatura, e chamá-lo de custo pelado
+ * confundiria com fatura.
+ */
+export type RotulosDoGrafico = {
+  custo: string;
+  execucoes: string;
+  /** Como a contagem aparece no balão e na descrição de acessibilidade. */
+  unidade: string;
+};
+
+const ROTULOS_PADRAO: RotulosDoGrafico = {
+  custo: "Custo",
+  execucoes: "Execuções",
+  unidade: "execução(ões)",
+};
+
+export function GraficoDiario({
+  pontos: diarios,
+  rotulos: personalizados,
+}: {
+  pontos: PontoDoDia[];
+  rotulos?: Partial<RotulosDoGrafico>;
+}) {
+  const rotulos = { ...ROTULOS_PADRAO, ...personalizados };
   const [medida, setMedida] = useState<Medida>("custo");
   const [emFoco, setEmFoco] = useState<number | null>(null);
   const [verTabela, setVerTabela] = useState(false);
@@ -118,7 +144,7 @@ export function GraficoDiario({ pontos: diarios }: { pontos: PontoDoDia[] }) {
                   : "text-muted hover:text-foreground",
               )}
             >
-              {m.rotulo}
+              {m.id === "custo" ? rotulos.custo : m.id === "execucoes" ? rotulos.execucoes : m.rotulo}
             </button>
           ))}
         </div>
@@ -139,8 +165,8 @@ export function GraficoDiario({ pontos: diarios }: { pontos: PontoDoDia[] }) {
           cabecalho={
             <>
               <th scope="col">Dia</th>
-              <th scope="col" className="text-right">Custo</th>
-              <th scope="col" className="text-right">Execuções</th>
+              <th scope="col" className="text-right">{rotulos.custo}</th>
+              <th scope="col" className="text-right">{rotulos.execucoes}</th>
               <th scope="col" className="text-right">Tokens</th>
             </>
           }
@@ -170,7 +196,7 @@ export function GraficoDiario({ pontos: diarios }: { pontos: PontoDoDia[] }) {
                 <span className="font-medium">{rotuloDaColuna(ativo)}</span>
                 <span className="text-muted">
                   {formatarUsd(ativo.custoUsd)} ·{" "}
-                  {formatarNumero(ativo.execucoes)} execução(ões) ·{" "}
+                  {formatarNumero(ativo.execucoes)} {rotulos.unidade} ·{" "}
                   {formatarNumero(ativo.tokens)} tokens
                 </span>
               </div>
@@ -231,7 +257,7 @@ export function GraficoDiario({ pontos: diarios }: { pontos: PontoDoDia[] }) {
                         onBlur={() => setEmFoco(null)}
                         aria-label={`${rotuloDaColuna(ponto)}: ${formatarUsd(
                           ponto.custoUsd,
-                        )}, ${ponto.execucoes} execução(ões), ${
+                        )}, ${ponto.execucoes} ${rotulos.unidade}, ${
                           ponto.tokens
                         } tokens`}
                       >

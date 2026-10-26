@@ -1441,3 +1441,67 @@ model MotorDosAgentes {
   atualizadoPorId String?
   updatedAt       DateTime @updatedAt
 }
+
+// ---------------------------------------------------------------------------
+// OpenClaws: consumo da conta Claude (task do Diego, 26/10/2026)
+// ---------------------------------------------------------------------------
+
+/// Uso dos OpenClaws da equipe, somado por hora. Quem escreve é o coletor do
+/// servidor deles (`/api/ingestao/openclaws`); a tela `/openclaws` só lê.
+///
+/// A assinatura não cobra por token, então não há custo aqui — só o que foi
+/// medido. O "custo equivalente" é calculado na leitura, pela tarifa de API
+/// (`openclaws/precos.ts`): a régua para comparar modelos e semanas, não a fatura.
+model OpenClawUso {
+  id           String   @id @default(cuid())
+  /// Início da hora, em UTC.
+  hora         DateTime
+  /// Id curto do contêiner (`lr9a`). A pessoa dona vem de `OpenClawConfig`.
+  conteiner    String
+  agente       String
+  /// main · dashboard · cron · subagent · …
+  tipo         String
+  modelo       String
+  chamadas     Int
+  entrada      BigInt
+  saida        BigInt
+  cacheLeitura BigInt
+  cacheEscrita BigInt
+
+  @@unique([hora, conteiner, agente, tipo, modelo])
+  @@index([hora])
+}
+
+/// Chamadas que a Anthropic recusou (429), por hora. É daqui que saem os
+/// bloqueios por cota: o OpenClaw não avisa ninguém quando a conta trava.
+model OpenClawLimite {
+  id         String   @id @default(cuid())
+  hora       DateTime
+  conteiner  String
+  /// rate_limit · prompt_too_long · outro
+  categoria  String
+  quantidade Int
+
+  @@unique([hora, conteiner, categoria])
+  @@index([hora])
+}
+
+/// Linha ÚNICA (`id = "unico"`): token do coletor e o que a tela edita.
+model OpenClawConfig {
+  id             String    @id @default("unico")
+  /// sha256 do token do coletor. O texto puro só existe na tela, uma vez.
+  tokenHash      String?
+  tokenDica      String?
+  /// `[{ id, nome, compartilhada }]`. `compartilhada` = gasta da mesma conta
+  /// Claude que os outros; o contêiner fora dela aparece, mas não entra na cota.
+  conteineres    Json      @default("[]")
+  /// Cota semanal em US$ equivalentes. Nulo = a estimada pelos bloqueios.
+  cotaSemanalUsd Float?
+  /// Quando a semana da conta recomeça: 0 = domingo, hora em UTC.
+  resetDiaSemana Int       @default(0)
+  resetHoraUtc   Int       @default(19)
+  ultimaColetaEm DateTime?
+  ultimaColeta   String?
+  atualizadoPorId String?
+  updatedAt      DateTime  @updatedAt
+}

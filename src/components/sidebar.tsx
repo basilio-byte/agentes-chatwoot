@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot,
+  Gauge,
   KeyRound,
   LogOut,
   MessagesSquare,
@@ -38,6 +39,12 @@ const SECOES = [
         href: "/prazos",
         label: "Prazos",
         icone: Timer,
+        papelMinimo: UserRole.OWNER,
+      },
+      {
+        href: "/openclaws",
+        label: "OpenClaws",
+        icone: Gauge,
         papelMinimo: UserRole.OWNER,
       },
     ],

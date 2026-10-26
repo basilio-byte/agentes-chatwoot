@@ -11,6 +11,7 @@ Plataforma de agentes de I.A. que atendem no Chatwoot da Seahub Coworking.
 - Stack e arquitetura: **`docs/00-stack-e-arquitetura.md`** — leia antes de mudar estrutura.
 - Deploy: **`docs/01-deploy-easypanel.md`** — imagem publicada no GHCR a cada push na `main`.
 - Contrato de métricas (o banco central lê daqui): **`docs/04-contrato-de-metricas.md`**.
+- Coletor de consumo dos OpenClaws (tela `/openclaws`): **`docs/05-coletor-de-consumo-dos-openclaws.md`**.
 
 ### Contexto que não dá para inferir do código
 
@@ -3646,6 +3647,58 @@ rótulo, resumo e as listas de "pode" e "não pode" que a tela de Usuários most
 - **O token do MCP tem o papel da conta**, relido a cada chamada, mas não carrega
   o que é só de OWNER: credencial, conta e exclusão ficam fora do servidor
   inteiro. As três descrições de `papeis.ts` dizem isso.
+
+### OpenClaws: o consumo de cada pessoa contra a cota da conta Claude
+
+Pedido do Diego (task ClickUp "Mapeamento dos gastos por agente (dash)", 26/10/2026):
+ver o consumo individual de cada OpenClaw em relação à cota. Os OpenClaws são os
+agentes pessoais da equipe, num servidor à parte (`187.77.51.109`) — não são
+parte deste sistema de atendimento, só são medidos por ele. Tela **`/openclaws`**
+(só Proprietário, 404 para os outros, como `/prazos`); regras puras e testadas em
+`src/server/openclaws/`; instalação do coletor em
+`docs/05-coletor-de-consumo-dos-openclaws.md`.
+
+- **O dado vem de um coletor no servidor deles**, que manda lotes por hora para
+  `/api/ingestao/openclaws` (token em hash, `seahub_oc_…`). Cada lote SUBSTITUI a
+  janela dos contêineres que declara: reenviar não duplica, e hora sem uso some em
+  vez de sobrar velha. Tabelas `OpenClawUso`, `OpenClawLimite` e `OpenClawConfig`
+  (linha única).
+- ⚠ **O uso está em `transcript_events`, não em `model.completed`.** O evento de
+  trajetória não traz `usage` na versão 2026.9.7; as mensagens do assistente sim.
+  E ~20 mil eventos antigos ficam em `event_zstd`: ler só `event_json` subconta o
+  histórico inteiro.
+- ⚠ **Os US$ da tela são custo EQUIVALENTE** (tarifa de API × tokens), não fatura —
+  a assinatura não cobra por token, e a Anthropic não publica o peso da cota.
+  Modelo sem tarifa cadastrada fica FORA do custo e é contado à parte, nunca
+  chutado (`precos.ts`).
+- ⚠ **A cota é ESTIMADA pelos bloqueios, e a % real não existe para este token.**
+  O OpenClaw tenta ler a utilização e leva `HTTP 403: … user:profile`. O que se
+  observa é o instante em que a Anthropic começa a recusar (429): o gasto desde o
+  último reset até ali é 100% da semana. Em outubro/2026: US$ 888, 1.057 e 1.221
+  (≈ US$ 1.050, ±16%). A estimativa descarta amostra abaixo de metade da mediana
+  (ciclo com dados incompletos) e se ajusta a cada bloqueio novo. Cota informada à
+  mão na tela vence a estimada.
+- ⚠ **Bloqueio é recusa CONTÍNUA, não 429 solto** (`bloqueios.ts`): ao menos 10
+  recusas ao longo de ao menos 3 horas, sem buraco de mais de 3 h. Pico de
+  requisições por minuto também devolve 429 e passa sozinho.
+- **A conta estourou a cota semanal quatro semanas seguidas** (02, 09, 17 e 22/10),
+  de 20 a 75 horas parados cada vez. O OpenClaw não avisa ninguém.
+- ⚠ **O reset é domingo 19:00 UTC (16:00 em São Paulo)**, medido nos quatro
+  bloqueios (último 429 entre 18:31 e 18:57 UTC, primeira chamada boa às
+  19:00–19:11). **NÃO é o ciclo do proxy Claude MAX da Seahub** (domingo 10:59 UTC):
+  é outra conta, e o `plan_quota` do proxy não serve como cota dos OpenClaws.
+- ⚠ **Conta compartilhada é por contêiner.** O `2bpu` (Guilherme) segue respondendo
+  enquanto os outros levam 429: credencial própria. Aparece com o consumo dele
+  (decisão do usuário: o levantamento tem de mostrar quanto CADA um consome), mas
+  fora da cota dos demais e da detecção de bloqueio. Quem edita isso é o
+  Proprietário, na própria tela.
+- **Nome da pessoa mora no banco** (`OpenClawConfig.conteineres`), editado na tela.
+  O coletor só conhece o id do contêiner; um novo entra sozinho, sem nome.
+- ⚠ **O erro 429 de alguns OpenClaws não vira mensagem `stopReason: error`** na
+  transcrição (o do Nathã só aparece no log do gateway, que o reinício do contêiner
+  apaga). O coletor soma as duas fontes e vale o MAIOR por hora.
+- **O coletor roda a cada 2 horas, em baixa prioridade** (`nice`): rotina de fundo
+  com o intervalo mais espaçado que o caso aguenta.
 
 ### Contrato de métricas: a porta de leitura do banco central
 

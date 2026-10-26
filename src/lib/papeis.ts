@@ -49,6 +49,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Testar no playground — cada teste gasta crédito da OpenRouter",
       "Ver credenciais ou mexer em contas",
       "Ver a contagem de prazos perdidos por pessoa",
+      "Ver quanto cada pessoa gasta da cota Claude dos OpenClaws",
       // Vê, no cartão do saldo, SE o alerta está ligado — nunca os telefones.
       "Ver ou mudar quem recebe o alerta de saldo por WhatsApp",
       // A aba do aviso à equipe mostra só QUANTAS pessoas recebem.
@@ -79,6 +80,9 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       // inteira — inclusive a quem está sendo contado. Quem decide o que fazer
       // com o número é quem responde pela equipe.
       "Ver a contagem de prazos perdidos por pessoa (tela Prazos)",
+      // A tela OpenClaws mostra o consumo POR PESSOA, e o painel é aberto à
+      // equipe inteira — inclusive a quem está sendo medido.
+      "Ver o consumo de cada pessoa na cota Claude dos OpenClaws (tela OpenClaws)",
     ],
   },
 
@@ -95,6 +99,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Gerar e rotacionar o token do gatilho HTTP",
       "Criar contas, mudar papéis, redefinir senha e desativar pessoas",
       "Ver a tela Prazos: quantas vezes cada pessoa deixou vencer o prazo de resposta da equipe",
+      "Ver a tela OpenClaws: quanto cada pessoa gasta da cota Claude, os bloqueios da conta, e gerar o token do coletor",
     ],
     naoPode: [
       "Desativar a própria conta",
