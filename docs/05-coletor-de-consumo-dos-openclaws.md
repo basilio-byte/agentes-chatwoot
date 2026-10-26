@@ -127,6 +127,24 @@ separadas, e a leitura passa a descrever a conta antiga até alguém refazê-lo.
 Se o login vencer (refresh recusado), o coletor segue enviando o consumo e a tela
 mostra "leitura atrasada" depois de 6 horas, voltando à cota estimada.
 
+**Provado em 26/10/2026, contra a Anthropic real:**
+
+- O login Max 20x devolve `five_hour` e `seven_day` em `/api/oauth/usage`
+  (percentual de 0 a 100, reset com décimos de segundo antes da hora:
+  `18:59:59,6` = domingo 19:00 UTC).
+- A **renovação funciona** (`platform.claude.com/v1/oauth/token`, `grant_type=
+  refresh_token`, `client_id` do Claude Code): a resposta traz `access_token`,
+  `refresh_token`, `expires_in` (~8 h) e `refresh_token_expires_in` (~28,6 dias).
+- O refresh token **se estende a cada renovação**: enquanto o coletor rodar de
+  vez em quando (ele renova a cada ~8 h), o login não vence. Parado por mais de
+  ~28 dias, é preciso refazer `coletor-cota-login`.
+- `coletor-consumo-openclaw --renovar-agora` força uma renovação (teste e manutenção) e
+  mostra só os NOMES dos campos da resposta. O arquivo é copiado para `.bak` antes
+  de qualquer troca, e nada é gravado se a resposta vier sem `access_token`.
+- Primeira calibragem: 5% medidos ↔ US$ 34,88 equivalentes dos OpenClaws, ou seja,
+  100% ≈ US$ 700 — abaixo dos US$ 1.050 estimados pelos bloqueios. A tela passa a
+  usar a leitura e a se calibrar a cada coleta (mediana das últimas 24 leituras).
+
 ## 5. Operação
 
 - **Rotacionar o token do painel**: gerar outro na tela e gravar em

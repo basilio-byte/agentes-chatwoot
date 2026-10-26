@@ -3693,6 +3693,16 @@ parte deste sistema de atendimento, só são medidos por ele. Tela **`/openclaws
   estimativa. A divisão entre pessoas é proporcional ao consumo dos OpenClaws (a
   % medida é da CONTA INTEIRA: Claude Code, claude.ai e o Open Design também
   gastam dela). Leitura de 100% numa janela conta como bloqueio mesmo sem 429.
+- **Provado contra a Anthropic real (26/10/2026)**: o login Max 20x lê
+  `five_hour` e `seven_day` em `/api/oauth/usage`; a renovação funciona e o
+  refresh token SE ESTENDE a cada uma (~28,6 dias), então o login só vence se o
+  coletor ficar parado semanas. A primeira calibragem deu 100% ≈ US$ 700
+  equivalentes (5% ↔ US$ 34,88), contra os US$ 1.050 da estimativa pelos
+  bloqueios: a estimativa estava alta, e a leitura real a substitui.
+- ⚠ **Não se testa o `setup-token` mandando inferência só para ler cabeçalho.** O
+  proxy registrou que a Anthropic classifica quem usa o plano e cobra de "extra
+  usage" o cliente de terceiros; uma chamada avulsa com a credencial do Claude Code
+  arrisca isso à toa, e a leitura pelo endpoint de uso já resolve.
 - ⚠ **Conferência de que a conta lida é a dos OpenClaws: o reset.** O deles cai no
   domingo 19:00 UTC; o do proxy da Seahub, às 10:59. Reset informado fora de 10 min
   do configurado vira aviso na tela (`divergeDoReset`).

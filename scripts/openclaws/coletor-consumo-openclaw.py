@@ -216,6 +216,7 @@ URL_DA_RENOVACAO = "https://platform.claude.com/v1/oauth/token"
 CLIENT_ID_DO_CLAUDE_CODE = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 # Renova com folga: um token que vence no meio da leitura daria 401 à toa.
 MARGEM_DA_RENOVACAO_MS = 10 * 60 * 1000
+ULTIMA_RENOVACAO = {}
 JANELAS_CONHECIDAS = ("five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps")
 CHAVE_VALIDA = re.compile(r"^[\w:.-]{1,60}$")
 
@@ -272,6 +273,15 @@ def _renovar(caminho, dados, avisos):
         oauth["refreshToken"] = resposta["refresh_token"]
     if isinstance(resposta.get("expires_in"), (int, float)):
         oauth["expiresAt"] = int(time.time() * 1000 + resposta["expires_in"] * 1000)
+    # A validade do próprio refresh token, quando a resposta a informa (o nome varia).
+    for chave, valor in resposta.items():
+        if "refresh" in chave and "expires" in chave and isinstance(valor, (int, float)) and not isinstance(valor, bool):
+            if chave.endswith("_in"):
+                oauth["refreshTokenExpiresAt"] = int(time.time() * 1000 + valor * 1000)
+            else:
+                oauth["refreshTokenExpiresAt"] = int(valor * 1000 if valor < 1e12 else valor)
+    # Só os NOMES dos campos, para diagnóstico (`--renovar-agora`): nunca os valores.
+    ULTIMA_RENOVACAO["campos"] = sorted(resposta.keys())
     dados["claudeAiOauth"] = oauth
     _gravar_credencial(caminho, dados)
     return acesso
@@ -444,9 +454,34 @@ def main():
     ap.add_argument("--sem-cota", action="store_true", help="não lê a cota real, mesmo com o login da conta feito")
     ap.add_argument("--ver-cota", action="store_true", help="só lê e mostra a cota real da conta; não lê nem envia o consumo")
     ap.add_argument("--diretorio-do-login", default=DIRETORIO_DO_LOGIN)
+    ap.add_argument("--renovar-agora", action="store_true", help="força a renovação do login da cota (teste e manutenção); mostra só os nomes dos campos da resposta")
     args = ap.parse_args()
 
     t0 = time.time()
+
+    if args.renovar_agora:
+        caminho = os.path.join(args.diretorio_do_login, ".credentials.json")
+        avisos = []
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                dados = json.load(f)
+        except (OSError, ValueError) as erro:
+            print(f"login não lido: {erro}", file=sys.stderr)
+            return 1
+        acesso = _renovar(caminho, dados, avisos)
+        for a in avisos:
+            print(f"aviso: {a}", file=sys.stderr)
+        if not acesso:
+            print("a renovação FALHOU; o arquivo do login não foi alterado")
+            return 1
+        oauth = dados.get("claudeAiOauth") or {}
+        agora_ms = time.time() * 1000
+        print("renovado. campos da resposta:", ", ".join(ULTIMA_RENOVACAO.get("campos", [])))
+        print("acesso vale mais %.1f h" % ((oauth.get("expiresAt", 0) - agora_ms) / 3600000))
+        r = oauth.get("refreshTokenExpiresAt")
+        if isinstance(r, (int, float)):
+            print("refresh token vence em %.1f dias" % ((r - agora_ms) / 86400000))
+        return 0
 
     if args.ver_cota:
         avisos = []
