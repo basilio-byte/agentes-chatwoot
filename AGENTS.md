@@ -1671,6 +1671,38 @@ ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
   também moram no contato, mas são do último negócio — copiados, poriam a venda
   de agosto na reserva de outubro. Opção de lista que não existe na task (o
   "Financeiro" do contato é "Finaceiro" no ClickUp) fica de fora sozinha.
+- **Venda de endereço fechada pelo agente: o que o CONTRATO exige** (conversa
+  14818, 26/10/2026, pedido do Diego). O Everton fechou, criou a task com os
+  dados que coleta, e o ClickBot não a passou à Base de clientes: cobrou Razão
+  Social, Responsável, E-mail do responsável, as datas do contrato, o
+  vencimento, o ramo e o RG. A equipe refez a venda à mão duas horas depois.
+  Regras puras e testadas em `contato/contrato.ts`, dentro de
+  `clickup_criar_tarefa`.
+  - **Só vale com VENDEDOR "Auto Venda" + produto de endereço** no CRM Comercial.
+    A task do CRM nasce, muitas vezes, no início da negociação ("início do
+    contrato = hoje" seria mentira para um lead), e a reserva de sala também é
+    "Auto Venda", mas não tem contrato.
+  - **O sistema preenche, só o VAZIO:** RESPONSÁVEL (o nome), E-mail do
+    responsável (o e-mail), DATA INICIO CONTRATO e VENCIMENTO (o dia da venda; o
+    prompt já diz que o vencimento é a data da contratação), DATA DE ENCERRAMENTO
+    (início + a duração da descrição − 1 dia) e Razão Social (consulta de CNPJ;
+    sem CNPJ, o nome completo). ⚠ **A convenção do "− 1 dia" vem de UMA amostra**
+    (26/10/2026 por 24 meses → 25/10/2028, gravada pela equipe): se a equipe
+    disser outra, muda em `fimDoContrato`. Só 12 e 24 meses viram data; outro
+    número, ou nenhuma duração na descrição, deixa o campo em branco.
+  - ⚠ **O que só o cliente sabe NÃO é inventado:** RG, CPF de quem assina e
+    endereço do sócio. O retorno da criação traz `contrato.faltam` e uma
+    `observacao` mandando o agente dizer ao cliente que a equipe confirma o
+    envio, e deixar nota interna com o que falta. Retorno de tool vence o prompt:
+    funciona sem mexer em prompt nenhum. Enquanto o prompt do Everton não pedir
+    esses dados, a lista nunca vem vazia — é de propósito: a venda de fato não
+    sobe sozinha.
+  - **Os campos exigidos foram lidos de duas fontes em 26/10/2026**: os avisos
+    do ClickBot e o mapeamento do prompt do agente de contratos (EV). Se a
+    automação do ClickUp mudar, a lista muda em `EXIGIDOS`, e só ali. Não há
+    como ler as automações do ClickUp pelo MCP: a regra é inferida.
+  - **Consulta de CNPJ que falha nunca impede a task**: a razão social fica em
+    branco e o retorno a cobra. Cada campo extra é validado sozinho.
 
 ### Venda autônoma paga vira "ganho" no CRM Comercial
 

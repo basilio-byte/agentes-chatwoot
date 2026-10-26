@@ -1,3 +1,11 @@
+import {
+  avisoDeContratoIncompleto,
+  camposDoContratoParaPreencher,
+  cnpjDosCampos,
+  ehVendaDeEnderecoDoAgente,
+  faltamParaOContrato,
+  LISTA_DO_CRM_COMERCIAL,
+} from "@/server/contato/contrato";
 import { atributosDoContatoDaConversa, espelharTaskNoContato } from "@/server/contato/espelho";
 import { fatosDoClienteDaConversa } from "@/server/contato/fatos";
 import {
@@ -10,6 +18,7 @@ import { z } from "zod";
 import { IntegrationProvider, MediaKind, RunSource, RunStatus } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
 import { agoraEmSaoPaulo } from "@/lib/tempo";
+import { consultarCNPJ } from "@/server/documentos/brasilapi";
 import { tipoLigado } from "@/server/integrations/openai/classificar";
 import { criarClienteOpenAI } from "@/server/integrations/openai/client";
 import { capacidadeDeMidia } from "@/server/integrations/openai/credenciais";
@@ -383,6 +392,9 @@ export const clickupIntegration: IntegrationDefinition = {
           : [{}, {}];
 
         let custom_fields: { id: string; value: unknown }[] | undefined;
+        // Venda de endereço fechada pelo próprio agente: a task precisa trazer o
+        // que o contrato exige (`contato/contrato.ts`). `null` = não é esse caso.
+        let pendenciasDoContrato: string[] | null = null;
         if (
           args.camposPersonalizados?.length ||
           (doCrm && (Object.keys(fatos).length || Object.keys(doContato).length))
@@ -413,10 +425,47 @@ export const clickupIntegration: IntegrationDefinition = {
                 dados[extra.campo] = extra.valor;
               }
             }
+            const comoCampos = () =>
+              Object.entries(dados).map(([campo, valor]) => ({ campo, valor }));
+
+            // Venda de endereço que o agente fechou: o que o contrato exige e o
+            // sistema já sabe (responsável, e-mail, datas, vencimento e razão
+            // social). Vem antes do contato: o que o agente confirmou vale mais.
+            // ⚠ Nunca impede a task: a consulta de CNPJ que falha só deixa a razão
+            // social em branco, e cada campo é validado sozinho.
+            if (listaId === LISTA_DO_CRM_COMERCIAL && ehVendaDeEnderecoDoAgente(comoCampos())) {
+              const cnpj = cnpjDosCampos(comoCampos());
+              const consulta = cnpj ? await consultarCNPJ(cnpj) : null;
+              const razaoSocial = consulta?.achou ? consulta.empresa.razaoSocial : null;
+              for (const extra of camposDoContratoParaPreencher({
+                campos: comoCampos(),
+                camposDaLista: fields,
+                descricao: args.descricao,
+                hoje: agoraEmSaoPaulo().iso,
+                razaoSocial,
+              })) {
+                const um = prepararCampos([extra], fields);
+                if (um.problemas.length === 0) {
+                  custom_fields.push(...um.prontos);
+                  dados[extra.campo] = extra.valor;
+                }
+              }
+            }
+
             // O contato vem por último: o agente e o Conexa valem mais.
             for (const extra of camposDoContatoQueFaltam(doContato, fields, dados)) {
               const um = prepararCampos([extra], fields);
-              if (um.problemas.length === 0) custom_fields.push(...um.prontos);
+              if (um.problemas.length === 0) {
+                custom_fields.push(...um.prontos);
+                dados[extra.campo] = extra.valor;
+              }
+            }
+
+            if (listaId === LISTA_DO_CRM_COMERCIAL && ehVendaDeEnderecoDoAgente(comoCampos())) {
+              pendenciasDoContrato = faltamParaOContrato({
+                campos: comoCampos(),
+                camposDaLista: fields,
+              });
             }
           }
         }
@@ -446,6 +495,17 @@ export const clickupIntegration: IntegrationDefinition = {
           ...formatarTarefa(tarefa),
           // É por ele que a barreira de task em dobro reconhece a lista.
           listaId: tarefa.list?.id ?? listaId,
+          // Venda de endereço fechada pelo agente: diz se os dados do contrato
+          // estão na task. Quem lê é o modelo, que não consegue conferir os
+          // campos depois (`clickup_obter_tarefa` não os devolve).
+          ...(pendenciasDoContrato === null
+            ? {}
+            : pendenciasDoContrato.length === 0
+              ? { contrato: { dadosCompletos: true } }
+              : {
+                  contrato: { dadosCompletos: false, faltam: pendenciasDoContrato },
+                  observacao: avisoDeContratoIncompleto(pendenciasDoContrato),
+                }),
         };
       },
     },
