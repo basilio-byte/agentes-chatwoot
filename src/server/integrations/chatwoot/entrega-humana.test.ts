@@ -27,6 +27,13 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+const registrarLacuna = vi.fn<(args: Record<string, unknown>) => Promise<boolean>>(
+  async () => true,
+);
+vi.mock("@/server/lacunas/registrar", () => ({
+  registrarLacuna: (args: Record<string, unknown>) => registrarLacuna(args),
+}));
+
 vi.mock("./credenciais", () => ({
   clienteDoAgente: async () => ({
     listarAtendentes: async () => atendentesDoChatwoot,
@@ -60,6 +67,7 @@ const contexto = () => ({
   credential: null,
   agentId: "pedro",
   chatwootConversationId: 55,
+  runId: "run-9",
   sinais: {} as { avisouCliente?: boolean },
 });
 
@@ -67,9 +75,12 @@ const entrada = {
   motivo: "cliente quer reserva pontual e não sei responder",
   resumo: "Cliente pediu diária de sala privativa.",
   aviso: "Vou te passar para alguém da equipe, um instante! 😊",
+  causa: "falta_de_instrucao",
+  oQueFaltou: "preço da diária de sala privativa",
 };
 
 beforeEach(() => {
+  registrarLacuna.mockClear();
   chamadas = [];
   agente = {
     handoffEnabled: true,
@@ -144,5 +155,67 @@ describe("transferir_para_humano", () => {
     await tool.execute(entrada, contexto());
 
     expect(chamadas).toEqual([]);
+  });
+});
+
+describe("transferir_para_humano — relatório de lacunas", () => {
+  it("registra a lacuna com o agente que pensava, a execução e a conversa", async () => {
+    await tool.execute(entrada, contexto());
+
+    expect(registrarLacuna).toHaveBeenCalledTimes(1);
+    expect(registrarLacuna).toHaveBeenCalledWith({
+      agentId: "pedro",
+      runId: "run-9",
+      chatwootConversationId: 55,
+      causa: "falta_de_instrucao",
+      oQueFaltou: "preço da diária de sala privativa",
+      motivo: entrada.motivo,
+    });
+  });
+
+  it("passar por incapacidade sem dizer o que faltou NÃO transfere", async () => {
+    // Sem o `oQueFaltou` a linha do relatório não diria à equipe o que
+    // fornecer. Recusa antes de qualquer efeito: nada vai ao cliente.
+    const resposta = await tool.execute(
+      { ...entrada, oQueFaltou: undefined },
+      contexto(),
+    );
+
+    expect(String(resposta)).toContain("NÃO feita");
+    expect(chamadas).toEqual([]);
+    expect(registrarLacuna).not.toHaveBeenCalled();
+  });
+
+  it("pedido do cliente transfere sem exigir detalhe", async () => {
+    // O agente fez o que devia: não há lacuna a descrever. Quem filtra o que
+    // vai para o relatório é `registrarLacuna`, que já recebe a causa.
+    await tool.execute(
+      { ...entrada, causa: "pedido_do_cliente", oQueFaltou: undefined },
+      contexto(),
+    );
+
+    expect(soTipos()).toEqual(["nota", "mensagem-ao-cliente", "atribuir"]);
+    expect(registrarLacuna).toHaveBeenCalledWith(
+      expect.objectContaining({ causa: "pedido_do_cliente" }),
+    );
+  });
+
+  it("transferência desligada não registra lacuna: o agente segue atendendo", async () => {
+    agente.handoffEnabled = false;
+
+    await tool.execute(entrada, contexto());
+
+    expect(registrarLacuna).not.toHaveBeenCalled();
+  });
+
+  it("o schema exige a causa — sem ela o runner devolve 'Parâmetros inválidos'", () => {
+    const semCausa: Partial<typeof entrada> = { ...entrada };
+    delete semCausa.causa;
+
+    expect(tool.inputSchema.safeParse(semCausa).success).toBe(false);
+    expect(tool.inputSchema.safeParse({ ...entrada, causa: "outra" }).success).toBe(
+      false,
+    );
+    expect(tool.inputSchema.safeParse(entrada).success).toBe(true);
   });
 });

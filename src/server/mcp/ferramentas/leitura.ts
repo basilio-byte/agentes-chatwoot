@@ -4,6 +4,7 @@ import {
   IntegrationProvider,
   RunSource,
   RunStatus,
+  TipoDeLacuna,
   UserRole,
 } from "@/generated/prisma/enums";
 import { ROTULO_DA_FONTE } from "@/lib/origens";
@@ -23,6 +24,8 @@ import {
   type Periodo,
 } from "@/server/consumo/periodo";
 import { lerDetalheDaExecucao } from "@/server/execucoes/detalhe";
+import { lerLacunas } from "@/server/lacunas/consulta";
+import { O_QUE_FORNECER, ROTULO_DO_TIPO } from "@/server/lacunas/regras";
 import {
   listarIntegracoes,
   obterIntegracao,
@@ -1020,6 +1023,61 @@ const resumoDeConsumo = ferramenta({
   },
 });
 
+const listarLacunasDosAgentes = ferramenta({
+  name: "listar_lacunas_dos_agentes",
+  title: "Listar lacunas dos agentes",
+  description:
+    "O relatório de lacunas: cada vez que um agente passou o atendimento a uma pessoa por NÃO conseguir resolver sozinho — por falta de instrução, de ferramenta ou por não ter entendido o pedido —, com o que o agente diz que faltou. É o insumo para melhorar prompts e ferramentas. Devolve os totais por tipo e por agente e as mais recentes primeiro. Passagens a pedido do cliente ou por regra do negócio não entram. Para a conversa completa, use ver_execucao com a execução da lacuna.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    agente: campoAgente.optional(),
+    tipo: z.enum(TipoDeLacuna).optional(),
+    periodo: z.enum(PERIODOS_DO_MCP).optional().describe("Padrão: qualquer data."),
+    limite: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Padrão 30, máximo 100."),
+  }),
+  async executar({ agente: termo, tipo, periodo, limite }) {
+    let agentId: string | null = null;
+    if (termo) {
+      const agente = await acharAgente(termo);
+      if (!agente) return agenteNaoEncontrado(termo);
+      agentId = agente.id;
+    }
+
+    const intervalo = intervaloDoPeriodo(periodo ?? "tudo");
+    const resumo = await lerLacunas({ intervalo, agentId, tipo: tipo ?? null }, limite ?? 30);
+
+    return responder({
+      periodo: intervalo.rotulo,
+      total: resumo.total,
+      mostrando: resumo.itens.length,
+      porTipo: Object.fromEntries(
+        Object.values(TipoDeLacuna).map((t) => [
+          t,
+          { rotulo: ROTULO_DO_TIPO[t], quantidade: resumo.porTipo[t], oQueFornecer: O_QUE_FORNECER[t] },
+        ]),
+      ),
+      porAgente: resumo.porAgente.map((a) => ({ agente: a.chave, quantidade: a.total })),
+      lacunas: resumo.itens.map((l) => ({
+        id: l.id,
+        agente: l.agente.chave,
+        tipo: l.tipo,
+        em: quando(l.criadaEm),
+        oQueFaltou: l.oQueFaltou,
+        motivoDaPassagem: l.motivo,
+        conversaNoChatwoot: l.chatwootConversationId,
+        execucao: l.runId,
+      })),
+    });
+  },
+});
+
 export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   listarAgentes,
   verAgente,
@@ -1033,4 +1091,5 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   verVersao,
   listarAgendamentos,
   resumoDeConsumo,
+  listarLacunasDosAgentes,
 ];

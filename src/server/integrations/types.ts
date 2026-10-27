@@ -63,6 +63,12 @@ export type ToolContext = {
    */
   canalAgentId?: string;
   conversationId?: string;
+  /**
+   * A execução (`AgentRun`) em que a ferramenta roda. Serve para a ferramenta
+   * deixar um registro que aponte de volta para a transcrição — hoje, o
+   * relatório de lacunas. Ausente quando quem chama não é um turno de agente.
+   */
+  runId?: string;
   /** Id da conversa no Chatwoot, quando a execução veio de um atendimento. */
   chatwootConversationId?: number;
   /** Objeto compartilhado do turno: a tool escreve, o worker lê depois. */

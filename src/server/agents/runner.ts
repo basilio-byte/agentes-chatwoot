@@ -535,6 +535,7 @@ async function executarTool(args: {
       config: resolvida.configuracao.config,
       credential: resolvida.configuracao.credential,
       agentId: args.agentId,
+      runId,
       conversationId: args.conversationId,
       chatwootConversationId: args.chatwootConversationId,
       canalAgentId: args.canalAgentId,

@@ -1394,7 +1394,8 @@ padrão) sai uma nota interna para quem atende; ao fechar, a etiqueta é trocada
   custo novo — `waiting_since` está na mesma lista, e o evento já sai a cada
   mensagem —, mas cada troca reavalia a 11 (webhook ao n8n), a 26/27 (nota de
   qualificação, em conversa com etiqueta de parceiro) e a 34 (resolve conversa do
-  usuário 2). O fluxo do n8n escapava disso porque quem trocava era a automação
+  usuário 2, o Basílio — "Resolver conversa após envio automático de NF/Boleto";
+  DESLIGADA pelo usuário em 27/10/2026). O fluxo do n8n escapava disso porque quem trocava era a automação
   32, e mudança feita por automação não é reavaliada.
 - **Teto de 40 escritas por rodada**, notas primeiro. Ligar pela primeira vez
   corrige as ~100 vencidas em umas três rodadas, em vez de soltar centenas de
@@ -3460,6 +3461,63 @@ como sempre.
   descartada. Era por isso que a tool mandava o modelo escrever depois; agora o
   sistema garante.
 
+### Lacunas dos agentes: o que faltou para resolverem sozinhos
+
+Pedido do Diego (task "Mapeamento de passagem dos agentes", 27/10/2026): *"sempre
+que o agente passar a conversa para algum humano, por falta de alguma informação
+ou entendimento de algo, ele gera no relatório para podermos melhorar a skill"*.
+Tela **`/lacunas`** (menu Atendimento, aberta a quem tem sessão; apagar é
+`ADMIN`) e a ferramenta de consulta **`listar_lacunas_dos_agentes`** no MCP
+(`VIEWER`). Regras puras e testadas em `src/server/lacunas/regras.ts`, gravação
+em `registrar.ts`, leitura em `consulta.ts` — a MESMA para a tela e o MCP.
+
+- ⚠ **Só passagem por INCAPACIDADE entra.** `transferir_para_humano` ganhou o
+  parâmetro obrigatório `causa`: `pedido_do_cliente` (o cliente pediu uma
+  pessoa, ou a regra manda passar — cobrança, cancelamento, reclamação),
+  `falta_de_instrucao`, `falta_de_ferramenta` ou `nao_entendi`. Só as três
+  últimas viram `LacunaDoAgente`. Registrar também o pedido do cliente encheria
+  a lista de ruído justamente onde a equipe procura o que consertar.
+- **Quem diz a causa é o agente**, porque só ele sabe por que está desistindo, e
+  por isso a pergunta mora no schema da ferramenta, não no prompt — o bloco das
+  Regras da Casa não cita ferramenta, e o prompt de cada agente é de cada um.
+  `causa` é obrigatória: agente que esquecer recebe "Parâmetros inválidos" do
+  runner e repete a chamada no mesmo turno, sem efeito nenhum antes. Custo medido
+  por `tokensAproximadosDaTool`: 256 → 476 tokens, em toda mensagem de quem tem
+  a ferramenta.
+- ⚠ **Incapacidade sem `oQueFaltou` NÃO transfere.** Uma frase para a equipe,
+  conferida por `detalheVazio` (mínimo de 10 caracteres úteis) ANTES de qualquer
+  efeito: nada vai ao cliente, e o modelo chama de novo completo. Linha de
+  relatório que não diz o que fornecer é linha que ninguém consegue tratar.
+- **Grava antes de falar com o Chatwoot, e NUNCA lança.** A lacuna é real mesmo
+  que a transferência falhe depois, e relatório que quebra a passagem deixaria o
+  cliente sem ninguém por causa de uma anotação. Falha vira log. Transferência
+  desligada no agente (`handoffEnabled` falso) não grava: ele segue atendendo.
+- **Uma lacuna por execução** (`runId`, que o runner passou a pôr no
+  `ToolContext`): o modelo repete chamada e o proxy duplica pedido de
+  ferramenta. Sem `runId` grava sempre. Fora do Chatwoot (playground, gatilho)
+  a ferramenta nem chega lá: "sem conversa, nada a transferir".
+- ⚠ **O texto guardado é limpo pelo sistema** (`ocultarDadosPessoais`): e-mail e
+  qualquer sequência de 9+ dígitos (telefone, CPF, CNPJ) viram `[e-mail]` e
+  `[número]`, e o corte é de 600 caracteres com reticências. O parâmetro já manda
+  não pôr dado pessoal, mas o campo vem de um modelo que leu a conversa — e o
+  relatório é aberto por TODA a equipe e sai pelo MCP. Nome de pessoa não tem
+  formato e não é coberto: quem barra é a instrução do parâmetro.
+- **Sem `deletedAt`, e apagar é de verdade.** É lista de trabalho: a equipe
+  fornece o que faltou e apaga. A ação recebe IDS (os da tela), nunca um filtro —
+  "apagar tudo do agente X" levaria também o que chegou entre o carregamento e o
+  clique. A auditoria (`lacuna.deleted`) guarda quantas e de quais agentes, não o
+  texto. Apagar fica de fora do MCP (`catalogo.test.ts` proíbe `apagar` no nome).
+- **Sem período por padrão**: a lista é uma fila de pendências, e recortar por
+  data esconderia a de ontem que ninguém tratou. Os totais por tipo ignoram o
+  filtro de tipo (dá para trocá-lo) e `limite` corta só a lista, não os totais.
+- Cascata com o agente (`onDelete: Cascade`), como `AgentRun`. O `runId` é só o
+  caminho até a transcrição em `ver_execucao`, sem relação: a execução some por
+  poda. Fora do contrato de métricas (`metricas_v1`): é dado de trabalho.
+- ⚠ **Não cobre outros jeitos de uma pessoa assumir**: `atribuir_para_atendente`
+  e `atribuir_por_rodizio` (fluxo normal de venda), o vigia de espera e o prazo
+  vencido não são incapacidade do agente. Se um dia o relatório precisar de
+  "agente travou e não chamou a ferramenta", é outro registro.
+
 ### Parar uma execução em andamento
 
 Botão em Execuções, no cartão de quem está `RUNNING`. Exige `ADMIN` — parar
@@ -3610,7 +3668,7 @@ que **não carimba nada** e é resolvido por `prefers-color-scheme`.
 
 `/api/mcp` abre o painel a um assistente de I.A. (Claude Code, Cursor…) com o
 poder da conta dona de um token pessoal, gerado em **Acesso MCP**
-(`/acesso-mcp`). São 27 ferramentas: 12 de consulta, para Leitura em diante, e
+(`/acesso-mcp`). São 28 ferramentas: 13 de consulta, para Leitura em diante, e
 15 que alteram produção, para Administrador. Pedido do usuário em 11/09/2026 —
 *"um MCP completo para gerenciamento total da plataforma"* —, depois de ele
 querer colar a senha de Proprietário no chat para um levantamento dos agentes.

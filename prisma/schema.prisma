@@ -187,6 +187,7 @@ model Agent {
   schedules     AgentSchedule[]
   prazos        PrazoDeConversa[]
   gatilhosDeConversa GatilhoDeConversa[]
+  lacunas       LacunaDoAgente[]
 
   handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
   handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
@@ -195,6 +196,49 @@ model Agent {
 
   @@index([isEntry])
   @@index([archivedAt])
+}
+
+/// Por que o agente passou o atendimento a uma pessoa SEM SER CAPAZ de seguir
+/// sozinho. É a pergunta que a equipe faz para melhorar o agente: o que faltou?
+enum TipoDeLacuna {
+  /// A resposta ou o procedimento não está nas instruções do agente.
+  FALTA_INSTRUCAO
+  /// Faltou uma ferramenta (consulta ou ação) para fazer o que o cliente pediu.
+  FALTA_FERRAMENTA
+  /// O agente não entendeu o que o cliente pediu.
+  NAO_ENTENDI
+}
+
+/// O relatório de lacunas dos agentes (task "Mapeamento de passagem dos
+/// agentes", 27/10/2026): um registro por vez que `transferir_para_humano` é
+/// chamada por incapacidade — e SÓ por incapacidade. Transferir porque o
+/// cliente pediu uma pessoa, ou porque a regra do negócio manda (cobrança,
+/// cancelamento), não é lacuna do agente e não entra aqui.
+///
+/// Dado de trabalho, não de auditoria: a equipe lê, fornece o que faltou e
+/// APAGA o registro. Por isso não há `deletedAt`, e apagar não deixa rastro além
+/// do `AuditLog`.
+model LacunaDoAgente {
+  id                     String       @id @default(cuid())
+  agentId                String
+  /// Execução em que o agente declarou a lacuna. Sem relação de propósito: é
+  /// só o caminho até a transcrição em Execuções, e a execução some por poda.
+  runId                  String?
+  chatwootConversationId Int
+  tipo                   TipoDeLacuna
+  /// O que o agente diz que faltou, escrito por ele para a equipe ler: a
+  /// informação, a ferramenta ou o trecho que ele não entendeu.
+  oQueFaltou             String       @db.Text
+  /// O motivo da transferência, como o agente o escreveu no registro interno.
+  motivo                 String       @db.Text
+  createdAt              DateTime     @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([agentId, createdAt])
+  @@index([tipo, createdAt])
+  @@index([runId])
 }
 
 /// Registro de cada passagem de bastão entre agentes.

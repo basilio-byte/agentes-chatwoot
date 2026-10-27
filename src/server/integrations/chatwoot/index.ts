@@ -20,6 +20,8 @@ import { resolverAtendente } from "./atendentes";
 import { proximoDoRodizio } from "./rodizio";
 import { carimbar } from "@/server/conversa-parada/mensagem";
 import { entregarAoHumano } from "./resolucao";
+import { CAUSAS, detalheVazio, tipoDaCausa } from "@/server/lacunas/regras";
+import { registrarLacuna } from "@/server/lacunas/registrar";
 
 const transferirSchema = z.object({
   motivo: z
@@ -37,6 +39,17 @@ const transferirSchema = z.object({
     .min(5)
     .describe(
       "A mensagem que o CLIENTE vai ler antes de a conversa mudar de mãos. Natural, primeira pessoa. É a última coisa que você diz nesta conversa.",
+    ),
+  causa: z
+    .enum(CAUSAS)
+    .describe(
+      "Por que passa. pedido_do_cliente: o cliente pediu uma pessoa, ou a regra manda passar o assunto. falta_de_instrucao: não sabe como proceder, ou a informação não está nas suas instruções. falta_de_ferramenta: o pedido exige uma consulta ou ação que você não tem. nao_entendi: não entendeu o que o cliente quer. As três últimas vão para o relatório com que a equipe completa você: seja fiel.",
+    ),
+  oQueFaltou: z
+    .string()
+    .optional()
+    .describe(
+      "Obrigatório quando a causa não é pedido_do_cliente. Uma frase para a equipe, sem nome, telefone nem documento do cliente: o que faltou. Ex.: 'preço de sala para mais de 20 pessoas'.",
     ),
 });
 
@@ -661,16 +674,24 @@ export const chatwootIntegration: IntegrationDefinition = {
     {
       name: "transferir_para_humano",
       description:
-        "Passa o atendimento para uma pessoa da equipe. Use quando não souber responder com certeza, quando o cliente pedir, ou em assunto sensível (cobrança, cancelamento, reclamação). Depois de chamar, não escreva mais nada ao cliente: faça só o que as suas instruções mandam logo depois de transferir (como um registro ou um prazo) e encerre o turno.",
+        "Passa o atendimento para uma pessoa da equipe. Use quando não souber responder com certeza, quando o cliente pedir, ou em assunto sensível (cobrança, cancelamento, reclamação). Diga em `causa` por que está passando. Depois de chamar, não escreva mais nada ao cliente: faça só o que as suas instruções mandam logo depois de transferir (como um registro ou um prazo) e encerre o turno.",
       inputSchema: transferirSchema,
       requiresConfirmation: false,
       async execute(entrada, ctx) {
-        const { motivo, resumo, aviso } = entrada as z.infer<
+        const { motivo, resumo, aviso, causa, oQueFaltou } = entrada as z.infer<
           typeof transferirSchema
         >;
 
         if (!ctx.chatwootConversationId) {
           return "Sem conversa do Chatwoot neste contexto — nada a transferir.";
+        }
+
+        // Passar por incapacidade sem dizer o que faltou deixaria o relatório
+        // de lacunas com uma linha que a equipe não consegue agir sobre. Recusa
+        // ANTES de qualquer efeito: nada foi enviado, e o modelo repete a
+        // chamada completa no mesmo turno.
+        if (tipoDaCausa(causa) && detalheVazio(oQueFaltou)) {
+          return "Transferência NÃO feita: diga em `oQueFaltou` o que faltou para você resolver sozinho (uma frase, sem dados pessoais do cliente) e chame a ferramenta de novo.";
         }
 
         // Bot da PORTA, não do agente atual: quem assumiu por transferência
@@ -695,6 +716,19 @@ export const chatwootIntegration: IntegrationDefinition = {
         }
 
         const conversa = ctx.chatwootConversationId;
+
+        // O relatório de lacunas: a equipe lê o que faltou e fornece. Antes das
+        // chamadas ao Chatwoot de propósito — a lacuna é real mesmo que a
+        // transferência falhe depois — e sem lançar, para o relatório nunca
+        // custar a passagem da conversa.
+        await registrarLacuna({
+          agentId: ctx.agentId,
+          runId: ctx.runId,
+          chatwootConversationId: conversa,
+          causa,
+          oQueFaltou,
+          motivo,
+        });
 
         // Quem assume. "Passar para a equipe" sem ninguém atribuído deixava a
         // conversa órfã: status humano, dono nenhum, e o vigia não olha para

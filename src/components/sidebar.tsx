@@ -10,6 +10,7 @@ import {
   LogOut,
   MessagesSquare,
   Plug,
+  Puzzle,
   ScrollText,
   Timer,
   Users,
@@ -34,6 +35,7 @@ const SECOES = [
       { href: "/agentes", label: "Agentes", icone: Bot },
       { href: "/conversas", label: "Conversas", icone: MessagesSquare },
       { href: "/execucoes", label: "Execuções", icone: ScrollText },
+      { href: "/lacunas", label: "Lacunas", icone: Puzzle },
       { href: "/consumo", label: "Consumo", icone: Wallet },
       {
         href: "/prazos",
