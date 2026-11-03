@@ -13,6 +13,8 @@ import {
   tipoDeTurno,
 } from "./conduta";
 import { semFerramentasDeCanal } from "./chamada-interna";
+import { documentosDoAgente } from "@/server/conhecimento/consulta";
+import { blocoDeDocumentos } from "@/server/conhecimento/regras";
 
 /**
  * O que o modelo recebe antes da primeira mensagem: ferramentas e system prompt.
@@ -38,8 +40,16 @@ export type ContextoDoTurno = {
   modelo: ModeloCatalogo | null;
   /** Falso com ferramentas ligadas quando o modelo não aceita tools. */
   enviarFerramentas: boolean;
-  /** As três partes do system prompt, na ordem em que são concatenadas. */
-  partes: { operador: string; conduta: string; colegas: string };
+  /**
+   * As partes do system prompt, na ordem em que são concatenadas. `documentos`
+   * é vazio quando o agente não tem documento de apoio vinculado.
+   */
+  partes: {
+    operador: string;
+    documentos: string;
+    conduta: string;
+    colegas: string;
+  };
   systemPrompt: string;
 };
 
@@ -94,7 +104,16 @@ export async function prepararContexto(
           inboxId,
         );
 
-  // Ordem: PROMPT DO OPERADOR → REGRAS DA CASA → COLEGAS.
+  // Os documentos de apoio vinculados na tela Documentos. Valem em toda origem:
+  // quem avalia a conversa depois de resolvida e quem sugere a próxima fala ao
+  // vendedor são os que mais dependem do playbook e da matriz de qualificação.
+  // Sem nenhum vinculado, o bloco é string vazia e o prompt sai como sempre.
+  const documentos = blocoDeDocumentos(await documentosDoAgente(agente.id));
+
+  // Ordem: PROMPT DO OPERADOR → DOCUMENTOS DE APOIO → REGRAS DA CASA → COLEGAS.
+  //
+  // Os documentos ficam junto do prompt do operador, ANTES das regras: eles
+  // são conteúdo do operador e precisam entrar em "as instruções acima".
   //
   // As Regras da Casa vêm DEPOIS do prompt do operador porque dizem "as
   // instruções acima" — é essa dêixis que faz as regras de escopo e de
@@ -122,7 +141,7 @@ export async function prepararContexto(
     ferramentas,
     modelo,
     enviarFerramentas,
-    partes: { operador: agente.systemPrompt, conduta, colegas },
-    systemPrompt: agente.systemPrompt + conduta + colegas,
+    partes: { operador: agente.systemPrompt, documentos, conduta, colegas },
+    systemPrompt: agente.systemPrompt + documentos + conduta + colegas,
   };
 }

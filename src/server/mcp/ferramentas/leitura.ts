@@ -125,6 +125,7 @@ const listarAgentes = ferramenta({
         id: a.id,
         nome: a.name,
         descricao: a.description,
+        setor: a.setor,
         ligado: a.active,
         entrada: a.isEntry,
         arquivadoEm: quando(a.archivedAt),
@@ -211,6 +212,7 @@ const verAgente = ferramenta({
       id: agente.id,
       nome: agente.name,
       descricao: agente.description,
+      setor: agente.setor,
       estado: {
         ligado: agente.active,
         entrada: agente.isEntry,
@@ -316,7 +318,7 @@ const verRegrasInjetadas = ferramenta({
   name: "ver_regras_injetadas",
   title: "Ver regras injetadas",
   description:
-    "Mostra o que o sistema soma ao prompt do agente em todo turno — as Regras da Casa (que vencem o prompt em conflito) e a lista de colegas para quem ele pode transferir — exatamente como o agente recebe, calculado pela mesma função do turno. A cauda das regras muda com a origem do turno. Use antes de reescrever um prompt, para não escrever nada que as contradiga.",
+    "Mostra o que o sistema soma ao prompt do agente em todo turno — os documentos de apoio vinculados a ele, as Regras da Casa (que vencem o prompt em conflito) e a lista de colegas para quem ele pode transferir — exatamente como o agente recebe, calculado pela mesma função do turno. A cauda das regras muda com a origem do turno. Use antes de reescrever um prompt, para não escrever nada que as contradiga nem repetir o que um documento já diz.",
   papel: UserRole.VIEWER,
   anotacoes: CONSULTA,
   entrada: z.strictObject({
@@ -351,14 +353,25 @@ const verRegrasInjetadas = ferramenta({
       agente: agente.key,
       origem: `${fonte} (${ROTULO_DA_FONTE[fonte]})`,
       ordem:
-        "prompt do operador → Regras da Casa → colegas. As regras falam das 'instruções acima', que são o prompt do operador.",
+        "prompt do operador → documentos de apoio → Regras da Casa → colegas. As regras falam das 'instruções acima', que são o prompt do operador e os documentos.",
       observacao:
-        "Repetir uma regra no prompt não quebra nada — manter as regras visíveis no campo de prompt é decisão da casa. Contradizê-las, sim: em conflito, o bloco injetado vence.",
+        "Repetir uma regra no prompt não quebra nada — manter as regras visíveis no campo de prompt é decisão da casa. Contradizê-las, sim: em conflito, o bloco injetado vence. Os documentos de apoio são escritos pela equipe na tela Documentos e valem como instrução do operador.",
       tokensAproximados: {
         promptDoOperador: tokensAproximados(contexto.partes.operador),
+        documentosDeApoio: tokensAproximados(contexto.partes.documentos),
         regrasDaCasa: tokensAproximados(contexto.partes.conduta),
         colegas: tokensAproximados(contexto.partes.colegas),
       },
+      // O texto pode passar de cem mil caracteres: aqui só se diz que existe, e
+      // ele inteiro vem em `promptCompleto`, no lugar exato em que o agente o lê.
+      documentosDeApoio: contexto.partes.documentos
+        ? {
+            caracteres: contexto.partes.documentos.length,
+            texto: incluirPromptCompleto
+              ? "dentro de promptCompleto, entre '--- DOCUMENTOS DE APOIO ---' e '--- FIM DOS DOCUMENTOS ---'"
+              : "não incluído — peça incluirPromptCompleto: true para ler",
+          }
+        : null,
       regrasDaCasa: contexto.partes.conduta.trim(),
       colegas: contexto.partes.colegas.trim() || null,
       ...(incluirPromptCompleto ? { promptCompleto: contexto.systemPrompt } : {}),

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot,
+  FileText,
   Gauge,
   KeyRound,
   LogOut,
@@ -54,6 +55,7 @@ const SECOES = [
   {
     titulo: "Configuração",
     itens: [
+      { href: "/documentos", label: "Documentos", icone: FileText },
       { href: "/integracoes", label: "Integrações", icone: Plug },
       { href: "/usuarios", label: "Usuários", icone: Users },
       { href: "/acesso-mcp", label: "Acesso MCP", icone: KeyRound },

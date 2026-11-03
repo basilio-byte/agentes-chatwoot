@@ -2,6 +2,7 @@ import { MARCA_SEM_CREDITO } from "@/server/agents/sem-credito";
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { RunSource } from "@/generated/prisma/enums";
+import { listarSetores, SEM_SETOR } from "@/lib/setor";
 import { SEM_MODELO, type LinhaDeConsumo } from "./agregacao";
 import type { Intervalo } from "./periodo";
 
@@ -22,6 +23,13 @@ export type FiltroDeConsumo = {
   /** `SEM_MODELO` filtra as execuções anteriores ao registro do modelo. */
   model?: string | null;
   source?: RunSource | null;
+  /**
+   * Setor do AGENTE que rodou. `SEM_SETOR` pega os agentes sem setor definido.
+   * O setor é lido do agente de AGORA: mudar um agente de setor muda para onde
+   * vai o histórico dele — o setor é uma etiqueta de organização, não um
+   * registro contábil como `model`.
+   */
+  setor?: string | null;
 };
 
 export function montarWhere(filtro: FiltroDeConsumo): Prisma.AgentRunWhereInput {
@@ -42,6 +50,16 @@ export function montarWhere(filtro: FiltroDeConsumo): Prisma.AgentRunWhereInput 
       ? { model: filtro.model === SEM_MODELO ? null : filtro.model }
       : {}),
     ...(filtro.source ? { source: filtro.source } : {}),
+    ...(filtro.setor
+      ? {
+          agent:
+            filtro.setor === SEM_SETOR
+              ? { setor: null }
+              : // Sem diferenciar caixa: a grafia é reconciliada na gravação, mas
+                // a URL pode ter sido digitada ou colada de outra pessoa.
+                { setor: { equals: filtro.setor, mode: "insensitive" as const } },
+        }
+      : {}),
   };
 }
 
@@ -88,6 +106,8 @@ export type OpcoesDeFiltro = {
   modelos: string[];
   /** Já houve execução sem modelo registrado em algum momento. */
   temSemModelo: boolean;
+  /** Os setores dos agentes (arquivados incluídos), sem repetir a mesma área. */
+  setores: string[];
 };
 
 /**
@@ -102,12 +122,13 @@ export async function opcoesDeFiltro(): Promise<OpcoesDeFiltro> {
   const [agentes, modelos] = await Promise.all([
     db.agent.findMany({
       orderBy: { name: "asc" },
-      select: { id: true, name: true, archivedAt: true },
+      select: { id: true, name: true, archivedAt: true, setor: true },
     }),
     db.agentRun.groupBy({ by: ["model"], _count: { _all: true } }),
   ]);
 
   return {
+    setores: listarSetores(agentes.map((a) => a.setor)),
     agentes: agentes.map((a) => ({
       id: a.id,
       nome: a.name,

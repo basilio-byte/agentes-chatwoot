@@ -5,10 +5,11 @@ import { exigirPapel } from "@/server/auth-guard";
 import { criarAgente } from "@/server/actions/agents";
 import { listarModelos } from "@/server/agents/catalogo";
 import { AgenteForm } from "@/components/agente-form";
+import { setoresEmUso } from "@/server/conhecimento/consulta";
 
 export default async function NovoAgentePage() {
   await exigirPapel(UserRole.ADMIN);
-  const modelos = await listarModelos();
+  const [modelos, setores] = await Promise.all([listarModelos(), setoresEmUso()]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -29,6 +30,7 @@ export default async function NovoAgentePage() {
       <AgenteForm
         acao={criarAgente}
         modelos={modelos}
+        setoresEmUso={setores}
         rotuloEnvio="Criar agente"
       />
     </div>

@@ -15,6 +15,8 @@ import {
   Ponto,
 } from "@/components/ui";
 import { Abas } from "@/components/abas";
+import { Filtros, type Campo } from "@/components/filtros";
+import { bateComOFiltro, listarSetores, SEM_SETOR } from "@/lib/setor";
 import { AcoesDoAgente } from "@/components/acoes-do-agente";
 import { SeletorDeEntrada } from "@/components/seletor-de-entrada";
 import { formatarData } from "@/lib/utils";
@@ -32,9 +34,9 @@ export const dynamic = "force-dynamic";
 export default async function AgentesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ aba?: string }>;
+  searchParams: Promise<{ aba?: string; setor?: string }>;
 }) {
-  const { aba } = await searchParams;
+  const { aba, setor: setorFiltrado } = await searchParams;
   const sessao = await exigirSessao();
   const editavel = podeEditar(sessao.user.role);
 
@@ -75,8 +77,25 @@ export default async function AgentesPage({
       proxyConfigurado: configurado,
     });
 
-  const ativos = agentes.filter((a) => !a.archivedAt);
-  const arquivados = agentes.filter((a) => a.archivedAt);
+  // O filtro de setor recorta as DUAS abas: quem procura os agentes do
+  // Comercial quer ver também os que arquivou.
+  const doSetor = agentes.filter((a) => bateComOFiltro(a.setor, setorFiltrado));
+  const ativos = doSetor.filter((a) => !a.archivedAt);
+  const arquivados = doSetor.filter((a) => a.archivedAt);
+  const setores = listarSetores(agentes.map((a) => a.setor));
+
+  const camposDeFiltro: Campo[] = [
+    {
+      tipo: "select",
+      chave: "setor",
+      rotulo: "Setor",
+      opcoes: [
+        { valor: "", rotulo: "Todos os setores" },
+        ...setores.map((s) => ({ valor: s, rotulo: s })),
+        { valor: SEM_SETOR, rotulo: "Sem setor" },
+      ],
+    },
+  ];
 
   function cartao(agente: (typeof agentes)[number]) {
     const arquivado = Boolean(agente.archivedAt);
@@ -100,6 +119,7 @@ export default async function AgentesPage({
             </Link>
             {arquivado ? <Badge>arquivado</Badge> : null}
             {agente.isEntry ? <Badge tone="accent">entrada</Badge> : null}
+            {agente.setor ? <Badge title="Setor">{agente.setor}</Badge> : null}
             {agente.chatwootBot ? (
               <Badge tone="accent">{agente.chatwootBot.botName}</Badge>
             ) : (
@@ -250,6 +270,8 @@ export default async function AgentesPage({
         semBorda
       />
 
+      <Filtros campos={camposDeFiltro} valores={{ setor: setorFiltrado }} />
+
       <Abas
         inicial={aba}
         itens={[
@@ -262,9 +284,17 @@ export default async function AgentesPage({
               ativos.length === 0 ? (
                 <EmptyState
                   icone={<Bot size={18} aria-hidden />}
-                  titulo="Nenhum agente ainda"
-                  descricao="Crie o primeiro e ajuste o prompt no playground antes de ligá-lo no Chatwoot."
-                  acao={criar}
+                  titulo={
+                    setorFiltrado
+                      ? "Nenhum agente ativo nesse setor"
+                      : "Nenhum agente ainda"
+                  }
+                  descricao={
+                    setorFiltrado
+                      ? "Tire o filtro para ver todos, ou defina o setor na tela de cada agente (aba Agente → Identidade)."
+                      : "Crie o primeiro e ajuste o prompt no playground antes de ligá-lo no Chatwoot."
+                  }
+                  acao={setorFiltrado ? null : criar}
                 />
               ) : (
                 <div className="space-y-4">
@@ -282,7 +312,7 @@ export default async function AgentesPage({
               arquivados.length === 0 ? (
                 <EmptyState
                   icone={<Archive size={18} aria-hidden />}
-                  titulo="Nada arquivado"
+                  titulo={setorFiltrado ? "Nada arquivado nesse setor" : "Nada arquivado"}
                   descricao="Arquivar tira o agente de circulação e o desliga, mas mantém prompt, integrações e histórico. Dá para restaurar quando quiser."
                 />
               ) : (

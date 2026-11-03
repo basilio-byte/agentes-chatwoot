@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Bot,
   ExternalLink,
+  FileText,
   FlaskConical,
   History,
   MessagesSquare,
@@ -39,6 +40,8 @@ import {
 import { podeEncaminharParaHumano } from "@/server/agents/conduta";
 import { CanalDoAgente } from "@/components/canal-do-agente";
 import { IntegracoesDoAgente } from "@/components/integracoes-do-agente";
+import { DocumentosDoAgente } from "@/components/documentos-do-agente";
+import { setoresEmUso } from "@/server/conhecimento/consulta";
 import { EquipeDoAgente } from "@/components/equipe-do-agente";
 import { EscopoDoAgente } from "@/components/escopo-do-agente";
 import { db } from "@/lib/db";
@@ -217,6 +220,21 @@ export default async function AgentePage({
     };
   });
 
+  // Documentos de apoio: todos os cadastrados, e quais deles este agente recebe.
+  // O texto vem só para medir o peso — a tela mostra o tamanho, não o conteúdo.
+  const [documentosCadastrados, vinculosDeDocumento, setores] = await Promise.all([
+    db.documentoDeConhecimento.findMany({
+      orderBy: { nome: "asc" },
+      select: { id: true, nome: true, descricao: true, setor: true, texto: true },
+    }),
+    db.documentoDoAgente.findMany({
+      where: { agentId: agente.id },
+      select: { documentoId: true },
+    }),
+    setoresEmUso(),
+  ]);
+  const documentosDoAgente = vinculosDeDocumento.map((v) => v.documentoId);
+
   // Contadores das abas: mostram o essencial sem obrigar a entrar em cada uma.
   const temRoteamento = (agente.routingDescription ?? "").trim().length > 0;
   const colegasAlcancaveis = colegas.filter(
@@ -249,6 +267,7 @@ export default async function AgentePage({
             {agente.active ? "ativo" : "desligado"}
           </Badge>
           {agente.isEntry ? <Badge tone="accent">entrada</Badge> : null}
+          {agente.setor ? <Badge title="Setor">{agente.setor}</Badge> : null}
           <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-xs text-muted">
             {agente.key}
           </code>
@@ -340,6 +359,7 @@ export default async function AgentePage({
                   rotuloEnvio="Salvar alterações"
                   somenteLeitura={!editavel}
                   podeEncaminhar={podeEncaminhar}
+                  setoresEmUso={setores}
                   valores={{
                     name: agente.name,
                     description: agente.description ?? "",
@@ -350,6 +370,7 @@ export default async function AgentePage({
                     maxToolIterations: agente.maxToolIterations,
                     routingDescription: agente.routingDescription ?? "",
                     persona: agente.persona ?? "",
+                    setor: agente.setor ?? "",
                   }}
                 />
               </div>
@@ -519,6 +540,28 @@ export default async function AgentePage({
                   agentId={agente.id}
                   editavel={editavel}
                   integracoes={integracoesDisponiveis}
+                />
+              </div>
+            ),
+          },
+          {
+            id: "documentos",
+            rotulo: "Documentos",
+            icone: <FileText size={15} aria-hidden />,
+            contador: documentosDoAgente.length,
+            conteudo: (
+              <div className="max-w-3xl">
+                <DocumentosDoAgente
+                  agentId={agente.id}
+                  editavel={editavel}
+                  vinculados={documentosDoAgente}
+                  documentos={documentosCadastrados.map((d) => ({
+                    id: d.id,
+                    nome: d.nome,
+                    descricao: d.descricao,
+                    setor: d.setor,
+                    caracteres: d.texto.trim().length,
+                  }))}
                 />
               </div>
             ),

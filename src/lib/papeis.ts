@@ -42,6 +42,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Ver agentes, conversas, execuções e consumo",
       "Abrir o detalhe de uma execução e ler a transcrição",
       "Ler as lacunas dos agentes: o que faltou para eles resolverem sozinhos",
+      "Ler os documentos de apoio dos agentes (playbook, matriz de qualificação) e filtrar agentes e execuções por setor",
       "Conectar um assistente de I.A. pelo MCP, só para consultar",
       "Trocar a própria senha",
     ],
@@ -70,6 +71,10 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Configurar o alerta de saldo por WhatsApp — limite e telefones — e mandar a mensagem de teste",
       "Cadastrar quem recebe o aviso à equipe por WhatsApp, que os agentes mandam",
       "Apagar lacunas dos agentes já tratadas",
+      // O texto do documento entra no prompt do agente: mexer nele muda o que o
+      // agente diz ao cliente, no mesmo nível de mexer no prompt.
+      "Criar, editar e apagar documentos de apoio e escolher quais agentes os recebem",
+      "Definir o setor de cada agente",
       "Trocar o motor dos agentes entre OpenRouter e Claude MAX, na chave geral ou agente por agente",
       "Testar no playground",
       "Operar os agentes por um assistente de I.A. (MCP), com os limites deste papel",

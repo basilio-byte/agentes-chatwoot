@@ -13,12 +13,14 @@ import { intervaloDoPeriodo, normalizarPeriodo } from "@/server/consumo/periodo"
 import { Execucao } from "@/components/execucao";
 import { Filtros, type Campo } from "@/components/filtros";
 import { EmptyState, PageHeader } from "@/components/ui";
+import { SEM_SETOR } from "@/lib/setor";
 
 export const dynamic = "force-dynamic";
 
 type Busca = {
   periodo?: string;
   agente?: string;
+  setor?: string;
   modelo?: string;
   fonte?: string;
   status?: string;
@@ -65,6 +67,7 @@ export default async function ExecucoesPage({
     ...montarWhere({
       intervalo,
       agentId: busca.agente ?? null,
+      setor: busca.setor ?? null,
       model: busca.modelo ?? null,
       source: normalizarFonte(busca.fonte),
     }),
@@ -133,6 +136,16 @@ export default async function ExecucoesPage({
           valor: a.id,
           rotulo: a.arquivado ? `${a.nome} (arquivado)` : a.nome,
         })),
+      ],
+    },
+    {
+      tipo: "select",
+      chave: "setor",
+      rotulo: "Setor",
+      opcoes: [
+        { valor: "", rotulo: "Todos" },
+        ...opcoes.setores.map((s) => ({ valor: s, rotulo: s })),
+        { valor: SEM_SETOR, rotulo: "Sem setor" },
       ],
     },
     {

@@ -105,6 +105,15 @@ model Agent {
   /// para quem tem persona de propósito (hoje "Pedro" e "Everton").
   persona String?
 
+  /// A que área da Seahub este agente pertence ("Comercial", "Financeiro"…).
+  /// Texto livre, para a equipe decidir os nomes sem pedir deploy: serve só para
+  /// FILTRAR (Agentes, Execuções) e para agrupar os documentos de apoio — não
+  /// muda o comportamento do agente. Nulo = sem setor.
+  ///
+  /// A grafia é reconciliada na gravação com a que já existe (`src/lib/setor.ts`):
+  /// "comercial" e "Comercial " viram a mesma coisa, senão o filtro listaria dois.
+  setor String?
+
   /// O agente de entrada recebe a primeira mensagem e distribui. Só um pode
   /// estar ligado — sem isso, quem responde primeiro seria arbitrário.
   isEntry Boolean @default(false)
@@ -188,6 +197,7 @@ model Agent {
   prazos        PrazoDeConversa[]
   gatilhosDeConversa GatilhoDeConversa[]
   lacunas       LacunaDoAgente[]
+  documentos    DocumentoDoAgente[]
 
   handoffsFeitos    AgentHandoff[] @relation("HandoffDe")
   handoffsRecebidos AgentHandoff[] @relation("HandoffPara")
@@ -196,6 +206,47 @@ model Agent {
 
   @@index([isEntry])
   @@index([archivedAt])
+}
+
+/// Documento de apoio dos agentes: o "Playbook comercial", a "Matriz de
+/// qualificação". O texto vai para o system prompt de CADA agente vinculado
+/// (`DocumentoDoAgente`), logo depois do prompt do operador e antes das Regras da
+/// Casa — ver `src/server/conhecimento/` e `contexto.ts`.
+///
+/// Guarda o TEXTO, não o arquivo: o agente só lê texto, e o texto precisa poder
+/// ser corrigido na tela. O nome não é "Documento" por causa da integração
+/// `DOCUMENTOS` (conferência de CPF/CNPJ), que é outra coisa.
+model DocumentoDeConhecimento {
+  id        String  @id @default(cuid())
+  nome      String  @unique
+  /// Para que serve e quando vale. Vai no cabeçalho do documento dentro do prompt.
+  descricao String?
+  /// Mesma ideia de `Agent.setor`: texto livre, só para filtrar e agrupar.
+  setor     String?
+  /// O que entra no prompt. Limitado em `src/server/conhecimento/regras.ts`.
+  texto     String  @db.Text
+  /// De onde veio ("playbook.md" ou "texto colado"), só para a tela.
+  origem    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agentes DocumentoDoAgente[]
+
+  @@index([setor])
+}
+
+/// Quais agentes recebem cada documento. Apagar um dos dois lados desfaz o vínculo.
+model DocumentoDoAgente {
+  documentoId String
+  agentId     String
+  createdAt   DateTime @default(now())
+
+  documento DocumentoDeConhecimento @relation(fields: [documentoId], references: [id], onDelete: Cascade)
+  agent     Agent                   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@id([documentoId, agentId])
+  @@index([agentId])
 }
 
 /// Por que o agente passou o atendimento a uma pessoa SEM SER CAPAZ de seguir

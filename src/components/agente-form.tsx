@@ -38,6 +38,8 @@ export type ValoresAgente = {
   routingDescription: string;
   /** Vazio = identidade institucional. */
   persona: string;
+  /** Vazio = sem setor. */
+  setor: string;
 };
 
 /**
@@ -226,6 +228,7 @@ const PADRAO: ValoresAgente = {
   // Nasce sem nome de pessoa: identidade institucional nao confunde com
   // ninguem da equipe. Persona e escolha consciente, agente a agente.
   persona: "",
+  setor: "",
 };
 
 export function AgenteForm({
@@ -235,6 +238,7 @@ export function AgenteForm({
   rotuloEnvio,
   somenteLeitura = false,
   podeEncaminhar = true,
+  setoresEmUso = [],
 }: {
   acao: (
     estado: EstadoFormulario,
@@ -252,6 +256,8 @@ export function AgenteForm({
    * transferência ligada e Chatwoot vinculado.
    */
   podeEncaminhar?: boolean;
+  /** Os setores que já existem, para sugerir a mesma grafia. */
+  setoresEmUso?: string[];
 }) {
   /**
    * A ação, embrulhada para FALAR quando quebra.
@@ -323,6 +329,27 @@ export function AgenteForm({
             />
           </Field>
         </div>
+
+        <Field
+          label="Setor (opcional)"
+          hint="A área a que este agente pertence — Comercial, Financeiro, Atendimento… Serve só para filtrar nas telas Agentes e Execuções e para agrupar documentos; não muda o comportamento dele. Escolha um já usado ou digite um novo."
+          erro={erroDe("setor")}
+        >
+          <Input
+            name="setor"
+            defaultValue={valores.setor}
+            maxLength={40}
+            list="setores-em-uso"
+            disabled={somenteLeitura}
+            placeholder="Em branco = sem setor"
+            autoComplete="off"
+          />
+          <datalist id="setores-em-uso">
+            {setoresEmUso.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        </Field>
 
         <Field
           label="Como se apresenta ao assumir (opcional)"

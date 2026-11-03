@@ -2,8 +2,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { slugUnico } from "@/lib/slug";
+import { LIMITE_DO_SETOR, reconciliarSetor } from "@/lib/setor";
 import { IntegrationProvider } from "@/generated/prisma/enums";
 import { EFFORTS, listarModelos } from "@/server/agents/catalogo";
+import { setoresGravados } from "@/server/conhecimento/consulta";
 import { auditar, type Autor, type Desfecho } from "./autor";
 
 /**
@@ -29,6 +31,15 @@ export const agenteSchema = z.object({
   /// Nome com que se apresenta ao assumir uma conversa. Vazio = identidade
   /// institucional ("agente de atendimento da Seahub"), que é o padrão.
   persona: z.string().trim().max(40).optional().or(z.literal("")),
+  /// A área a que o agente pertence ("Comercial"). Só para filtrar e agrupar:
+  /// não muda o comportamento. Vazio = sem setor; AUSENTE = não mexe no que está
+  /// gravado (quem monta o objeto sem falar de setor não pode apagá-lo).
+  setor: z
+    .string()
+    .trim()
+    .max(LIMITE_DO_SETOR, `No máximo ${LIMITE_DO_SETOR} caracteres`)
+    .optional()
+    .or(z.literal("")),
 });
 
 /**
@@ -101,13 +112,16 @@ export async function criarAgente(
     (a) => a.key,
   );
 
+  const { setor: setorDigitado, ...dadosDoAgente } = parsed.data;
+
   const agente = await db.agent.create({
     data: {
-      ...parsed.data,
+      ...dadosDoAgente,
       key: slugUnico(parsed.data.name, usadas),
       description: parsed.data.description || null,
       routingDescription: parsed.data.routingDescription || null,
       persona: parsed.data.persona?.trim() || null,
+      setor: reconciliarSetor(setorDigitado, await setoresGravados()),
       ownerId: autor.userId,
       updatedById: autor.userId,
       versions: {
@@ -200,11 +214,17 @@ export async function atualizarAgente(
     atual.model !== parsed.data.model ||
     atual.effort !== parsed.data.effort;
 
+  const { setor: setorDigitado, ...dadosDoAgente } = parsed.data;
+
   const campos = {
-    ...parsed.data,
+    ...dadosDoAgente,
     description: parsed.data.description || null,
     routingDescription: parsed.data.routingDescription || null,
     persona: parsed.data.persona?.trim() || null,
+    // Ausente = quem chamou não falou de setor, e ele fica como está. Vazio tira.
+    ...(setorDigitado !== undefined
+      ? { setor: reconciliarSetor(setorDigitado, await setoresGravados()) }
+      : {}),
     updatedById: autor.userId,
   };
 

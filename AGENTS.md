@@ -3609,6 +3609,99 @@ em `registrar.ts`, leitura em `consulta.ts` — a MESMA para a tela e o MCP.
   vencido não são incapacidade do agente. Se um dia o relatório precisar de
   "agente travou e não chamou a ferramenta", é outro registro.
 
+### Documentos de apoio e setor: o que a equipe escreve entra no prompt
+
+Pedido do Diego (03/11/2026, sprint de Growth): uma aba **Documentos** para
+anexar o "Playbook comercial" e a "Matriz de qualificação" e vinculá-los a
+agentes, com filtro por **setor** — e o filtro de setor nas telas Agentes e
+Execuções. Tela `/documentos` (menu Configuração, ao lado de Integrações), aba
+**Documentos** na tela de cada agente, campo **Setor** em Agente → Identidade.
+Regras puras e testadas em `src/server/conhecimento/regras.ts` e
+`src/lib/setor.ts`; escrita em `conhecimento/servico.ts`; leitura (a que o
+worker usa) em `conhecimento/consulta.ts`.
+
+- **O documento é TEXTO, não arquivo.** Guarda-se o texto (`DocumentoDeConhecimento`)
+  e não os bytes: o agente só lê texto, e o texto precisa poder ser corrigido na
+  tela. O nome não é "Documento" por causa da integração `DOCUMENTOS`
+  (conferência de CPF/CNPJ), que é outra coisa.
+- ⚠ **PDF e Word não são lidos, de propósito.** A leitura de PDF do sistema
+  (`lerArquivoEnviado`, a da mídia do atendimento) RESUME e corta a resposta em
+  `MAX_TOKENS_DESCRICAO`: serve para saber do que se trata um comprovante, e
+  tiraria páginas de um playbook sem avisar. Para um texto que o agente vai
+  tratar como instrução, página que faltou sem ninguém ver é pior do que texto
+  que não entrou. Por isso `.txt`, `.md`, `.csv`, `.json` e `.log` são lidos NO
+  NAVEGADOR (nenhum arquivo chega ao servidor) e caem no campo para a pessoa
+  conferir; PDF e Word dizem "copie o texto e cole". Se virar rotina, o caminho
+  é extrair `.docx` (XML dentro de um zip) e PDF com texto sem modelo — nunca
+  pelo resumo.
+- **Vai no system prompt do agente vinculado, em TODA origem** (`contexto.ts`),
+  entre o prompt do operador e as Regras da Casa: `operador + documentos +
+  conduta + colegas`. ⚠ **Antes das regras, e não depois**: as regras de escopo e
+  de fonte da verdade se definem por "as instruções acima", e o documento é
+  conteúdo do operador — depois delas, o agente trataria o playbook como assunto
+  fora do escopo. As regras continuam por cima de tudo, e o texto de abertura do
+  bloco diz isso. Vale também na conversa encerrada, na marcada e na parada: é
+  quem avalia a conversa depois dela acabar que mais precisa da matriz.
+- **Sem documento, o prompt sai byte a byte como era** (`blocoDeDocumentos`
+  devolve string vazia; tem teste). Com documento, a ordem é por NOME, e não pela
+  de cadastro ou de vínculo: o prefixo é o que o provedor guarda em cache, e
+  reordenar sem o texto mudar custaria o cache de todas as conversas do agente.
+  Editar o documento muda o prefixo dos agentes vinculados uma vez, e o cache
+  volta a esquentar.
+- ⚠ **Custa em TODA mensagem do agente**, como as ferramentas — e a tela mostra
+  isso em tokens (`~3,6 caracteres por token`, a mesma régua do MCP), por
+  documento e no total do agente, com aviso a partir de 8.000. Era a escolha
+  entre injetar no prompt (sempre presente, cacheável, custo visível) e dar ao
+  agente uma ferramenta de consulta (custa só quando consulta, mas o modelo pode
+  nunca consultar). Ficou a primeira: "dar base" é estar sempre lá. Se a conta
+  pesar, o passo seguinte é a consulta sob demanda, não cortar o texto.
+- **Tetos**: 60.000 caracteres por documento (~16 mil tokens) e **120.000 por
+  agente**. Passar do teto do agente estoura a janela do modelo, e o sintoma é o
+  agente calar em TODA conversa dele — por isso o vínculo é RECUSADO (e a edição
+  de um documento que faria um agente vinculado passar do teto também, nomeando o
+  agente), em vez de aceitar e quebrar em produção.
+- ⚠ **Vincular pela tela do documento só mexe em agente NÃO arquivado**
+  (`definirAgentesDoDocumento`). A tela não lista arquivado, e "substituir o
+  conjunto" a partir dela apagaria em silêncio o vínculo de quem ela nunca
+  mostrou — que voltaria sem o playbook no dia em que fosse restaurado.
+- **Papel**: qualquer logado lê; criar, editar, apagar e vincular é `ADMIN` — o
+  texto muda o que o agente diz ao cliente, no mesmo nível de mexer no prompt.
+  `papeis.ts` diz isso. **Não há ferramenta de documento no MCP** (o que fica
+  de fora é decisão, como credencial); `ver_regras_injetadas` mostra se o agente
+  tem documentos e `promptCompleto` traz o texto.
+- ⚠ **Documento NÃO cria `AgentVersion`.** O versionamento só cobre prompt,
+  modelo e effort do agente; editar o playbook muda o comportamento de todos os
+  agentes vinculados sem versão no histórico deles — mesma ressalva das Regras
+  da Casa. O rastro é a auditoria (`documento.created`, `.updated`, `.deleted`,
+  `.vinculos.updated`, `agent.documentos.updated`), e é por ela que um texto se
+  recupera: `documento.updated` guarda o `textoAnterior` e `documento.deleted`
+  guarda o `texto` apagado. Não há tela de histórico.
+
+**Setor** (`Agent.setor`, `DocumentoDeConhecimento.setor`) é texto livre e **só
+organiza**: filtra Agentes e Execuções e agrupa documentos; não muda o
+comportamento de ninguém. Livre de propósito — a equipe decide se existe
+"Comercial" ou "Vendas" sem pedir deploy.
+
+- ⚠ **A grafia é reconciliada na gravação** (`reconciliarSetor`): "comercial",
+  "Comercial " e "COMERCIAL" viram a grafia que já existe, senão o filtro listaria
+  três setores. A lista de opções ainda junta o que escapou (linha gravada à mão
+  ou antes da regra), com a grafia mais usada.
+- ⚠ **Setor AUSENTE não é setor VAZIO.** O serviço de agentes é um formulário só
+  e o MCP monta o objeto inteiro a partir do agente atual: se "ausente" valesse
+  como "vazio", qualquer ajuste de modelo ou de prompt pelo MCP apagaria o setor
+  que o painel gravou. Ausente deixa como está; vazio tira. `dadosAtuais` do MCP
+  carrega o setor, e `agentes.setor.test.ts` trava as duas pontas.
+- O filtro de **Execuções** usa o setor do agente de AGORA (`montarWhere`): mudar
+  um agente de setor leva o histórico dele junto, porque o setor é etiqueta de
+  organização, e não registro contábil como `AgentRun.model`. `montarWhere`
+  aceita `setor`, mas Consumo e o CSV não o oferecem — "quanto cada setor gasta"
+  é o próximo passo natural, e é uma linha na tela.
+- "Sem setor" é um valor de filtro (`sem-setor`), e o cartão do agente mostra o
+  setor ao lado do nome.
+- O contrato de métricas (`metricas_v1`) NÃO ganhou o setor: coluna nova de
+  `Agent` não quebra as views, e acrescentar ao contrato é decisão do banco
+  central.
+
 ### Parar uma execução em andamento
 
 Botão em Execuções, no cartão de quem está `RUNNING`. Exige `ADMIN` — parar

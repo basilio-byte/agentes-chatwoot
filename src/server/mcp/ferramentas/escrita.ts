@@ -74,6 +74,7 @@ function dadosAtuais(agente: {
   maxToolIterations: number;
   routingDescription: string | null;
   persona: string | null;
+  setor: string | null;
 }): DadosDoAgente {
   return {
     name: agente.name,
@@ -85,6 +86,9 @@ function dadosAtuais(agente: {
     maxToolIterations: agente.maxToolIterations,
     routingDescription: agente.routingDescription ?? "",
     persona: agente.persona ?? "",
+    // Preservado como está: sem isto, qualquer alteração pelo MCP (um ajuste de
+    // modelo, um prompt novo) apagaria o setor que o painel gravou.
+    setor: agente.setor ?? "",
   };
 }
 
@@ -117,6 +121,14 @@ const criarAgenteMcp = ferramenta({
       .describe(
         "Quando um colega deve transferir a conversa para este agente. Vazio = nenhum colega o enxerga.",
       ),
+    setor: z
+      .string()
+      .trim()
+      .max(40)
+      .optional()
+      .describe(
+        'A área do agente ("Comercial", "Financeiro"). Só serve para filtrar nas telas; não muda o comportamento. Use a grafia de um setor que já existe (ver listar_agentes).',
+      ),
   }),
   async executar(args, ctx) {
     // Os padrões são os mesmos do schema do banco (`Agent.effort`,
@@ -134,6 +146,7 @@ const criarAgenteMcp = ferramenta({
         // Agente novo nasce sem nome de pessoa: identidade institucional nao
         // se confunde com ninguem da equipe. Persona e escolha consciente.
         persona: "",
+        setor: args.setor ?? "",
       },
       autorDoMcp(ctx),
     );
@@ -159,7 +172,7 @@ const atualizarAgenteMcp = ferramenta({
   name: "atualizar_agente",
   title: "Atualizar agente",
   description:
-    "Altera nome, descrição, modelo, effort, limites, a descrição de roteamento ou a persona de um agente. NÃO altera o prompt (para isso, propor_alteracao_de_prompt). Campo omitido fica como está; texto vazio esvazia descricao, descricaoDeRoteamento ou persona. Mudar modelo ou effort cria uma versão no histórico. Vale a partir da próxima mensagem.",
+    "Altera nome, descrição, modelo, effort, limites, a descrição de roteamento, a persona ou o setor de um agente. NÃO altera o prompt (para isso, propor_alteracao_de_prompt). Campo omitido fica como está; texto vazio esvazia descricao, descricaoDeRoteamento, persona ou setor. Mudar modelo ou effort cria uma versão no histórico. Vale a partir da próxima mensagem.",
   papel: UserRole.ADMIN,
   anotacoes: ALTERA,
   entrada: z
@@ -179,6 +192,14 @@ const atualizarAgenteMcp = ferramenta({
         .optional()
         .describe(
           'Nome com que o agente se apresenta ao ASSUMIR uma conversa transferida. Vazio = identidade institucional ("agente de atendimento da Seahub"), que é o padrão. Só use nome de persona; nunca o nome de uma pessoa real da equipe.',
+        ),
+      setor: z
+        .string()
+        .trim()
+        .max(40)
+        .optional()
+        .describe(
+          'A área do agente ("Comercial", "Financeiro"). Só serve para filtrar nas telas; não muda o comportamento. Vazio tira o setor. Use a grafia de um setor que já existe (ver listar_agentes).',
         ),
     })
     .refine(temCampoAlemDoAgente, {
@@ -202,6 +223,7 @@ const atualizarAgenteMcp = ferramenta({
         ? { routingDescription: args.descricaoDeRoteamento }
         : {}),
       ...(args.persona !== undefined ? { persona: args.persona } : {}),
+      ...(args.setor !== undefined ? { setor: args.setor } : {}),
     };
 
     // O prompt vai junto na escrita (o formulário é um só); a trava garante
