@@ -23,6 +23,19 @@ export const TIMEOUT_MODELO_MS = 120_000;
  */
 export const MAX_TOKENS_DESCRICAO = 900;
 
+/**
+ * Teto de saída para quem lê o documento INTEIRO e usa o texto uma vez só.
+ *
+ * ⚠ Os 900 acima servem ao atendimento, onde a descrição vira contexto de todos
+ * os turnos seguintes. Não servem à conta de energia lida do Drive: a
+ * `instrucaoDocumento` manda transcrever tudo, e a DANFE da Neoenergia com
+ * tarifa branca e compensação gasta os 900 tokens na tabela de itens e para no
+ * meio de uma linha — antes do número do medidor. Em 02/11/2026, 7 de 8 contas
+ * foram para `Conferir` por isso. No Drive o texto só volta como retorno de uma
+ * ferramenta, naquela rodada: o custo de contexto que justifica os 900 não existe.
+ */
+export const MAX_TOKENS_LEITURA_COMPLETA = 4000;
+
 export function criarClienteOpenAI(config: OpenAIConfig, apiKey: string): OpenAI {
   return new OpenAI({
     apiKey,
@@ -144,6 +157,12 @@ export type ResultadoDeLeitura = {
   inputTokens: number;
   outputTokens: number;
   segundosDeAudio?: number;
+  /**
+   * O modelo parou no teto de saída (`finish_reason: "length"`): o texto está
+   * INCOMPLETO. Sem este sinal a leitura cortada volta idêntica a uma completa,
+   * e quem a usa só descobre pelo final abrupto.
+   */
+  cortado?: boolean;
 };
 
 /** Transcrição de áudio. Endpoint próprio, multipart — o SDK monta o corpo. */
@@ -192,12 +211,14 @@ export async function descreverImagem(args: {
   arquivo: ArquivoBaixado;
   model: string;
   instrucao: string;
+  /** Teto de saída. Padrão: `MAX_TOKENS_DESCRICAO`. */
+  maxTokens?: number;
 }): Promise<ResultadoDeLeitura> {
   const dataUri = `data:${args.arquivo.mimeType};base64,${args.arquivo.bytes.toString("base64")}`;
 
   const retorno = await args.cliente.chat.completions.create({
     model: args.model,
-    max_completion_tokens: MAX_TOKENS_DESCRICAO,
+    max_completion_tokens: args.maxTokens ?? MAX_TOKENS_DESCRICAO,
     messages: [
       {
         role: "user",
@@ -214,6 +235,7 @@ export async function descreverImagem(args: {
     model: args.model,
     inputTokens: retorno.usage?.prompt_tokens ?? 0,
     outputTokens: retorno.usage?.completion_tokens ?? 0,
+    cortado: retorno.choices?.[0]?.finish_reason === "length",
   };
 }
 
@@ -224,12 +246,14 @@ export async function lerDocumento(args: {
   nome: string;
   model: string;
   instrucao: string;
+  /** Teto de saída. Padrão: `MAX_TOKENS_DESCRICAO`. */
+  maxTokens?: number;
 }): Promise<ResultadoDeLeitura> {
   const dataUri = `data:${args.arquivo.mimeType};base64,${args.arquivo.bytes.toString("base64")}`;
 
   const retorno = await args.cliente.chat.completions.create({
     model: args.model,
-    max_completion_tokens: MAX_TOKENS_DESCRICAO,
+    max_completion_tokens: args.maxTokens ?? MAX_TOKENS_DESCRICAO,
     messages: [
       {
         role: "user",
@@ -249,6 +273,7 @@ export async function lerDocumento(args: {
     model: args.model,
     inputTokens: retorno.usage?.prompt_tokens ?? 0,
     outputTokens: retorno.usage?.completion_tokens ?? 0,
+    cortado: retorno.choices?.[0]?.finish_reason === "length",
   };
 }
 

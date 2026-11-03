@@ -20,7 +20,10 @@ import {
 } from "./client";
 import { camposDoModelo, textoDoDocumento } from "./docs";
 import { capacidadeDeMidia } from "@/server/integrations/openai/credenciais";
-import { criarClienteOpenAI } from "@/server/integrations/openai/client";
+import {
+  criarClienteOpenAI,
+  MAX_TOKENS_LEITURA_COMPLETA,
+} from "@/server/integrations/openai/client";
 import { lerArquivoEnviado } from "@/server/integrations/openai/upload";
 import {
   a1,
@@ -58,6 +61,15 @@ import {
  */
 
 const TETO_DE_TEXTO = 12_000;
+
+/**
+ * Teto de caracteres do texto de um arquivo lido do Drive.
+ *
+ * O padrão da leitura de mídia (6.000) cabe numa descrição de atendimento, não
+ * numa conta de energia transcrita por inteiro: 4.000 tokens de tabela numérica
+ * passam de 10 mil caracteres, e o número do medidor vem no fim.
+ */
+const TETO_DE_CARACTERES_DO_DRIVE = 12_000;
 
 function contexto(ctx: ToolContext): {
   cliente: GoogleClient;
@@ -1327,11 +1339,20 @@ export const googleIntegration: IntegrationDefinition = {
           config: capacidade.config,
           cliente: criarClienteOpenAI(capacidade.config, capacidade.apiKey),
           agentId: ctx.agentId,
+          // ⚠ Teto de leitura próprio. O padrão (900 tokens) é o do atendimento e
+          // cortava a conta de energia antes do número do medidor: 7 de 8 contas
+          // de 02/11/2026 foram para `Conferir` por isso, com `lido: true` e sem
+          // aviso nenhum. Aqui o texto é usado uma vez, no retorno desta rodada.
+          maxTokens: MAX_TOKENS_LEITURA_COMPLETA,
+          tetoDeCaracteres: TETO_DE_CARACTERES_DO_DRIVE,
           // ⚠ A chave é o ID do arquivo: ler o mesmo PDF duas vezes é pagar
           // duas vezes pela mesma página, e nada garante que o agente leia uma
           // vez só. Estável porque o id do Drive não muda quando o arquivo é
           // renomeado ou movido.
-          chaveDoCache: `drive:${arquivo.id}`,
+          // ⚠ E leva o TETO: a leitura cortada pelo teto antigo ficou guardada
+          // como `OK` (definitivo) sob `drive:<id>`, e essa chave a devolveria
+          // para sempre. Mudou o teto, muda o sufixo.
+          chaveDoCache: `drive:${arquivo.id}:t${MAX_TOKENS_LEITURA_COMPLETA}`,
         });
 
         return {
@@ -1340,6 +1361,13 @@ export const googleIntegration: IntegrationDefinition = {
           link: arquivo.webViewLink ?? null,
           tipo: leitura.kind,
           texto: leitura.texto,
+          ...(leitura.cortado
+            ? {
+                cortado: true,
+                aviso:
+                  "O texto está INCOMPLETO: a leitura parou no limite antes do fim do documento. Um dado que não aparece aqui pode estar na parte que faltou — não conclua que ele não existe no documento.",
+              }
+            : {}),
           ...(leitura.texto == null ? { erro: leitura.motivo } : {}),
         };
       },

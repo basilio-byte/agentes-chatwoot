@@ -83,7 +83,33 @@ export type ArquivoEnviado = {
    * senão a leitura feita com uma instrução volta do cache para outra.
    */
   instrucaoImagem?: string | null;
+  /**
+   * Teto de saída da leitura do modelo, no lugar de `MAX_TOKENS_DESCRICAO`.
+   *
+   * ⚠ Quem sobe o teto tem de pô-lo na `chaveDoCache`: o texto cortado pelo teto
+   * antigo fica guardado como `OK` (definitivo), e a chave velha o devolveria
+   * para sempre, por mais que o teto tenha subido.
+   */
+  maxTokens?: number | null;
+  /** Teto de caracteres do texto devolvido, no lugar de `TETO_DE_TEXTO_POR_ANEXO`. */
+  tetoDeCaracteres?: number | null;
 };
+
+/**
+ * Fecha o texto quando o modelo parou no teto de saída.
+ *
+ * Mora NO texto, e não só num campo, porque o texto vai para o cache: uma
+ * leitura cortada devolvida do cache dois dias depois precisa continuar dizendo
+ * que está cortada. Parênteses, e não colchetes: dentro da cerca do anexo o
+ * colchete vira parêntese de qualquer jeito (ver `formato.ts`).
+ */
+export const AVISO_DE_LEITURA_INTERROMPIDA =
+  "(leitura interrompida: o documento é mais longo do que o limite de leitura, e o texto acima está INCOMPLETO — não conclua que um dado não existe só porque não aparece aqui)";
+
+/** O texto guardado traz o aviso de corte? Vale também para o que veio do cache. */
+export function leituraInterrompida(texto: string | null | undefined): boolean {
+  return Boolean(texto?.trimEnd().endsWith(AVISO_DE_LEITURA_INTERROMPIDA));
+}
 
 export type LeituraDeArquivoEnviado = {
   /**
@@ -99,6 +125,8 @@ export type LeituraDeArquivoEnviado = {
   /** Por que não deu, em pt-BR, para a tela mostrar. Nulo quando deu certo. */
   motivo: string | null;
   model: string | null;
+  /** O texto está incompleto: o modelo parou no teto de saída. */
+  cortado?: boolean;
 };
 
 /**
@@ -138,6 +166,7 @@ export async function lerArquivoEnviado(
         texto: guardado.texto,
         motivo: guardado.erro,
         model: guardado.model,
+        cortado: leituraInterrompida(guardado.texto),
       };
     }
   }
@@ -217,9 +246,13 @@ export async function lerArquivoEnviado(
 
   try {
     const leitura = await executarLeitura(kind, extensao, arquivo, nome, entrada);
-    const texto = cortar(leitura.texto);
+    const cortado = leitura.cortado === true;
+    const aparado = cortar(
+      leitura.texto,
+      entrada.tetoDeCaracteres ?? undefined,
+    );
 
-    if (!texto) {
+    if (!aparado) {
       return gravar(kind, nome, {
         status: MediaStatus.SKIPPED,
         texto: null,
@@ -237,8 +270,13 @@ export async function lerArquivoEnviado(
       });
     }
 
+    // O aviso entra DEPOIS do corte de caracteres, para o próprio corte não o
+    // levar embora, e fica no texto que vai para o cache.
+    const texto = cortado ? `${aparado}\n${AVISO_DE_LEITURA_INTERROMPIDA}` : aparado;
+
     return gravar(kind, nome, {
       status: MediaStatus.OK,
+      cortado,
       texto,
       motivo: null,
       erro: null,
@@ -316,6 +354,7 @@ type Gravacao = {
   tamanhoBytes?: number;
   agentId?: string | null;
   chaveDoCache?: string | null;
+  cortado?: boolean;
 };
 
 /**
@@ -381,6 +420,7 @@ async function gravar(
     texto: dados.texto,
     motivo: dados.motivo,
     model: dados.model ?? null,
+    cortado: dados.cortado ?? false,
   };
 }
 
@@ -407,6 +447,7 @@ async function executarLeitura(
       arquivo,
       model: entrada.config.modeloVisao,
       instrucao: entrada.instrucaoImagem?.trim() || entrada.config.instrucaoImagem,
+      maxTokens: entrada.maxTokens ?? undefined,
     });
   }
 
@@ -427,6 +468,7 @@ async function executarLeitura(
     nome,
     model: modeloDeDocumento(entrada.config),
     instrucao: entrada.config.instrucaoDocumento,
+    maxTokens: entrada.maxTokens ?? undefined,
   });
 }
 

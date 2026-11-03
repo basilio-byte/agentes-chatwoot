@@ -2879,6 +2879,39 @@ Antes disso o agente só enxergava nome e link.
   `ERROR` volta até `MAX_TENTATIVAS` — a mesma doutrina de `analisarAnexo`.
   A gravação virou `upsert` por causa disso: com chave estável, a segunda
   leitura de um arquivo que falhou daria violação de unique.
+- ⚠⚠ **A leitura do Drive tem teto de saída PRÓPRIO, e leitura cortada diz que
+  está cortada** (03/11/2026, pedido do Pedro Olinto para "a segunda toda"). Em
+  02/11 o agente de contas de energia esvaziou a pasta às 13:05 — a janela
+  sobrava —, mas NENHUMA conta foi lançada: 1 sem medidor cadastrado e 7 porque o
+  texto extraído parava antes do medidor. A causa era `MAX_TOKENS_DESCRICAO`
+  (900): o teto do atendimento, onde a descrição vira contexto de todo turno
+  seguinte. A `instrucaoDocumento` manda transcrever tudo, e a DANFE da
+  Neoenergia com tarifa branca e compensação (`G2Comp…`) gasta os 900 na tabela
+  de itens e para no meio de uma linha. A conta residencial de 17/09 era curta e
+  cabia. Hoje:
+  - **`MAX_TOKENS_LEITURA_COMPLETA` (4.000) e 12.000 caracteres** só para o
+    Drive (`maxTokens` e `tetoDeCaracteres` em `ArquivoEnviado`). O atendimento
+    segue nos 900 e nos 6.000: lá o texto é relido em toda mensagem; no Drive
+    ele volta uma vez, como retorno de ferramenta.
+  - **`finish_reason: "length"` vira `cortado`** (`ResultadoDeLeitura`). Antes a
+    leitura cortada voltava `lido: true`, idêntica a uma inteira, e o agente só
+    deduzia pelo final abrupto. O aviso mora NO TEXTO
+    (`AVISO_DE_LEITURA_INTERROMPIDA`, no fim, depois do corte de caracteres) para
+    sobreviver ao cache, e o retorno da ferramenta traz `cortado: true` e
+    `aviso`. O aviso proíbe concluir que o dado não existe e NÃO manda fazer
+    nada com a conta: o que fazer é do prompt do agente.
+  - ⚠ **A chave de cache leva o teto** (`drive:<id>:t4000`). A leitura cortada
+    pelos 900 ficou guardada como `OK` (definitivo) sob `drive:<id>`, e a chave
+    velha a devolveria para sempre. Mexeu no teto, mexa no sufixo. As linhas
+    antigas ficam órfãs na tabela, sem custo.
+  - ⚠ **Contas que já foram para `Conferir` não voltam sozinhas**: o agente só
+    olha a pasta de entrada. Alguém precisa devolvê-las à `Contas Cosern`.
+  - Travado por `google/ler-arquivo.test.ts` (ligação: teto, chave, aviso) e
+    `openai/client.test.ts` (`finish_reason`); quebrados de propósito, os dois
+    falham. ⚠ **Não provado contra a OpenAI e o PDF reais**: o primeiro PDF de
+    tarifa branca lido depois do deploy é quem prova que 4.000 tokens chegam ao
+    medidor. O agendamento passou a `*/5 8-17 * * 1` (o usuário trocou em
+    03/11); o cron não se edita pelo MCP, só pelo painel.
 - **Mais de um arquivo com aquele começo de nome: recusa.** Escolher "o
   primeiro" seria ler o arquivo errado e gravar os dados dele como se fossem do
   certo, sem erro nenhum.

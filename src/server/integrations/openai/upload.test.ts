@@ -27,6 +27,11 @@ let erroDaLeitura: unknown = null;
 let textoLido = "texto extraído do arquivo";
 /** A instrução com que a última imagem foi mandada à visão. */
 let instrucaoDaImagem: string | null = null;
+/** O que a última leitura de documento / imagem recebeu como teto de saída. */
+let tetoDoDocumento: number | undefined;
+let tetoDaImagem: number | undefined;
+/** O modelo parou no teto de saída? */
+let leituraCortada = false;
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -60,21 +65,36 @@ vi.mock("./client", async () => {
       if (erroDaLeitura) throw erroDaLeitura;
       return { texto: textoLido, model: "m-audio", inputTokens: 5, outputTokens: 7 };
     },
-    descreverImagem: async (args: { instrucao: string }) => {
+    descreverImagem: async (args: { instrucao: string; maxTokens?: number }) => {
       chamadas.imagem++;
       instrucaoDaImagem = args.instrucao;
+      tetoDaImagem = args.maxTokens;
       if (erroDaLeitura) throw erroDaLeitura;
-      return { texto: textoLido, model: "m-visao", inputTokens: 9, outputTokens: 3 };
+      return {
+        texto: textoLido,
+        model: "m-visao",
+        inputTokens: 9,
+        outputTokens: 3,
+        cortado: leituraCortada,
+      };
     },
-    lerDocumento: async () => {
+    lerDocumento: async (args: { maxTokens?: number }) => {
       chamadas.documento++;
+      tetoDoDocumento = args.maxTokens;
       if (erroDaLeitura) throw erroDaLeitura;
-      return { texto: textoLido, model: "m-doc", inputTokens: 4, outputTokens: 2 };
+      return {
+        texto: textoLido,
+        model: "m-doc",
+        inputTokens: 4,
+        outputTokens: 2,
+        cortado: leituraCortada,
+      };
     },
   };
 });
 
-const { lerArquivoEnviado } = await import("./upload");
+const { lerArquivoEnviado, AVISO_DE_LEITURA_INTERROMPIDA, leituraInterrompida } =
+  await import("./upload");
 
 type Entrada = Parameters<typeof lerArquivoEnviado>[0];
 
@@ -109,6 +129,9 @@ beforeEach(() => {
   erroDaLeitura = null;
   textoLido = "texto extraído do arquivo";
   instrucaoDaImagem = null;
+  tetoDoDocumento = undefined;
+  tetoDaImagem = undefined;
+  leituraCortada = false;
 });
 
 describe("leitura do arquivo enviado", () => {
@@ -404,6 +427,103 @@ describe("com chave estável, cacheia — e é outro caso, não uma exceção", 
 
     expect(r.chave).toBe("drive:abc123");
     expect(criadas[0].chave).toBe("drive:abc123");
+  });
+});
+
+describe("leitura que bate no teto de saída não passa por completa", () => {
+  // Achado em 02/11/2026: a conta de energia do Drive era lida com o teto de 900
+  // tokens, parava no meio da tabela de itens — antes do número do medidor — e
+  // voltava como `lido: true`, igual a uma leitura inteira. 7 de 8 contas foram
+  // para `Conferir` sem ninguém saber por quê.
+  it("sem teto próprio, o padrão do cliente vale — o atendimento não muda", async () => {
+    await lerArquivoEnviado(entrada());
+    await lerArquivoEnviado(entrada({ nome: "foto.jpg" }));
+
+    expect(tetoDoDocumento).toBeUndefined();
+    expect(tetoDaImagem).toBeUndefined();
+  });
+
+  it("repassa o teto de saída pedido, para documento e para imagem", async () => {
+    await lerArquivoEnviado(entrada({ maxTokens: 4000 }));
+    await lerArquivoEnviado(entrada({ nome: "foto.jpg", maxTokens: 4000 }));
+
+    expect(tetoDoDocumento).toBe(4000);
+    expect(tetoDaImagem).toBe(4000);
+  });
+
+  it("⚠ leitura cortada diz que está cortada, no texto e no sinal", async () => {
+    leituraCortada = true;
+    textoLido = "ITENS DA FATURA ... G2Comp.oUC-Ma-NP-TE — kWh — 26,28- — 0";
+
+    const r = await lerArquivoEnviado(entrada());
+
+    expect(r.status).toBe(MediaStatus.OK);
+    expect(r.cortado).toBe(true);
+    expect(r.texto).toContain(textoLido);
+    expect(r.texto?.endsWith(AVISO_DE_LEITURA_INTERROMPIDA)).toBe(true);
+  });
+
+  it("leitura inteira não leva aviso nenhum", async () => {
+    const r = await lerArquivoEnviado(entrada());
+
+    expect(r.cortado).toBe(false);
+    expect(r.texto).toBe("texto extraído do arquivo");
+  });
+
+  it("o aviso vai para o cache junto com o texto, e volta de lá", async () => {
+    leituraCortada = true;
+    await lerArquivoEnviado(entrada({ chaveDoCache: "drive:abc123:t4000" }));
+
+    // Gravado com o aviso: o texto é tudo o que o cache guarda.
+    const gravado = criadas[0].texto as string;
+    expect(leituraInterrompida(gravado)).toBe(true);
+
+    noCache.set("drive:abc123:t4000", {
+      chave: "drive:abc123:t4000",
+      kind: MediaKind.DOCUMENT,
+      status: MediaStatus.OK,
+      nomeArquivo: "conta.pdf",
+      texto: gravado,
+      erro: null,
+      tentativas: 0,
+      model: "m-doc",
+    });
+
+    const r = await lerArquivoEnviado(entrada({ chaveDoCache: "drive:abc123:t4000" }));
+
+    expect(chamadas.documento).toBe(1);
+    expect(r.cortado).toBe(true);
+  });
+
+  it("o corte de caracteres não leva o aviso embora", async () => {
+    leituraCortada = true;
+    textoLido = "x".repeat(9_000);
+
+    const r = await lerArquivoEnviado(entrada());
+
+    // Teto padrão de 6.000 caracteres: o texto é aparado, e o aviso de leitura
+    // interrompida continua no fim.
+    expect(r.texto?.endsWith(AVISO_DE_LEITURA_INTERROMPIDA)).toBe(true);
+    expect(r.texto).toContain("texto cortado");
+  });
+
+  it("teto de caracteres maior deixa passar o documento comprido", async () => {
+    textoLido = "y".repeat(9_000);
+
+    const padrao = await lerArquivoEnviado(entrada());
+    const largo = await lerArquivoEnviado(entrada({ tetoDeCaracteres: 12_000 }));
+
+    expect(padrao.texto).toContain("texto cortado");
+    expect(largo.texto).toBe("y".repeat(9_000));
+  });
+
+  it("leituraInterrompida só reconhece o aviso no FIM do texto", () => {
+    expect(leituraInterrompida(null)).toBe(false);
+    expect(leituraInterrompida("conta inteira")).toBe(false);
+    expect(leituraInterrompida(`${AVISO_DE_LEITURA_INTERROMPIDA}\ne depois mais texto`)).toBe(
+      false,
+    );
+    expect(leituraInterrompida(`parcial\n${AVISO_DE_LEITURA_INTERROMPIDA}\n`)).toBe(true);
   });
 });
 
