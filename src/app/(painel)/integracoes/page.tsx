@@ -9,7 +9,13 @@ import { conexaConfigSchema } from "@/server/integrations/conexa/config";
 import { lerConfigZapSign } from "@/server/integrations/zapsign/config";
 import { lerConfigOpenAI } from "@/server/integrations/openai/config";
 import { lerConfigGoogle } from "@/server/integrations/google/config";
-import { leiturasRecentes, modelosParaEscolher } from "@/server/actions/openai";
+import { leiturasRecentes } from "@/server/actions/openai";
+import {
+  catalogoOpenAIDoPainel,
+  categoriasFiscaisDoPainel,
+  materiaisDoPainel,
+  organizarModelos,
+} from "@/server/painel/leituras-remotas";
 import { dadosDaContaGoogle } from "@/server/actions/google";
 import {
   IntegrationProvider,
@@ -28,7 +34,6 @@ import {
   lerConfigNotasFiscais,
   produtosEmTexto,
 } from "@/server/notas-fiscais/config";
-import { categoriasDoConexa } from "@/server/notas-fiscais/categorias";
 import {
   chavesDaSpedyNoServidor,
   contarRetidas,
@@ -57,10 +62,7 @@ import { lerConfigAvisos } from "@/server/avisos/regras";
 import { lerConfigAniversario } from "@/server/aniversario/regras";
 import { formatarTelefone } from "@/server/alerta-de-saldo/regras";
 import { lerConfigCobranca, PROVIDER_DA_COBRANCA } from "@/server/cobranca/regras";
-import {
-  configMateriaisSchema,
-  listarMateriais,
-} from "@/server/integrations/materiais";
+import { configMateriaisSchema } from "@/server/integrations/materiais";
 import { GoogleConfigForm } from "@/components/google-config";
 import { NpsConfigForm } from "@/components/nps-config";
 import { lerConfigNps } from "@/server/nps/config";
@@ -179,14 +181,6 @@ export default async function IntegracoesPage({
     (i) => i.provider === IntegrationProvider.OPENAI,
   );
   const configOpenAI = lerConfigOpenAI(openai?.config);
-  const leituras = await leiturasRecentes();
-  // Lista viva da conta, com cache de 1h — assim que a chave existe, os campos
-  // de modelo já vêm como seletor, sem ninguém precisar clicar em "buscar".
-  const modelosOpenAI = await modelosParaEscolher({
-    modeloAudio: configOpenAI.modeloAudio,
-    modeloVisao: configOpenAI.modeloVisao,
-    modeloDocumento: configOpenAI.modeloDocumento,
-  });
   // Quantos agentes já têm a leitura ligada. Zero com a integração ligada é o
   // estado que engana: parece funcionando e nenhum atendimento lê nada.
   const documentos = registros.find(
@@ -203,64 +197,210 @@ export default async function IntegracoesPage({
     (i) => i.provider === IntegrationProvider.MATERIAIS,
   );
   const configMateriais = configMateriaisSchema.parse(materiais?.config ?? {});
-  // A lista de verdade, lida dos macros do Chatwoot (cache de 5 min): é o que
-  // os agentes conseguem mandar agora. Falhar aqui não derruba a página.
-  const materiaisDisponiveis = await listarMateriais(configMateriais.prefixos).then(
-    (lista) => ({ lista, erro: null as string | null }),
-    (erro: unknown) => ({
-      lista: [] as Awaited<ReturnType<typeof listarMateriais>>,
-      erro: erro instanceof Error ? erro.message : String(erro),
-    }),
-  );
-  const agentesComMateriais = materiais
-    ? await db.agentIntegration.count({
-        where: { integrationId: materiais.id, enabled: true },
-      })
-    : 0;
   const aniversario = registros.find((i) => i.provider === IntegrationProvider.ANIVERSARIO);
   const configAniversario = lerConfigAniversario(aniversario?.config);
-  const agentesComAniversario = aniversario
-    ? await db.agentIntegration.count({
-        where: { integrationId: aniversario.id, enabled: true },
-      })
-    : 0;
   const avisos = registros.find((i) => i.provider === IntegrationProvider.AVISOS);
   const configAvisos = lerConfigAvisos(avisos?.config);
-  const agentesComAvisos = avisos
-    ? await db.agentIntegration.count({
-        where: { integrationId: avisos.id, enabled: true },
-      })
-    : 0;
-  // Sem nome nem telefone do cliente: a tela é aberta pela equipe inteira.
-  const presentes = await db.presenteDeAniversario.findMany({
-    orderBy: { criadoEm: "desc" },
-    take: 15,
-    select: {
-      id: true,
-      chatwootConversationId: true,
-      salaNome: true,
-      salaId: true,
-      data: true,
-      inicio: true,
-      fim: true,
-      status: true,
-      resultado: true,
-      criadoEm: true,
-    },
-  });
   const cobranca = registros.find((i) => i.provider === IntegrationProvider.COBRANCA);
   const configCobranca = lerConfigCobranca(cobranca?.config);
-  // "reservado" é envio a caminho (ou que caiu no meio e vira "incerto"): não é rastro.
-  const avisosDeCobranca = await db.webhookEvent.findMany({
-    where: { provider: PROVIDER_DA_COBRANCA, resultado: { not: "reservado" } },
-    orderBy: { createdAt: "desc" },
-    take: 15,
-    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true, payload: true },
-  });
   const notasFiscais = registros.find((i) => i.provider === IntegrationProvider.NOTAS_FISCAIS);
   const configNotas = lerConfigNotasFiscais(notasFiscais?.config);
-  // Em memória por 1 h e com prazo curto: um Conexa lento não segura a página.
-  const categoriasFiscais = await categoriasDoConexa();
+  const chavesDaSpedy = chavesDaSpedyNoServidor();
+  const emitindo = !!notasFiscais?.enabled && configNotas.emissao.ligada;
+  /** O que segura, agora, uma nota liberada para tentar de novo (a rodada confere as mesmas coisas). */
+  const impedimentosDaReservada = (n: { codigo: string; empresa: string; cobranca?: NotaDaTela["cobranca"] }) =>
+    oQueImpedeASaida({
+      integracaoLigada: !!notasFiscais?.enabled,
+      config: configNotas,
+      nota: n,
+      chaveDaEmpresaNoServidor: chavesDaSpedy[n.empresa as keyof typeof chavesDaSpedy] ?? false,
+      cobranca: n.cobranca,
+    });
+  const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
+  const configNps = lerConfigNps(nps?.config);
+  const janela = registros.find((i) => i.provider === IntegrationProvider.JANELA);
+  const configJanela = lerConfigJanela(janela?.config);
+  // A prévia usa uma janela de verdade — a que fecharia daqui a
+  // `minutosDeAviso` —, para a hora sair no fuso e no formato que a equipe lê.
+  const previaDaNota = textoDaNota(
+    Math.floor(Date.now() / 1000) + configJanela.minutosDeAviso * 60,
+    configJanela.instrucao,
+  );
+  const boasVindas = registros.find((i) => i.provider === IntegrationProvider.BOAS_VINDAS);
+  const configBoasVindas = lerConfigBoasVindas(boasVindas?.config);
+  const linkDaConversa = (id: number) =>
+    configChatwoot.success
+      ? `${configChatwoot.data.baseUrl}/app/accounts/${configChatwoot.data.accountId}/conversations/${id}`
+      : null;
+
+  const google = registros.find(
+    (i) => i.provider === IntegrationProvider.GOOGLE,
+  );
+  const configGoogle = lerConfigGoogle(google?.config);
+  const toolsGoogle =
+    obterIntegracao(IntegrationProvider.GOOGLE)?.tools.length ?? 0;
+
+  // ⚠ TUDO o que a tela espera, ao mesmo tempo. Eram ~20 esperas em fila, três
+  // delas idas a serviços de fora (macros do Chatwoot ~2,7 s, modelos da OpenAI
+  // ~1,2 s, categorias do Conexa ~1,2 s): a primeira abertura depois de um
+  // deploy levou 15 s (03/11/2026). Nenhuma depende da outra — todas dependem só
+  // dos `registros` já lidos —, então o custo passa de soma para o da mais lenta.
+  // As três de fora ainda vêm de `lerComReserva`: a tela recebe o último valor lido
+  // na hora, e o worker as mantém quentes (`painel/aquecer.ts`).
+  //
+  // Comentários que explicam o porquê de cada leitura ficam ao lado dela.
+  const [
+    leituras,
+    catalogoOpenAI,
+    materiaisDisponiveis,
+    agentesComMateriais,
+    agentesComAniversario,
+    agentesComAvisos,
+    presentes,
+    avisosDeCobranca,
+    categoriasFiscais,
+    cobrancasFiscais,
+    resumoFiscal,
+    notasEmitidas,
+    cobrancasRetidas,
+    entregasDoAvisoDoConexa,
+    pesquisasNps,
+    acoesDaJanela,
+    entregasDeBoasVindas,
+    agentesComMidia,
+    contaGoogle,
+    comBot,
+    segredosDaConta,
+    cabecalhos,
+  ] = await Promise.all([
+    leiturasRecentes(),
+    // Lista viva da conta, guardada por `lerComReserva`: assim que a chave existe, os
+    // campos de modelo já vêm como seletor, sem ninguém precisar clicar em "buscar".
+    catalogoOpenAIDoPainel(),
+    // A lista de verdade, lida dos macros do Chatwoot: é o que os agentes conseguem
+    // mandar agora. Falhar aqui não derruba a página (`materiaisDoPainel` não lança).
+    materiaisDoPainel(configMateriais.prefixos),
+    materiais
+      ? db.agentIntegration.count({
+          where: { integrationId: materiais.id, enabled: true },
+        })
+      : 0,
+    aniversario
+      ? db.agentIntegration.count({
+          where: { integrationId: aniversario.id, enabled: true },
+        })
+      : 0,
+    avisos
+      ? db.agentIntegration.count({
+          where: { integrationId: avisos.id, enabled: true },
+        })
+      : 0,
+    // Sem nome nem telefone do cliente: a tela é aberta pela equipe inteira.
+    db.presenteDeAniversario.findMany({
+      orderBy: { criadoEm: "desc" },
+      take: 15,
+      select: {
+        id: true,
+        chatwootConversationId: true,
+        salaNome: true,
+        salaId: true,
+        data: true,
+        inicio: true,
+        fim: true,
+        status: true,
+        resultado: true,
+        criadoEm: true,
+      },
+    }),
+    // "reservado" é envio a caminho (ou que caiu no meio e vira "incerto"): não é rastro.
+    db.webhookEvent.findMany({
+      where: { provider: PROVIDER_DA_COBRANCA, resultado: { not: "reservado" } },
+      orderBy: { createdAt: "desc" },
+      take: 15,
+      select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true, payload: true },
+    }),
+    // Guardadas por `lerComReserva` e com prazo curto na leitura: um Conexa lento não segura a página.
+    categoriasFiscaisDoPainel(),
+    db.cobrancaFiscal.findMany({
+      orderBy: { criadaEm: "desc" },
+      take: 40,
+      select: {
+        id: true,
+        cobrancaId: true,
+        empresaId: true,
+        clienteId: true,
+        evento: true,
+        quitadaEm: true,
+        valorCentavos: true,
+        situacao: true,
+        motivo: true,
+        notas: true,
+        observacoes: true,
+      },
+    }),
+    resumoDasCobrancas(),
+    resumoDasNotas(),
+    contarRetidas(configNotas),
+    db.webhookEvent.findMany({
+      where: { provider: "CONEXA_AVISO" },
+      orderBy: { createdAt: "desc" },
+      take: 15,
+      select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
+    }),
+    // Sem telefone nem nome: a tela é aberta pela equipe inteira.
+    db.pesquisaNps.findMany({
+      orderBy: { criadaEm: "desc" },
+      take: 15,
+      select: {
+        id: true,
+        chatwootConversationId: true,
+        status: true,
+        nota: true,
+        marcadaEm: true,
+        resultado: true,
+      },
+    }),
+    // "reservado" é a nota a caminho (ou que falhou e será desfeita): não é rastro.
+    db.webhookEvent.findMany({
+      where: { provider: PROVIDER_DA_JANELA, resultado: { not: "reservado" } },
+      orderBy: { createdAt: "desc" },
+      take: 15,
+      select: { id: true, resultado: true, detalhe: true, createdAt: true, payload: true },
+    }),
+    // "reservado" é o envio a caminho (ou que falhou e será liberado): não é rastro.
+    // Sem nome nem telefone: a tela é aberta pela equipe inteira.
+    db.webhookEvent.findMany({
+      where: { provider: PROVIDER_DO_BOAS_VINDAS, resultado: { not: "reservado" } },
+      orderBy: { createdAt: "desc" },
+      take: 15,
+      select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
+    }),
+    openai
+      ? db.agentIntegration.count({
+          where: { integrationId: openai.id, enabled: true },
+        })
+      : 0,
+    // O e-mail da conta de serviço é lido do JSON decifrado a cada abertura, e
+    // não sai da config: a config é substituída inteira a cada save, e o
+    // primeiro "Salvar configuração" de um ADMIN apagaria o que o OWNER gravou.
+    //
+    // ⚠ Só para quem pode: `dadosDaContaGoogle` exige ADMIN e **lança** se não
+    // tiver. Chamar sem a guarda derrubaria a página inteira de Integrações para
+    // o papel Leitura, que hoje a abre sem problema.
+    editavel ? dadosDaContaGoogle() : null,
+    db.agentChatwootBot.count(),
+    obterSegredosDaConta(),
+    headers(),
+  ]);
+
+  // Os grupos dos seletores dependem do que está GRAVADO em cada campo, e por isso são
+  // montados aqui, a cada abertura, sobre a lista guardada — nunca guardados prontos.
+  const modelosOpenAI = organizarModelos(catalogoOpenAI, {
+    modeloAudio: configOpenAI.modeloAudio,
+    modeloVisao: configOpenAI.modeloVisao,
+    modeloDocumento: configOpenAI.modeloDocumento,
+  });
+
   const nomesDasEmpresas = new Map(
     categoriasFiscais.categorias.flatMap((c) => c.empresas.map((e) => [e.id, e.nome] as const)),
   );
@@ -285,112 +425,7 @@ export default async function IntegracoesPage({
         sumiu: true,
       })),
   ];
-  const cobrancasFiscais = await db.cobrancaFiscal.findMany({
-    orderBy: { criadaEm: "desc" },
-    take: 40,
-    select: {
-      id: true,
-      cobrancaId: true,
-      empresaId: true,
-      clienteId: true,
-      evento: true,
-      quitadaEm: true,
-      valorCentavos: true,
-      situacao: true,
-      motivo: true,
-      notas: true,
-      observacoes: true,
-    },
-  });
-  const resumoFiscal = await resumoDasCobrancas();
-  const notasEmitidas = await resumoDasNotas();
-  const cobrancasRetidas = await contarRetidas(configNotas);
-  const entregasDoAvisoDoConexa = await db.webhookEvent.findMany({
-    where: { provider: "CONEXA_AVISO" },
-    orderBy: { createdAt: "desc" },
-    take: 15,
-    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
-  });
-  const chavesDaSpedy = chavesDaSpedyNoServidor();
-  const emitindo = !!notasFiscais?.enabled && configNotas.emissao.ligada;
-  /** O que segura, agora, uma nota liberada para tentar de novo (a rodada confere as mesmas coisas). */
-  const impedimentosDaReservada = (n: { codigo: string; empresa: string; cobranca?: NotaDaTela["cobranca"] }) =>
-    oQueImpedeASaida({
-      integracaoLigada: !!notasFiscais?.enabled,
-      config: configNotas,
-      nota: n,
-      chaveDaEmpresaNoServidor: chavesDaSpedy[n.empresa as keyof typeof chavesDaSpedy] ?? false,
-      cobranca: n.cobranca,
-    });
-  const nps = registros.find((i) => i.provider === IntegrationProvider.NPS);
-  const configNps = lerConfigNps(nps?.config);
-  // Sem telefone nem nome: a tela é aberta pela equipe inteira.
-  const pesquisasNps = await db.pesquisaNps.findMany({
-    orderBy: { criadaEm: "desc" },
-    take: 15,
-    select: {
-      id: true,
-      chatwootConversationId: true,
-      status: true,
-      nota: true,
-      marcadaEm: true,
-      resultado: true,
-    },
-  });
-  const janela = registros.find((i) => i.provider === IntegrationProvider.JANELA);
-  const configJanela = lerConfigJanela(janela?.config);
-  // A prévia usa uma janela de verdade — a que fecharia daqui a
-  // `minutosDeAviso` —, para a hora sair no fuso e no formato que a equipe lê.
-  const previaDaNota = textoDaNota(
-    Math.floor(Date.now() / 1000) + configJanela.minutosDeAviso * 60,
-    configJanela.instrucao,
-  );
-  // "reservado" é a nota a caminho (ou que falhou e será desfeita): não é rastro.
-  const acoesDaJanela = await db.webhookEvent.findMany({
-    where: { provider: PROVIDER_DA_JANELA, resultado: { not: "reservado" } },
-    orderBy: { createdAt: "desc" },
-    take: 15,
-    select: { id: true, resultado: true, detalhe: true, createdAt: true, payload: true },
-  });
-  const boasVindas = registros.find((i) => i.provider === IntegrationProvider.BOAS_VINDAS);
-  const configBoasVindas = lerConfigBoasVindas(boasVindas?.config);
-  // "reservado" é o envio a caminho (ou que falhou e será liberado): não é rastro.
-  // Sem nome nem telefone: a tela é aberta pela equipe inteira.
-  const entregasDeBoasVindas = await db.webhookEvent.findMany({
-    where: { provider: PROVIDER_DO_BOAS_VINDAS, resultado: { not: "reservado" } },
-    orderBy: { createdAt: "desc" },
-    take: 15,
-    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
-  });
-  const linkDaConversa = (id: number) =>
-    configChatwoot.success
-      ? `${configChatwoot.data.baseUrl}/app/accounts/${configChatwoot.data.accountId}/conversations/${id}`
-      : null;
-  const agentesComMidia = openai
-    ? await db.agentIntegration.count({
-        where: { integrationId: openai.id, enabled: true },
-      })
-    : 0;
 
-  const google = registros.find(
-    (i) => i.provider === IntegrationProvider.GOOGLE,
-  );
-  const configGoogle = lerConfigGoogle(google?.config);
-  const toolsGoogle =
-    obterIntegracao(IntegrationProvider.GOOGLE)?.tools.length ?? 0;
-  // O e-mail da conta de serviço é lido do JSON decifrado a cada abertura, e
-  // não sai da config: a config é substituída inteira a cada save, e o
-  // primeiro "Salvar configuração" de um ADMIN apagaria o que o OWNER gravou.
-  //
-  // ⚠ Só para quem pode: `dadosDaContaGoogle` exige ADMIN e **lança** se não
-  // tiver. Chamar sem a guarda derrubaria a página inteira de Integrações para
-  // o papel Leitura, que hoje a abre sem problema.
-  const contaGoogle = editavel ? await dadosDaContaGoogle() : null;
-
-  const comBot = await db.agentChatwootBot.count();
-  const segredosDaConta = await obterSegredosDaConta();
-
-  const cabecalhos = await headers();
   const origem = `${cabecalhos.get("x-forwarded-proto") ?? "https"}://${
     cabecalhos.get("host") ?? "localhost:3000"
   }`;

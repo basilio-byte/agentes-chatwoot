@@ -14,6 +14,7 @@ import { conferirPresentes } from "@/server/aniversario/conferir";
 import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
 import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
+import { pedirAquecimentoDoPainel } from "@/server/painel/aquecer";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
 
@@ -172,6 +173,16 @@ async function escalar(conversa: Parada, minutos: number): Promise<boolean> {
 
 export function iniciarVigia(): NodeJS.Timeout {
   const rodar = async () => {
+    // Primeiro porque é instantâneo e não espera resposta: só PEDE ao painel, de
+    // dentro do container, que deixe quentes as leituras externas das telas
+    // (macros do Chatwoot, modelos da OpenAI, categorias do Conexa). A cada 4 min,
+    // das 6h às 22h; logo depois do deploy, repete em segundos até o painel subir.
+    try {
+      pedirAquecimentoDoPainel();
+    } catch (erro) {
+      logger.error({ erro }, "pedido de aquecimento do painel falhou");
+    }
+
     // As tarefas são independentes de propósito: falha nos prazos não pode calar
     // a escalada que já existia, nem a pesquisa de satisfação, nem o contrário.
     try {

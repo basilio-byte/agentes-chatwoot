@@ -1,3 +1,4 @@
+import { esquecerLeituraRemota } from "@/lib/leitura-remota";
 import { logger } from "@/lib/logger";
 import { criarClienteOpenAI, listarModelosDaConta } from "./client";
 import type { OpenAIConfig } from "./config";
@@ -121,12 +122,18 @@ export function comSelecionado(
 const TTL_MS = 60 * 60 * 1000; // 1h, igual ao catálogo da OpenRouter
 let cache: { ids: string[]; expiraEm: number } | null = null;
 
+/** A chave da lista de modelos no guardador da tela (`lib/leitura-remota.ts`). */
+export const LEITURA_MODELOS_OPENAI = "openai:modelos";
+
 /**
  * Esvazia o cache. Chamado quando a chave é trocada: a conta pode ser outra, e
- * mostrar os modelos da conta anterior seria pior que não mostrar nada.
+ * mostrar os modelos da conta anterior seria pior que não mostrar nada. ⚠ Vale
+ * também para o que a TELA guardou: sem isso, a lista da conta antiga seguiria
+ * aparecendo até 50 minutos depois de a chave ser trocada.
  */
 export function limparCacheDeModelos() {
   cache = null;
+  esquecerLeituraRemota(LEITURA_MODELOS_OPENAI);
 }
 
 export type CatalogoDaConta = {

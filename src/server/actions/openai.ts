@@ -21,10 +21,12 @@ import {
   lerDocumento,
   transcreverAudio,
 } from "@/server/integrations/openai/client";
+import { esquecerLeituraRemota } from "@/lib/leitura-remota";
 import {
   comSelecionado,
   gruposParaAudio,
   gruposParaTexto,
+  LEITURA_MODELOS_OPENAI,
   modelosDaConta,
   type GrupoDeModelos,
 } from "@/server/integrations/openai/catalogo";
@@ -256,6 +258,9 @@ export async function recarregarModelosOpenAI(): Promise<EstadoOpenAI> {
   const { ids, erro } = await modelosDaConta(config, decifrar(atual.credential), {
     forcar: true,
   });
+  // O que a tela guardou da lista é o valor de ANTES do clique: sem isto, o botão
+  // "buscar" leria a conta de novo e a tela seguiria mostrando a lista velha.
+  esquecerLeituraRemota(LEITURA_MODELOS_OPENAI);
 
   revalidatePath("/integracoes");
   return ids.length

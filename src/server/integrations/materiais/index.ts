@@ -45,9 +45,9 @@ const LIMITE_MB = 16;
 const CACHE_MS = 5 * 60 * 1000;
 let cache: { chave: string; em: number; macros: MacroChatwoot[] } | null = null;
 
-async function macrosDaConta(cliente: ChatwootClient): Promise<MacroChatwoot[]> {
+async function macrosDaConta(cliente: ChatwootClient, forcar = false): Promise<MacroChatwoot[]> {
   const chave = `${cliente.baseUrl}#${cliente.contaId}`;
-  if (cache && cache.chave === chave && Date.now() - cache.em < CACHE_MS) return cache.macros;
+  if (!forcar && cache && cache.chave === chave && Date.now() - cache.em < CACHE_MS) return cache.macros;
   const macros = await cliente.listarMacros();
   cache = { chave, em: Date.now(), macros };
   return macros;
@@ -58,15 +58,24 @@ export function esquecerMacros() {
   cache = null;
 }
 
-/** Os materiais liberados hoje. A tela de Integrações mostra a mesma lista. */
-export async function listarMateriais(prefixos: string[]): Promise<Material[]> {
+/**
+ * Os macros da conta, crus. `forcar` fura o cache de 5 min: é como a tela de
+ * Integrações os renova por trás, antes de a lista vencer (ver
+ * `painel/leituras-remotas.ts`). O agente continua pelo caminho de sempre.
+ */
+export async function macrosDoChatwoot(opcoes: { forcar?: boolean } = {}): Promise<MacroChatwoot[]> {
   const leitura = await clienteDeLeitura();
   if (!leitura) {
     throw new Error(
       "Sem o token de leitura do Chatwoot (Integrações → Chatwoot), não dá para ler os macros.",
     );
   }
-  return materiaisDisponiveis(await macrosDaConta(leitura.cliente), prefixos);
+  return macrosDaConta(leitura.cliente, opcoes.forcar);
+}
+
+/** Os materiais liberados hoje. A tela de Integrações mostra a mesma lista. */
+export async function listarMateriais(prefixos: string[]): Promise<Material[]> {
+  return materiaisDisponiveis(await macrosDoChatwoot(), prefixos);
 }
 
 function listaParaOModelo(materiais: Material[]) {

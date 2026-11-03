@@ -3987,6 +3987,66 @@ views, e o papel `metricas_leitor`, que só lê esse schema. Tudo em
 - **A porta do Postgres não é publicada**: só a rede interna do Easypanel
   alcança (`seahub_agentes-seahub-postgres:5432`, banco `seahub`).
 
+### Telas do painel que esperam serviço de fora: por que Integrações demorava
+
+Queixa do usuário em 03/11/2026: *"algumas páginas, ao clicar no painel lateral…
+demoram a carregar e abrir"*. Medido antes de mexer (log do Traefik e consultas
+em produção), e a causa NÃO era a que parecia:
+
+- **O banco não era o problema.** Todas as consultas das telas, com `EXPLAIN
+  ANALYZE`, levam menos de 15 ms, e os índices já existem (inclusive
+  `WebhookEvent(agentId, createdAt DESC)`). Não foi criado índice nenhum.
+- **A abertura LENTA era só a primeira depois de um deploy, ou depois de um cache
+  vencer**: Integrações levou **15,5 s** (e Consumo, 3,4 s) na primeira abertura
+  depois do deploy; com tudo quente, 0,05 a 0,8 s. A página esperava, EM FILA, três
+  idas a serviços de fora — macros do Chatwoot (~2,7 s, 280 KB), modelos da OpenAI
+  (~1,2 s), categorias do Conexa (~1,2 s) —, cada uma com cache em memória de 5 min
+  a 1 h, mais ~20 esperas ao banco. Como o deploy esvazia a memória e eu publico
+  várias vezes no dia, a primeira abertura era lenta com frequência.
+
+O que existe hoje, em quatro camadas, da mais barata à mais estrutural:
+
+1. **`(painel)/loading.tsx`**: ao clicar no menu, a casca da tela nova (caixas
+   cinzas, nenhum dado) aparece na hora, com o menu já no lugar. Não acelera o
+   servidor, mas clicar e ver o painel se mexer é outra coisa.
+2. **As leituras da página de Integrações rodam em `Promise.all`** (eram ~20
+   esperas em fila). Nenhuma depende da outra — todas dependem só dos `registros`
+   já lidos —, então o custo é o da mais lenta.
+3. **As três de fora passam por `lerComReserva`** (`lib/leitura-remota.ts`,
+   `painel/leituras-remotas.ts`): fresco, devolve; velho mas aceitável, devolve o
+   valor velho NA HORA e renova por trás; sem valor ou velho demais, espera. Voo
+   único por chave. Validade e idade máxima: macros 10 min / 1 h; modelos da OpenAI
+   e categorias do Conexa 50 min / 12 h. A renovação FURA o cache de baixo
+   (`forcar`), para a validade não somar com a do cache de dentro.
+4. **O worker pede ao painel que aqueça** (`painel/aquecer.ts`): a cada 4 min, das
+   6h às 22h (São Paulo), o vigia faz `POST http://127.0.0.1:3000/api/interno/aquecer`
+   com um token derivado da `AUTH_SECRET` (HMAC; 404 sem ele). Logo depois do
+   deploy repete a cada 10 s, até seis vezes, até o painel subir. É isso que tira a
+   lentidão da primeira abertura depois de um deploy: o guardador mora na memória do
+   processo do painel, e o worker é outro processo (`node worker.mjs &`, no mesmo
+   container), então o pedido é a ponte mais curta.
+
+- ⚠ **O estado do guardador mora em `globalThis`**, não em variável de módulo: o
+  Next carrega o mesmo código em mais de um contexto (rota, ação de servidor,
+  página), e uma variável de módulo daria um cache por contexto.
+- ⚠ **Guarda-se a LISTA da OpenAI, nunca os grupos do seletor prontos.** Os grupos
+  dependem do modelo gravado em cada campo (`organizarModelos` garante o gravado
+  como opção), e `<select>` sem a opção do valor gravado troca o modelo de todo
+  mundo em silêncio — o defeito já documentado. `deveGuardar` impede que lista vazia
+  por erro (sem chave, 401, 403, rede) vire "a verdade" por 50 minutos.
+- ⚠ **Só o PAINEL usa isto.** O agente que manda a imagem de um macro, o que
+  consulta categorias e o que lista modelos seguem nas leituras e nos caches de
+  sempre: dado velho numa tela é incômodo; numa ação do agente seria erro.
+- ⚠ **O que muda o dado precisa esquecer o guardado**: trocar a chave da OpenAI
+  (`limparCacheDeModelos`) e o botão "buscar modelos" (`recarregarModelosOpenAI`)
+  chamam `esquecerLeituraRemota`. Mudança nova que altere uma dessas fontes tem de
+  fazer o mesmo.
+- **Não foi feito, de propósito:** quebrar a página de Integrações em um componente
+  de servidor por aba, com `Suspense`, para as abas lentas chegarem em fluxo. É a
+  solução "de livro", mas é um refactor de ~1.800 linhas de JSX que não dá para
+  conferir sem ver a tela. Com as três camadas acima a abertura já não espera nada
+  de fora; se ainda incomodar, é o próximo passo.
+
 ### Regras do projeto
 
 - **Toda rota em `/api/` checa a própria sessão.** O `proxy.ts` não cobre `/api/*`

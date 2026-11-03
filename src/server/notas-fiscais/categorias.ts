@@ -40,8 +40,12 @@ export function lerCategoria(bruto: Record<string, unknown>): CategoriaDeServico
 
 export async function categoriasDoConexa(
   agora = Date.now(),
+  /** `forcar` fura o cache: é como a tela renova a lista por trás, antes de ela vencer. */
+  opcoes: { forcar?: boolean } = {},
 ): Promise<{ categorias: CategoriaDeServico[]; erro?: string }> {
-  if (guardadas && agora - guardadas.em < VALIDADE_MS) return { categorias: guardadas.categorias };
+  if (!opcoes.forcar && guardadas && agora - guardadas.em < VALIDADE_MS) {
+    return { categorias: guardadas.categorias };
+  }
 
   const reserva = guardadas?.categorias ?? [];
   try {
