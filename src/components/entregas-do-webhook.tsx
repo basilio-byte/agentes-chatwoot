@@ -22,6 +22,12 @@ const TOM: Record<string, "success" | "danger" | "neutral" | "accent"> = {
   emitida: "success",
   registrada: "neutral",
   recebido: "accent",
+  // Vocabulário do template de boas-vindas (macro do Chatwoot → NotificaMe).
+  enviado: "success",
+  repetido: "neutral",
+  desligado: "neutral",
+  incerto: "danger",
+  teto: "danger",
 };
 
 const TEXTO_VAZIO_PADRAO = (
@@ -73,7 +79,9 @@ export function EntregasDoWebhook({
     ultimaRecusa >= 0 &&
     entregas
       .slice(0, ultimaRecusa)
-      .some((e) => ["agendado", "ignorado", "emitida", "registrada"].includes(e.resultado ?? ""));
+      .some((e) =>
+        ["agendado", "ignorado", "emitida", "registrada", "enviado", "repetido"].includes(e.resultado ?? ""),
+      );
   const secretQuebrado = ultimaRecusa >= 0 && !aceitaDepois;
 
   const corpo = (

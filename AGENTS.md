@@ -1468,6 +1468,97 @@ a tem não foi enviado.
   **reaberta antes de atribuir**, e a atribuição é **conferida 3 s depois**: o
   comentário na task só diz "atribuída" se ela ficou.
 
+### Template de boas-vindas: a macro do Chatwoot manda o template pela NotificaMe
+
+Integração `BOAS_VINDAS`, fora do registry como o NPS e a cobrança: sem modelo,
+sem ferramenta. Chamado do Diego (03/11/2026): o número oficial "Seahub
+Comercial" mandou o mesmo template **três vezes** a ele. Regras puras e testadas
+em `boas-vindas/regras.ts`; o clique, de ponta a ponta, em
+`boas-vindas/processar.ts`; o cliente da NotificaMe em
+`integrations/notificame/client.ts`; a rota em
+`/api/webhooks/boas-vindas/<token>`; a tela na aba "Boas-vindas" de Integrações.
+Decisão do usuário no mesmo dia: *"talvez migramos o fluxo para dentro do nosso
+sistema de agentes e depois desligamos no N8N"*.
+
+Quem atende roda, numa conversa, a macro **"Disparar Template Boas Vindas"**
+(macro 97, global; Chatwoot → Configurações → Macros). Ela faz três coisas:
+atribui a conversa a quem clicou (`assign_agent: self`), manda um webhook com a
+conversa (`macro.executed`) e põe a etiqueta `template_meta_enviado`. Só a
+segunda muda: o endereço do webhook passa do n8n para o daqui.
+
+- ⚠ **O que o fluxo do n8n tinha de errado (achado em 03/11/2026).**
+  1. **Mandava o template uma vez por LINHA da tabela "Etiquetas".** O primeiro
+     passo era um `upsert` por número, que atualiza TODAS as linhas iguais e devolve
+     uma saída por linha; o nó seguinte (a chamada da NotificaMe) roda uma vez por
+     saída. O número do Diego tinha três linhas repetidas, e 88 números tinham de
+     2 a 13. Nas notas que o fluxo deixava no Chatwoot (03/2026 a 25/09), ~3% dos
+     envios (205 de 6.857) saíram em 2 a 6 cópias.
+  2. **A versão publicada falava com o Chatwoot ANTIGO** (`chatwoot.seahealth.io`,
+     o servidor de antes da migração das VPS, que já não responde). O template
+     saía, mas contato, nota, reabertura e atribuição davam `ETIMEDOUT`: a
+     execução levava 11 min para terminar em erro, e não há nota desse fluxo desde
+     25/09 16:02. O rascunho que o MCP do n8n mostra já tinha o endereço certo
+     (alteração de 17/09, nunca publicada), apesar de dizer `sameAsDraft`.
+     ⚠ **O MCP do n8n mostra o RASCUNHO; o que roda é a versão publicada.**
+- **Um clique, um envio.** A linha de `WebhookEvent` (provider `BOAS_VINDAS`)
+  nasce `reservado` com chave única `envio:<hash do número>:<intervalo>` ANTES de
+  falar com a NotificaMe, e a trava do banco segura duas entregas ao mesmo tempo.
+  Além da chave, o sistema procura envio do mesmo número nos últimos
+  `minutosSemReenvio` (10 por padrão) — a chave sozinha deixaria passar o clique
+  logo depois da virada do intervalo, e há teste para isso. O número entra pela
+  forma canônica (`telefoneCanonico`): com e sem o nono dígito é o mesmo. Teto de
+  `tetoPorHora` (60) contra laço.
+- ⚠ **Recusa libera o número; INCERTO o segura.** A NotificaMe respondendo 4xx
+  (menos 408 e 429) é recusa: nada saiu, a chave volta a ficar livre, e a
+  próxima tentativa passa. Rede, prazo, 5xx, 408 e 429 são INCERTOS — a mensagem
+  pode ter saído, o reenvio fica segurado e a nota diz "PODE ter saído". Repetir
+  às cegas é o defeito de origem. O cliente da NotificaMe não repete sozinho.
+- **Falha nunca é silêncio.** O clique já atribuiu e etiquetou a conversa; se o
+  template NÃO saiu (desligado, sem token, sem telefone, repetido, teto, recusa,
+  incerto), quem clicou lê o motivo numa nota interna na conversa em que clicou.
+- **A nota de envio começa igual à do n8n** (`Template enviado: "template_diego2"`
+  e a mensagem), porque a equipe já a procura, mas o texto é o REAL do template
+  (lido de `GET /v1/templates/<canal>`, com o `{{texto}}` trocado pelo nome) e não
+  um texto fixo que mentiria se o template mudasse. Sai pelo **robô da caixa**, e
+  não pelo token de uma pessoa: nota de `user` conta como "a equipe escreveu" para
+  prazos e NPS.
+- **A nota, a reabertura e a atribuição valem na conversa do CLIENTE**: a mais
+  recente do contato na caixa do WhatsApp oficial (`caixaDoCliente`, 29) — é nela
+  que ele vai responder. Das 7.140 notas que o n8n deixou, 6.896 caíram na 29.
+  Sem conversa na 29, a nota fica na conversa do clique e nada é reaberto.
+- ⚠ **Nunca tira a conversa de quem está com ela.** Dono que é pessoa (ou de tipo
+  desconhecido) fica. Sem dono, ou com o NOSSO robô — que não é dono de ninguém
+  (`assignee_type: AgentBot`) —, a conversa vai para quem clicou, reaberta se
+  estiver resolvida ou pendente, **antes** de atribuir e conferida 3 s depois
+  (mesma lição do aviso de cobrança: a automação que tira o dono de conversa
+  resolvida desfaz a atribuição no mesmo segundo). Sem dono humano, quem
+  responderia ao cliente seria o agente de entrada.
+- **Não grava na tabela Etiquetas do n8n** (decisão do usuário, 03/11/2026). Os
+  dois fluxos do n8n que ainda a leem — "Menu Boas Vindas 3.0" e "Menu BASE
+  SEAHUB" — não respondem ninguém: no primeiro o webhook `menu3_0` não tem
+  nenhuma ligação de saída (as ~2.300 execuções por dia são vazias), e o segundo
+  não rodou nas últimas 24 h. As 145 linhas repetidas continuam lá, inofensivas
+  depois da migração.
+- **Credencial: o token da NotificaMe** em `IntegrationCredential` (cifrado), só o
+  Proprietário cadastra pela tela. ⚠ A primeira cópia veio do próprio fluxo do n8n,
+  por pedido do usuário (*"pode copiar do fluxo"*), feita no servidor sem imprimir
+  o valor; o do fluxo continua em texto puro no n8n até ser rotacionado. O canal
+  (`canalId`) não vai para o código: fica na config.
+- **O endereço da macro** é gerado pelo Proprietário na tela e aparece por inteiro
+  UMA vez (só o hash fica, `config.tokenHash`) — mesmo modelo do gatilho HTTP e do
+  aviso do Conexa. O corpo da macro NÃO é assinado: só valem os campos do formato
+  dela, o evento precisa ser `macro.executed`, e o freio de reenvio e o teto seguram
+  o pior caso. Responde `200` na hora e trabalha depois (`after`).
+- **Nasce DESLIGADO.** Desligado, a macro continua atribuindo e etiquetando, e a
+  nota diz a quem clicou que nada saiu. A troca é uma só: o endereço no passo
+  "Enviar evento de webhook" da macro; depois de provar com um clique, despublicar
+  o fluxo "Template Boas Vindas" no n8n. Enquanto a macro apontar para o n8n, o
+  fluxo antigo segue mandando — e pode mandar em dobro.
+- ⚠ **Não provado contra a NotificaMe real**: o formato do envio é o mesmo que o
+  n8n mandava e a NotificaMe aceitava (três `queued` em 03/11/2026), e a leitura
+  dos templates foi conferida ao vivo. O primeiro clique de verdade é quem prova o
+  caminho inteiro.
+
 ### Materiais prontos: as imagens dos macros do Chatwoot
 
 Integração `MATERIAIS`, no registry e **opt-in por agente**, como os Prazos:

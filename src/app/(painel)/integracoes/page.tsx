@@ -74,12 +74,25 @@ import {
   textoDaNota,
 } from "@/server/janela/regras";
 import {
+  BoasVindasConfigForm,
+  EnderecoDaMacro,
+  TestarBoasVindas,
+  TokenDaNotificaMe,
+} from "@/components/boas-vindas-config";
+import { EntregasDoWebhook } from "@/components/entregas-do-webhook";
+import {
+  lerConfigBoasVindas,
+  NOME_DA_MACRO,
+  PROVIDER_DO_BOAS_VINDAS,
+} from "@/server/boas-vindas/regras";
+import {
   BellRing,
   Building2,
   Cake,
   Ear,
   FileSignature,
   FileText,
+  Handshake,
   Hourglass,
   IdCard,
   Images,
@@ -338,6 +351,16 @@ export default async function IntegracoesPage({
     orderBy: { createdAt: "desc" },
     take: 15,
     select: { id: true, resultado: true, detalhe: true, createdAt: true, payload: true },
+  });
+  const boasVindas = registros.find((i) => i.provider === IntegrationProvider.BOAS_VINDAS);
+  const configBoasVindas = lerConfigBoasVindas(boasVindas?.config);
+  // "reservado" é o envio a caminho (ou que falhou e será liberado): não é rastro.
+  // Sem nome nem telefone: a tela é aberta pela equipe inteira.
+  const entregasDeBoasVindas = await db.webhookEvent.findMany({
+    where: { provider: PROVIDER_DO_BOAS_VINDAS, resultado: { not: "reservado" } },
+    orderBy: { createdAt: "desc" },
+    take: 15,
+    select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true },
   });
   const linkDaConversa = (id: number) =>
     configChatwoot.success
@@ -1272,6 +1295,116 @@ export default async function IntegracoesPage({
                       })}
                     </Tabela>
                   )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            id: "boas-vindas",
+            rotulo: "Boas-vindas",
+            icone: <Handshake size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Template de boas-vindas (WhatsApp oficial)</h2>
+                    {boasVindas?.enabled ? (
+                      <Badge tone="success">ligado</Badge>
+                    ) : (
+                      <Badge>desligado</Badge>
+                    )}
+                    {boasVindas?.enabled && boasVindas.status === IntegrationStatus.ERROR ? (
+                      <Badge tone="danger">último envio falhou</Badge>
+                    ) : null}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    Quem atende roda a macro <strong>{NOME_DA_MACRO}</strong> (Chatwoot →
+                    Configurações → Macros) numa conversa. O sistema manda o template pela
+                    NotificaMe, deixa uma nota interna com o texto que o cliente recebeu e, se a
+                    conversa dele na caixa {configBoasVindas.caixaDoCliente} não tem dono, reabre
+                    e atribui a quem clicou. <strong>Sem modelo.</strong> Substitui o fluxo
+                    “Template Boas Vindas” do n8n.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-muted">
+                    <li>
+                      <strong>Um clique, um envio.</strong> O mesmo número só recebe de novo depois
+                      de {configBoasVindas.minutosSemReenvio} min, e há um teto de{" "}
+                      {configBoasVindas.tetoPorHora} envios por hora.
+                    </li>
+                    <li>
+                      <strong>Falha não passa em silêncio:</strong> se o template não sair, quem
+                      clicou lê o motivo numa nota interna da conversa.
+                    </li>
+                    <li>
+                      <strong>Nunca tira a conversa de quem já está com ela.</strong> Só reabre e
+                      atribui o que está sem dono (ou com o robô).
+                    </li>
+                  </ul>
+
+                  <Aviso tone="warning">
+                    <strong>Para passar o envio do n8n para cá:</strong> gere o endereço abaixo, vá em{" "}
+                    Chatwoot → Configurações → Macros → “{NOME_DA_MACRO}”, e na ação “Enviar evento de
+                    webhook” troque o endereço do n8n por este. Só essa troca muda quem envia; depois
+                    de provar com um clique, despublique o fluxo “Template Boas Vindas” no n8n.
+                    Enquanto a macro apontar para o n8n, ele continua mandando — e pode mandar em
+                    dobro.
+                  </Aviso>
+
+                  <BoasVindasConfigForm
+                    habilitada={boasVindas?.enabled ?? false}
+                    canalId={configBoasVindas.canalId}
+                    template={configBoasVindas.template}
+                    parametro={configBoasVindas.parametro}
+                    idioma={configBoasVindas.idioma}
+                    caixaDoCliente={String(configBoasVindas.caixaDoCliente)}
+                    minutosSemReenvio={String(configBoasVindas.minutosSemReenvio)}
+                    tetoPorHora={String(configBoasVindas.tetoPorHora)}
+                    somenteLeitura={!editavel}
+                  />
+
+                  <div className="space-y-4 border-t border-line pt-4">
+                    <TokenDaNotificaMe
+                      hint={boasVindas?.credential?.hint ?? null}
+                      podeSalvar={sessao.user.role === UserRole.OWNER}
+                    />
+                    <EnderecoDaMacro
+                      urlBase={`${origem}/api/webhooks/boas-vindas`}
+                      geradoEm={configBoasVindas.tokenGeradoEm}
+                      podeGerar={sessao.user.role === UserRole.OWNER}
+                    />
+                    <TestarBoasVindas podeTestar={editavel} />
+                  </div>
+
+                  {boasVindas?.lastCheckedAt ? (
+                    <p className="text-xs text-muted">
+                      Último envio: {formatarData(boasVindas.lastCheckedAt)}
+                      {boasVindas.status === IntegrationStatus.ERROR && boasVindas.lastError
+                        ? ` — falhou: ${boasVindas.lastError}`
+                        : ""}
+                    </p>
+                  ) : null}
+                </Card>
+
+                <Card className="space-y-3">
+                  <h2 className="text-sm font-semibold">Últimos envios</h2>
+                  <EntregasDoWebhook
+                    entregas={entregasDeBoasVindas}
+                    semMoldura
+                    textoVazio={
+                      <>
+                        Nenhum clique chegou ainda. Depois de trocar o endereço na macro, o próximo
+                        clique aparece aqui.
+                      </>
+                    }
+                    textoSegredoQuebrado={
+                      <>
+                        A última chamada foi recusada: o endereço cadastrado na macro não confere
+                        com o atual. Gere outro e cole na macro de novo.
+                      </>
+                    }
+                  />
                 </Card>
               </div>
             ),

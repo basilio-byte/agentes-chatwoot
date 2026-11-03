@@ -36,6 +36,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.ANIVERSARIO]: "Presente de aniversário",
   [IntegrationProvider.AVISOS]: "Aviso à equipe (WhatsApp)",
   [IntegrationProvider.NOTAS_FISCAIS]: "Notas fiscais (Spedy)",
+  [IntegrationProvider.BOAS_VINDAS]: "Template de boas-vindas (WhatsApp oficial)",
 };
 
 async function main() {
