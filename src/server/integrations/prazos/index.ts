@@ -8,6 +8,7 @@ import { formatarData } from "@/lib/utils";
 import type { IntegrationDefinition, ToolContext } from "../types";
 import { clienteDoAgente } from "../chatwoot/credenciais";
 import { resolverAtendente } from "../chatwoot/atendentes";
+import { opcoesDeAusencia } from "../chatwoot/ausencias-config";
 import { humanidadeDoDono, podeAgir } from "../chatwoot/regras";
 import { referenciaDasMensagens } from "@/server/prazos/decisao";
 import { jaVoltouParaOAgente, registrarPrazo } from "@/server/prazos/registrar";
@@ -129,7 +130,11 @@ export const prazosIntegration: IntegrationDefinition = {
             };
           }
         } else {
-          const destino = resolverAtendente(args.reatribuirPara!, atendentes);
+          const destino = resolverAtendente(
+            args.reatribuirPara!,
+            atendentes,
+            await opcoesDeAusencia(),
+          );
           if (destino.tipo === "nenhum") {
             return {
               registrado: false,
@@ -265,7 +270,11 @@ export const prazosIntegration: IntegrationDefinition = {
 
         let nomeDestino: string | null = null;
         if (args.acao === "atribuir") {
-          const destino = resolverAtendente(args.atendente!, await cliente.listarAtendentes());
+          const destino = resolverAtendente(
+            args.atendente!,
+            await cliente.listarAtendentes(),
+            await opcoesDeAusencia(),
+          );
           if (destino.tipo === "nenhum") {
             return {
               registrado: false,

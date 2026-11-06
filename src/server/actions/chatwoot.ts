@@ -18,6 +18,8 @@ import {
   salvarSegredosDaConta,
   salvarSegredosDoBot,
 } from "@/server/integrations/chatwoot/credenciais";
+import { ausenciasDaConfig, lerAusenciasDoTexto } from "@/server/integrations/chatwoot/ausencias";
+import { esquecerAusencias } from "@/server/integrations/chatwoot/ausencias-config";
 import { lerIdsDeCaixa } from "@/server/agents/equipe";
 import { autorDaSessao } from "@/server/gestao/autor";
 import { salvarEscopo } from "@/server/gestao/escopo";
@@ -53,13 +55,22 @@ export async function salvarConfigChatwoot(
     };
   }
 
+  // ⚠ O formulário da instância não conhece as ausências da equipe: gravar só o
+  // que ele manda as apagaria, e a conversa do financeiro voltaria para quem
+  // está de férias sem ninguém perceber. Elas passam intactas.
+  const atual = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    select: { config: true },
+  });
+  const config = { ...parsed.data, ausencias: ausenciasDaConfig(atual?.config) };
+
   await db.integration.upsert({
     where: { provider: IntegrationProvider.CHATWOOT },
-    update: { config: parsed.data, enabled: formData.get("enabled") === "on" },
+    update: { config, enabled: formData.get("enabled") === "on" },
     create: {
       provider: IntegrationProvider.CHATWOOT,
       label: "Chatwoot",
-      config: parsed.data,
+      config,
       enabled: formData.get("enabled") === "on",
     },
   });
@@ -81,6 +92,59 @@ export async function salvarConfigChatwoot(
 
   revalidatePath("/integracoes");
   return { ok: "Configuração salva." };
+}
+
+export type EstadoAusencias = { ok?: string; erro?: string };
+
+/**
+ * Ausências da equipe: quem está fora, quem recebe no lugar e até que dia.
+ * Vale para toda atribuição a uma pessoa (agentes, cobrança, vigia, prazos) —
+ * ver `ausencias.ts`. Mexe só nessa chave da configuração do Chatwoot.
+ */
+export async function salvarAusencias(
+  _estado: EstadoAusencias,
+  formData: FormData,
+): Promise<EstadoAusencias> {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+
+  const lido = lerAusenciasDoTexto(String(formData.get("ausencias") ?? ""));
+  if ("erro" in lido) return { erro: lido.erro };
+
+  const registro = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    select: { config: true },
+  });
+  if (!registro) {
+    return { erro: "Configure a instância do Chatwoot antes de cadastrar ausências." };
+  }
+
+  const anterior = ausenciasDaConfig(registro.config);
+  await db.integration.update({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    data: {
+      config: { ...(registro.config as Record<string, unknown>), ausencias: lido.ausencias },
+    },
+  });
+  esquecerAusencias();
+
+  // Nomes e datas, sem dado de cliente: o que se quer saber depois é quem mexeu.
+  await db.auditLog.create({
+    data: {
+      userId: sessao.user.id,
+      action: "integration.chatwoot.ausencias.updated",
+      entity: "Integration",
+      entityId: IntegrationProvider.CHATWOOT,
+      diff: { antes: anterior, depois: lido.ausencias },
+    },
+  });
+
+  revalidatePath("/integracoes");
+  return {
+    ok:
+      lido.ausencias.length === 0
+        ? "Nenhuma ausência cadastrada."
+        : `${lido.ausencias.length} ausência(s) salva(s). Vale em até 30 segundos.`,
+  };
 }
 
 /**

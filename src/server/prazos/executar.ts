@@ -5,6 +5,7 @@ import { CaminhoDoRepasse, IntegrationProvider, PrazoStatus } from "@/generated/
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
+import { opcoesDeAusencia } from "@/server/integrations/chatwoot/ausencias-config";
 import { humanidadeDoDono } from "@/server/integrations/chatwoot/regras";
 import {
   devolverAoAgente,
@@ -233,7 +234,11 @@ async function agir(
 
   switch (acao.tipo) {
     case "reatribuir": {
-      const achado = resolverAtendente(acao.atendente, await cliente.listarAtendentes());
+      const achado = resolverAtendente(
+        acao.atendente,
+        await cliente.listarAtendentes(),
+        await opcoesDeAusencia(),
+      );
       const antes = prazo.donoNome ?? "a pessoa atribuída";
 
       if (achado.tipo !== "achado") {
@@ -401,7 +406,11 @@ async function agir(
     }
 
     case "atribuir": {
-      const achado = resolverAtendente(acao.atendente, await cliente.listarAtendentes());
+      const achado = resolverAtendente(
+        acao.atendente,
+        await cliente.listarAtendentes(),
+        await opcoesDeAusencia(),
+      );
       if (achado.tipo !== "achado") {
         await notaInterna(
           cliente,

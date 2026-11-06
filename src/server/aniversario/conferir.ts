@@ -10,6 +10,7 @@ import { logger } from "@/lib/logger";
 import { w3cEmSaoPaulo } from "@/lib/tempo";
 import { entregarAviso } from "@/server/alerta-de-saldo/conversa";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
+import { opcoesDeAusencia } from "@/server/integrations/chatwoot/ausencias-config";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import {
   clienteComTokenDeUsuario,
@@ -368,7 +369,11 @@ async function entregar(
         // O aviso sai ANTES de atribuir: com dono, a regra global cala o robô.
         await robo.enviarMensagem(conversa, ctx.config.entrega);
         await robo.alternarStatus(conversa, "open");
-        const destino = resolverAtendente(ctx.config.atendente, await robo.listarAtendentes());
+        const destino = resolverAtendente(
+          ctx.config.atendente,
+          await robo.listarAtendentes(),
+          await opcoesDeAusencia(),
+        );
         if (destino.tipo === "achado") {
           await robo.atribuir(conversa, { assigneeId: destino.atendente.id });
           atribuidoA = destino.atendente.name?.trim() || ctx.config.atendente;

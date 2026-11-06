@@ -7,6 +7,8 @@
  * atendimento travar.
  */
 
+import { ausenciaVigente, type OpcoesDeAusencia } from "./ausencias";
+
 export type Atendente = {
   id: number;
   name?: string;
@@ -24,7 +26,15 @@ function normalizar(texto: string) {
 }
 
 export type ResultadoAtendente =
-  | { tipo: "achado"; atendente: Atendente }
+  | {
+      tipo: "achado";
+      atendente: Atendente;
+      /**
+       * Nome de quem foi pedido e está ausente: a conversa foi para
+       * `atendente`, que o substitui (ver `ausencias.ts`).
+       */
+      substituiuA?: string;
+    }
   | { tipo: "ambiguo"; candidatos: string[] }
   | { tipo: "nenhum"; disponiveis: string[] };
 
@@ -33,8 +43,39 @@ export type ResultadoAtendente =
  *
  * Devolve ambiguidade em vez de escolher: com dois "Ana" na equipe, chutar
  * significa metade das conversas indo para a pessoa errada.
+ *
+ * Com `opcoes`, quem está ausente (e dentro da data) é trocado pelo substituto
+ * — uma troca só, sem encadear. ⚠ Na dúvida mantém quem foi pedido: substituto
+ * que não existe ou é ambíguo não pode virar conversa sem dono.
  */
 export function resolverAtendente(
+  termo: string,
+  atendentes: Atendente[],
+  opcoes?: OpcoesDeAusencia,
+): ResultadoAtendente {
+  const pedido = resolverSemAusencia(termo, atendentes);
+  if (!opcoes || pedido.tipo !== "achado") return pedido;
+
+  for (const ausencia of opcoes.ausencias) {
+    if (!ausenciaVigente(ausencia, opcoes.hoje)) continue;
+
+    const ausente = resolverSemAusencia(ausencia.nome, atendentes);
+    if (ausente.tipo !== "achado" || ausente.atendente.id !== pedido.atendente.id) continue;
+
+    const substituto = resolverSemAusencia(ausencia.substituto, atendentes);
+    if (substituto.tipo !== "achado" || substituto.atendente.id === pedido.atendente.id) {
+      return pedido;
+    }
+    return {
+      tipo: "achado",
+      atendente: substituto.atendente,
+      substituiuA: pedido.atendente.name?.trim() || ausencia.nome,
+    };
+  }
+  return pedido;
+}
+
+function resolverSemAusencia(
   termo: string,
   atendentes: Atendente[],
 ): ResultadoAtendente {

@@ -47,6 +47,14 @@ import { oQueImpedeASaida } from "@/server/notas-fiscais/emissao/regras";
 import { versaoDaConfig } from "@/server/notas-fiscais/versao";
 import { BotaoTentarDeNovo } from "@/components/botao-tentar-de-novo";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
+import { AusenciasDaEquipeForm } from "@/components/ausencias-da-equipe";
+import {
+  ausenciasDaConfig,
+  ausenciasEmTexto,
+  ausenciaVigente,
+  dataBR,
+} from "@/server/integrations/chatwoot/ausencias";
+import { agoraEmSaoPaulo } from "@/lib/tempo";
 import { ClickUpConfigForm } from "@/components/clickup-config";
 import { ConexaConfigForm } from "@/components/conexa-config";
 import { ZapSignConfigForm } from "@/components/zapsign-config";
@@ -162,6 +170,8 @@ export default async function IntegracoesPage({
     (i) => i.provider === IntegrationProvider.CLICKUP,
   );
   const configChatwoot = chatwootConfigSchema.safeParse(chatwoot?.config ?? {});
+  const ausenciasDaEquipe = ausenciasDaConfig(chatwoot?.config);
+  const hojeEmSaoPaulo = agoraEmSaoPaulo().iso;
   const conexa = registros.find(
     (i) => i.provider === IntegrationProvider.CONEXA,
   );
@@ -490,6 +500,14 @@ export default async function IntegracoesPage({
                   temSecretDaConta={segredosDaConta.secretDaConta.length > 0}
                   temTokenDeLeitura={segredosDaConta.tokenDeLeitura.length > 0}
                   urlWebhookConta={`${origem}/api/webhooks/chatwoot/conta`}
+                />
+
+                <AusenciasDaEquipeForm
+                  texto={ausenciasEmTexto(ausenciasDaEquipe)}
+                  vigentes={ausenciasDaEquipe
+                    .filter((a) => ausenciaVigente(a, hojeEmSaoPaulo))
+                    .map((a) => `${a.nome} → ${a.substituto} até ${dataBR(a.ate)}`)}
+                  somenteLeitura={!editavel}
                 />
 
                 {chatwoot?.lastError ? (

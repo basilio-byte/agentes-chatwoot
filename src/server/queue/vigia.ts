@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { CaminhoDoRepasse, ConversationStatus } from "@/generated/prisma/enums";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
+import { opcoesDeAusencia } from "@/server/integrations/chatwoot/ausencias-config";
 import { entregarAoHumano } from "@/server/integrations/chatwoot/resolucao";
 import { executarPrazosVencidos } from "@/server/prazos/executar";
 import { executarPesquisasVencidas } from "@/server/nps/executar";
@@ -146,7 +147,11 @@ async function escalar(conversa: Parada, minutos: number): Promise<boolean> {
 
     const alvo = conversa.agent?.fallbackAtendente;
     if (alvo) {
-      const achado = resolverAtendente(alvo, await cliente.listarAtendentes());
+      const achado = resolverAtendente(
+        alvo,
+        await cliente.listarAtendentes(),
+        await opcoesDeAusencia(),
+      );
       if (achado.tipo === "achado") {
         await cliente.atribuir(conversaId, { assigneeId: achado.atendente.id });
       } else {

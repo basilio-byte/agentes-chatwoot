@@ -17,6 +17,7 @@ import {
   resultadoDaChamada,
 } from "@/server/agents/chamada-interna";
 import { resolverAtendente } from "./atendentes";
+import { opcoesDeAusencia } from "./ausencias-config";
 import { proximoDoRodizio } from "./rodizio";
 import { carimbar } from "@/server/conversa-parada/mensagem";
 import { entregarAoHumano } from "./resolucao";
@@ -348,6 +349,7 @@ export const chatwootIntegration: IntegrationDefinition = {
         const achado = resolverAtendente(
           args.atendente,
           await cliente.listarAtendentes(),
+          await opcoesDeAusencia(),
         );
 
         if (achado.tipo === "nenhum") {
@@ -365,13 +367,17 @@ export const chatwootIntegration: IntegrationDefinition = {
 
         const conversa = ctx.chatwootConversationId;
         const nome = achado.atendente.name ?? args.atendente;
+        // Quem foi pedido está ausente (ver `ausencias.ts`): a nota diz, para a
+        // equipe não estranhar o nome, e o retorno diz ao modelo, que não deve
+        // citar a pessoa ausente ao cliente.
+        const ausente = achado.substituiuA;
 
         // Nota interna primeiro: se algo falhar depois, quem assumir já tem o
         // contexto na conversa.
         await cliente.enviarMensagem(
           conversa,
           [
-            `🤖 Atribuído a ${nome} pelo agente. Motivo: ${args.motivo}`,
+            `🤖 Atribuído a ${nome} pelo agente${ausente ? ` (no lugar de ${ausente}, que está ausente)` : ""}. Motivo: ${args.motivo}`,
             `Resumo: ${args.resumo}`,
           ].join("\n"),
           { privado: true },
@@ -393,11 +399,20 @@ export const chatwootIntegration: IntegrationDefinition = {
           CaminhoDoRepasse.ATRIBUICAO_DIRETA,
         );
 
-        logger.info({ conversa, atendente: nome }, "conversa atribuída a pessoa");
+        logger.info(
+          { conversa, atendente: nome, ...(ausente ? { noLugarDe: ausente } : {}) },
+          "conversa atribuída a pessoa",
+        );
 
         return {
           atribuido: true,
           para: nome,
+          ...(ausente
+            ? {
+                substituiu: ausente,
+                aviso: `${ausente} está ausente e a conversa foi para ${nome}. Se precisar citar quem atende ao cliente, cite ${nome}, não ${ausente}.`,
+              }
+            : {}),
           observacao:
             "O cliente já foi avisado e a pessoa assumiu. Não escreva mais nada ao cliente. Se as suas instruções mandam fazer algo logo depois de atribuir (como um registro ou um prazo), faça agora; senão, encerre o turno.",
         };
@@ -450,12 +465,13 @@ export const chatwootIntegration: IntegrationDefinition = {
         }
 
         const equipe = await cliente.listarAtendentes();
+        const ausencias = await opcoesDeAusencia();
 
         // Todos os participantes têm de existir antes de girar o rodízio: girar
         // e só então descobrir que o sorteado não existe deixaria a vez perdida.
         const resolvidos = args.entre.map((nome) => ({
           nome,
-          achado: resolverAtendente(nome, equipe),
+          achado: resolverAtendente(nome, equipe, ausencias),
         }));
         const problema = resolvidos.find((r) => r.achado.tipo !== "achado");
         if (problema) {
@@ -740,10 +756,12 @@ export const chatwootIntegration: IntegrationDefinition = {
           const achado = resolverAtendente(
             agente.fallbackAtendente,
             await cliente.listarAtendentes(),
+            await opcoesDeAusencia(),
           );
           if (achado.tipo === "achado") {
             assigneeId = achado.atendente.id;
             dono = achado.atendente.name ?? agente.fallbackAtendente;
+            if (achado.substituiuA) dono += ` (no lugar de ${achado.substituiuA}, que está ausente)`;
           } else {
             logger.warn(
               { conversa, alvo: agente.fallbackAtendente },

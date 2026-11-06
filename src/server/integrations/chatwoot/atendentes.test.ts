@@ -72,3 +72,88 @@ describe("resolverAtendente", () => {
     expect(resolverAtendente("   ", EQUIPE).tipo).toBe("nenhum");
   });
 });
+
+describe("resolverAtendente com ausência", () => {
+  const EQUIPE_COM_FELIPE: Atendente[] = [
+    ...EQUIPE,
+    { id: 7, name: "Felipe Fragoso", email: "felipe@seahub.com.br" },
+  ];
+  const FERIAS = { nome: "Laercio", substituto: "Felipe", ate: "2026-11-19" };
+  const em = (hoje: string, ausencias = [FERIAS]) => ({ ausencias, hoje });
+
+  it("quem está ausente é trocado pelo substituto, e o resultado diz quem foi trocado", () => {
+    const r = resolverAtendente("Laércio", EQUIPE_COM_FELIPE, em("2026-11-06"));
+    expect(r).toMatchObject({
+      tipo: "achado",
+      atendente: { id: 7 },
+      substituiuA: "Laércio Dias",
+    });
+  });
+
+  it("vale para o que o prompt escreve: primeiro nome, nome inteiro, e-mail e id", () => {
+    for (const termo of ["Laercio", "Laércio Dias", "laercio@seahub.com.br", "5"]) {
+      expect(resolverAtendente(termo, EQUIPE_COM_FELIPE, em("2026-11-06"))).toMatchObject({
+        atendente: { id: 7 },
+      });
+    }
+  });
+
+  it("⚠ vale no último dia e some no seguinte, sozinha", () => {
+    expect(resolverAtendente("Laercio", EQUIPE_COM_FELIPE, em("2026-11-19"))).toMatchObject({
+      atendente: { id: 7 },
+    });
+    const depois = resolverAtendente("Laercio", EQUIPE_COM_FELIPE, em("2026-11-20"));
+    expect(depois).toMatchObject({ atendente: { id: 5 } });
+    expect(depois.tipo === "achado" && depois.substituiuA).toBeUndefined();
+  });
+
+  it("não mexe em ninguém além do ausente", () => {
+    const r = resolverAtendente("Alan", EQUIPE_COM_FELIPE, em("2026-11-06"));
+    expect(r).toMatchObject({ atendente: { id: 1 } });
+    expect(r.tipo === "achado" && r.substituiuA).toBeUndefined();
+  });
+
+  it("sem opções, o comportamento é o de sempre", () => {
+    expect(resolverAtendente("Laercio", EQUIPE_COM_FELIPE)).toMatchObject({
+      atendente: { id: 5 },
+    });
+  });
+
+  it("⚠ substituto que não existe mantém quem foi pedido: conversa nunca fica sem dono", () => {
+    const r = resolverAtendente("Laercio", EQUIPE, em("2026-11-06"));
+    expect(r).toMatchObject({ tipo: "achado", atendente: { id: 5 } });
+    expect(r.tipo === "achado" && r.substituiuA).toBeUndefined();
+  });
+
+  it("⚠ substituto ambíguo mantém quem foi pedido, em vez de chutar um dos dois", () => {
+    const comDois = [
+      ...EQUIPE,
+      { id: 7, name: "Felipe Fragoso" },
+      { id: 8, name: "Felipe Santos" },
+    ];
+    expect(resolverAtendente("Laercio", comDois, em("2026-11-06"))).toMatchObject({
+      atendente: { id: 5 },
+    });
+  });
+
+  it("uma troca só: o substituto também ausente não encadeia", () => {
+    const ausencias = [
+      FERIAS,
+      { nome: "Felipe", substituto: "Alan", ate: "2026-11-30" },
+    ];
+    expect(resolverAtendente("Laercio", EQUIPE_COM_FELIPE, em("2026-11-06", ausencias))).toMatchObject({
+      atendente: { id: 7 },
+    });
+  });
+
+  it("ausente que não existe na equipe não atrapalha ninguém", () => {
+    const r = resolverAtendente("Alan", EQUIPE, em("2026-11-06", [
+      { nome: "Fantasma", substituto: "Kelly", ate: "2026-11-30" },
+    ]));
+    expect(r).toMatchObject({ atendente: { id: 1 } });
+  });
+
+  it("quem não existe continua devolvendo a lista", () => {
+    expect(resolverAtendente("Fernanda", EQUIPE_COM_FELIPE, em("2026-11-06")).tipo).toBe("nenhum");
+  });
+});

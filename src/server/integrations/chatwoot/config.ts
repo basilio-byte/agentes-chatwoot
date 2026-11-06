@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ausenciaSchema, MAXIMO_DE_AUSENCIAS } from "./ausencias";
 
 /** Configuração não-sensível da instância — compartilhada por todos os agentes. */
 export const chatwootConfigSchema = z.object({
@@ -11,6 +12,12 @@ export const chatwootConfigSchema = z.object({
     .number()
     .int()
     .positive("O id da conta é o número que aparece na URL do Chatwoot"),
+  /**
+   * Quem está ausente e quem recebe no lugar, até o dia de volta (`ausencias.ts`).
+   * ⚠ Não vem do formulário da instância: o formulário nunca o devolve, e salvar
+   * a URL e a conta NÃO pode apagar as ausências — `salvarConfigChatwoot` as preserva.
+   */
+  ausencias: z.array(ausenciaSchema).max(MAXIMO_DE_AUSENCIAS).optional(),
 });
 
 export type ChatwootConfig = z.infer<typeof chatwootConfigSchema>;

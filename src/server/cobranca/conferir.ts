@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { agoraEmSaoPaulo } from "@/lib/tempo";
 import { conversaParaAviso } from "@/server/alerta-de-saldo/conversa";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
+import { opcoesDeAusencia } from "@/server/integrations/chatwoot/ausencias-config";
 import { ChatwootApiError, type ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { clienteComTokenDeUsuario } from "@/server/integrations/chatwoot/credenciais";
 import type { ClickUpClient } from "@/server/integrations/clickup/client";
@@ -438,7 +439,12 @@ async function atribuirDepoisDoEnvio(
     }
 
     if (aoVivo.assigneeId == null && config.atribuirA) {
-      const alvo = resolverAtendente(config.atribuirA, await args.atendentes());
+      // Com a pessoa ausente (ver `ausencias.ts`), quem recebe é o substituto.
+      const alvo = resolverAtendente(
+        config.atribuirA,
+        await args.atendentes(),
+        await opcoesDeAusencia(),
+      );
       if (alvo.tipo === "achado") {
         await chatwoot.atribuir(conversaId, { assigneeId: alvo.atendente.id });
         // As automações do Chatwoot rodam logo depois da atribuição, fora da
