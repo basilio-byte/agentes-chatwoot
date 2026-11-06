@@ -51,6 +51,8 @@ import {
   resolverMembro,
 } from "./formatacao";
 import { nomesDisponiveis, prepararCampos, resolverCampo } from "./campos";
+import { geocodificarEndereco } from "../geocodificacao/nominatim";
+import { resolverLocalizacoes, type AvisoDeLocalizacao } from "./localizacao-dos-campos";
 import { DIAS_SEM_REPETIR, aindaVale, tarefasNaLista, type TarefaAnterior } from "./repeticao";
 import { mesmoTelefone, variacoesDoTelefone } from "./telefone";
 import {
@@ -395,15 +397,24 @@ export const clickupIntegration: IntegrationDefinition = {
         // Venda de endereço fechada pelo próprio agente: a task precisa trazer o
         // que o contrato exige (`contato/contrato.ts`). `null` = não é esse caso.
         let pendenciasDoContrato: string[] | null = null;
+        // Campo de localização que não deu para converter (ver `localizacao-dos-campos.ts`).
+        let avisosDeLocalizacao: AvisoDeLocalizacao[] = [];
         if (
           args.camposPersonalizados?.length ||
           (doCrm && (Object.keys(fatos).length || Object.keys(doContato).length))
         ) {
           const { fields } = await cliente.listarCamposPersonalizados(listaId);
-          const { prontos, problemas } = prepararCampos(
+          // Campo de localização chega como texto e a API quer coordenadas: converte
+          // aqui, antes de tudo. Se não achar o endereço, o campo sai do lote (a task
+          // nasce sem ele) e o que falta aparece em `contrato.faltam`.
+          const localizadas = await resolverLocalizacoes(
             args.camposPersonalizados ?? [],
             fields,
+            (endereco) => geocodificarEndereco(endereco),
           );
+          avisosDeLocalizacao = localizadas.avisos;
+          const camposDoAgente = localizadas.entradas;
+          const { prontos, problemas } = prepararCampos(camposDoAgente, fields);
 
           if (problemas.length > 0) {
             return {
@@ -416,7 +427,7 @@ export const clickupIntegration: IntegrationDefinition = {
 
           if (doCrm) {
             const dados = Object.fromEntries(
-              (args.camposPersonalizados ?? []).map((c) => [c.campo, c.valor]),
+              camposDoAgente.map((c) => [c.campo, c.valor]),
             );
             for (const extra of camposVaziosParaPreencher(fatos, fields, dados)) {
               const um = prepararCampos([extra], fields);
@@ -495,6 +506,9 @@ export const clickupIntegration: IntegrationDefinition = {
           ...formatarTarefa(tarefa),
           // É por ele que a barreira de task em dobro reconhece a lista.
           listaId: tarefa.list?.id ?? listaId,
+          ...(avisosDeLocalizacao.length > 0
+            ? { avisos: avisosDeLocalizacao.map((a) => `${a.campo}: ${a.motivo}`) }
+            : {}),
           // Venda de endereço fechada pelo agente: diz se os dados do contrato
           // estão na task. Quem lê é o modelo, que não consegue conferir os
           // campos depois (`clickup_obter_tarefa` não os devolve).
@@ -1824,7 +1838,13 @@ export const clickupIntegration: IntegrationDefinition = {
         }
 
         const { fields } = await cliente.listarCamposPersonalizados(listaId);
-        const { prontos, problemas } = prepararCampos(args.campos, fields);
+        // Localização: texto vira coordenadas aqui; o que não for achado sai do lote
+        // sem derrubar os outros campos (ver `localizacao-dos-campos.ts`).
+        const localizadas = await resolverLocalizacoes(args.campos, fields, (endereco) =>
+          geocodificarEndereco(endereco),
+        );
+        const { prontos, problemas } = prepararCampos(localizadas.entradas, fields);
+        const avisos = localizadas.avisos.map((a) => `${a.campo}: ${a.motivo}`);
 
         if (problemas.length > 0) {
           return {
@@ -1843,7 +1863,10 @@ export const clickupIntegration: IntegrationDefinition = {
           );
         }
 
-        return `${prontos.length} campo(s) preenchido(s) na tarefa ${args.tarefaId}.`;
+        const resumo = `${prontos.length} campo(s) preenchido(s) na tarefa ${args.tarefaId}.`;
+        return avisos.length > 0
+          ? { preenchidos: prontos.length, tarefaId: args.tarefaId, resumo, avisos }
+          : resumo;
       },
     },
 

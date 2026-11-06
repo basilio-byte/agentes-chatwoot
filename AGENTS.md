@@ -1791,9 +1791,10 @@ ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
     funciona sem mexer em prompt nenhum. Enquanto o prompt do Everton não pedir
     esses dados, a lista nunca vem vazia — é de propósito: a venda de fato não
     sobe sozinha. ⚠ **"📍 Endereço Sócio" é campo de LOCALIZAÇÃO**, e a API do
-    ClickUp pede coordenadas além do texto: o código ainda não sabe gravá-lo
-    (`converterValor` manda o texto cru). Antes de o Everton passar a coletá-lo,
-    é preciso provar como gravar — ou a criação da task pode falhar.
+    ClickUp pede `{ location: { lat, lng }, formatted_address }`, não texto
+    (resolvido em 06/11/2026, ver "Localização" em "Campos personalizados").
+    O Everton passa o endereço como texto e o sistema o converte; geocodificação
+    que falha deixa o campo em branco, a task sai, e ele volta em `contrato.faltam`.
   - **A cadeia do ClickBot, lida da Atividade e das regras em 26/10/2026** (o
     MCP e a API NÃO expõem a Atividade nem as automações; os prints vieram do
     usuário). Tudo roda em ~2 s depois da criação: regras de criação (prioridade,
@@ -2439,6 +2440,34 @@ consegue pagar o caminho certo pega o atalho.
 - **Campo errado aborta o lote inteiro**, e a resposta devolve os nomes que
   existem. Tarefa criada com metade dos dados é pior do que pedir correção.
 - **Escrever em `formula`/`rollup` é recusado aqui**, não na API.
+- ⚠ **Localização (`location`) quer coordenadas, e quem converte é o SISTEMA**
+  (06/11/2026, "📍 Endereço Sócio", exigido pela regra "EV SB SP" do ClickBot).
+  Provado numa task de teste contra a API real: `POST /task/{id}/field/{campo}`
+  com `{ value: { location: { lat, lng }, formatted_address } }` dá 200 e a leitura
+  devolve o mesmo valor — **`place_id` não é necessário**. O que o código fazia
+  antes (texto cru) era recusado e abortaria o lote inteiro.
+  - **O agente escreve o endereço como texto** ("Rua, número, bairro, cidade e
+    CEP"); `resolverLocalizacoes` converte ANTES de `prepararCampos`, em
+    `clickup_criar_tarefa` e em `clickup_definir_campo_personalizado`.
+    `converterValor` recusa texto que chegue até lá.
+  - ⚠ **Geocodificação que falha NUNCA aborta o lote**, ao contrário de campo de
+    outro tipo com valor ruim: o campo sai da lista, a task é criada, o retorno traz
+    `avisos` e, na venda de endereço, `contrato.faltam` cobra o campo. Perder a
+    venda por causa de um pino seria o defeito que o campo existe para evitar.
+  - ⚠ **A fonte é o Nominatim (OpenStreetMap), NÃO a BrasilAPI por CEP.** Medido
+    em 06/11/2026: a BrasilAPI devolve o centro da CIDADE — todo CEP de Natal volta
+    com o mesmo ponto —, e um pino igual para todo cliente é dado falso com cara de
+    dado. O Nominatim põe o pino na RUA certa quando recebe bairro e CEP (a ~600 m do
+    número, na amostra comparada com o Google). Gratuito e sem chave; a política
+    pede 1 consulta por segundo e `User-Agent` que identifique quem chama
+    (`geocodificacao/nominatim.ts`). Sem resultado, tenta só o CEP — e só vale se o
+    resultado cita o MESMO CEP. Coordenada fora do Brasil é descartada. Cache de
+    24 h por endereço, só de sucesso.
+  - **O texto manda, o pino é aproximado**: `formatted_address` é o endereço como o
+    cliente o deu (é o que a equipe lê e o contrato usa); as coordenadas só põem o
+    ponto no mapa. Nunca se inventa coordenada: sem resposta, o campo fica vazio.
+  - ⚠ **Não provado:** se a regra do ClickBot conta um valor gravado por API (sem
+    `place_id`) como "preenchido". A primeira venda real prova.
 - ⚠ **Só DOIS campos dizem quem ATENDE, e dois que parecem dizer são do
   CLIENTE** (decisão do usuário em 16/09/2026, depois da terceira confusão).
   Da equipe: o campo personalizado **`VENDEDOR`** (`drop_down`) e o
@@ -3508,6 +3537,39 @@ Desligado é pausa e continua na lista; arquivado saiu de circulação.
 - **Excluir cascateia para `AgentRun`** e leva junto histórico de custo e tool
   calls. Por isso a exclusão fica atrás de confirmação que diz quantas execuções
   e versões somem, e sugere arquivar.
+
+#### Ausência: o nome escrito no prompt cai no substituto
+
+Pedido do Laércio (06/11/2026, férias até 19/11): *"quem chegar para mim no
+Chatwoot passar para o Felipe"*. O financeiro manda a conversa para ele POR NOME,
+escrito em quatro prompts (Financeiro, Suporte, Salas Privativas e Salas de
+Reunião), e a cobrança por etiqueta também (`atribuirA`). Regras puras e testadas em
+`integrations/chatwoot/ausencias.ts`; o resolver em `atendentes.ts`; a leitura da
+configuração em `ausencias-config.ts`; a tela em Integrações → Chatwoot.
+
+- **A troca mora no `resolverAtendente`**, o ponto por onde TODA atribuição a uma
+  pessoa passa (ferramentas dos agentes, rodízio, responsável padrão, vigia,
+  prazos, cobrança e aniversário). Reescrever prompt criaria versão nova em quatro
+  agentes e dependeria de alguém lembrar de desfazer no dia da volta.
+- **Termina sozinha**: vale até o FIM do último dia (`ate`, inclusive; dia de São
+  Paulo). No dia seguinte o mesmo nome volta a cair na pessoa.
+- ⚠ **Uma troca só e na dúvida mantém quem foi pedido**: substituto que não existe
+  ou é ambíguo NÃO vira conversa sem dono — o comportamento de sempre vale. Não
+  encadeia (o substituto também ausente não é trocado).
+- **Quem foi trocado fica dito**: `substituiuA` no resultado, a nota interna diz
+  "no lugar de X, que está ausente", e o retorno da ferramenta ao modelo traz o
+  nome REAL de quem recebeu e manda não citar o ausente.
+- ⚠ **Não move o que já está atribuído**: conversa que já estava no nome da pessoa
+  continua nele — mover é decisão de quem lê a fila (decisão do usuário: as 2
+  pendentes do Laércio são movidas à mão). Também não mexe em macro do Chatwoot, em
+  responsável de task do ClickUp nem em WhatsApp: ficam como estão.
+- **Config na linha do Chatwoot** (`Integration.config.ausencias`), com formulário
+  PRÓPRIO (`salvarAusencias`, `ADMIN`). ⚠ `salvarConfigChatwoot` as PRESERVA ao
+  gravar a URL e a conta: o formulário da instância não conhece essa chave, e
+  gravar só o que ele manda as apagaria sem aviso.
+- **Cache de 30 s na memória do processo** — o worker é outro processo do painel,
+  então editar a tela vale em até 30 s lá. Falha de leitura nunca lança: vale a
+  última leitura, e o pior caso é a conversa ir para quem foi pedido.
 
 #### Escopo: conta e caixa de entrada
 

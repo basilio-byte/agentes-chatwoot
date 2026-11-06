@@ -1,4 +1,5 @@
 import { normalizar, paraTimestamp } from "./formatacao";
+import { ehValorDeLocalizacao } from "./localizacao";
 import type { ClickUpCampoPersonalizado } from "./tipos";
 
 /**
@@ -21,7 +22,6 @@ const TEXTUAIS = new Set([
   "email",
   "phone",
   "url",
-  "location",
 ]);
 
 const NUMERICOS = new Set(["number", "currency", "emoji"]);
@@ -136,6 +136,17 @@ export function converterValor(
   }
 
   if (TEXTUAIS.has(tipo)) return { ok: true, valor: String(valor) };
+
+  // Localização: a API quer coordenadas, não texto. Quem converte o endereço é
+  // `resolverLocalizacoes`, ANTES daqui — texto que chegue até aqui é caminho que
+  // não passou por ela, e mandá-lo cru faria a API recusar o lote inteiro.
+  if (tipo === "location") {
+    if (ehValorDeLocalizacao(valor)) return { ok: true, valor };
+    return {
+      ok: false,
+      motivo: `"${campo.name}" é um campo de localização e precisa de endereço convertido em coordenadas — texto não é gravado direto.`,
+    };
+  }
 
   if (NUMERICOS.has(tipo)) {
     if (typeof valor === "number") {
