@@ -10,7 +10,12 @@ import {
   mesesParaEscolher,
   type LinhaDaRenovacao,
 } from "@/server/renovacao/consulta";
-import { STATUS_NOTIFICACAO, STATUS_PG_PENDENTE, STATUS_RENOVACAO } from "@/server/renovacao/regras";
+import {
+  diaDeEntrarEmRenovacao,
+  STATUS_NOTIFICACAO,
+  STATUS_PG_PENDENTE,
+  STATUS_RENOVACAO,
+} from "@/server/renovacao/regras";
 
 export const dynamic = "force-dynamic";
 
@@ -177,7 +182,14 @@ export default async function RenovacoesPage({
 
   const hoje = new Date().toISOString().slice(0, 10);
   const reajustados = leva.linhas.filter((l) => l.reajusteEm).length;
-  const foraDoFluxo = leva.linhas.filter((l) => !l.tarefa).length;
+  // ⚠ "sem tarefa" sozinho assusta à toa: a automação do ClickUp só move para
+  // `renovação` 30 dias antes, então quem vence no fim do mês ainda nem devia
+  // estar no fluxo. O número que pede ação é o de quem JÁ passou do D-30.
+  const semTarefa = leva.linhas.filter((l) => !l.tarefa);
+  const atrasadosNoFluxo = semTarefa.filter(
+    (l) => l.fidelidade && diaDeEntrarEmRenovacao(l.fidelidade) <= hoje,
+  );
+  const aindaNaoVenceuOD30 = semTarefa.length - atrasadosNoFluxo.length;
   const somaDif = leva.linhas.reduce((s, l) => s + (l.diferenca ?? 0), 0);
 
   const campos: Campo[] = [
@@ -243,9 +255,9 @@ export default async function RenovacoesPage({
           detalhe={`${leva.linhas.length - reajustados} aguardando o lote`}
         />
         <Stat
-          rotulo="Fora do fluxo"
-          valor={foraDoFluxo}
-          detalhe="sem tarefa num status de renovação"
+          rotulo="Deviam estar no fluxo"
+          valor={atrasadosNoFluxo.length}
+          detalhe={`já passaram do D-30 e não têm tarefa · ${aindaNaoVenceuOD30} ainda não chegaram ao D-30`}
         />
         <Stat
           rotulo="Diferença por mês"

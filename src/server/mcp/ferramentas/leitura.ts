@@ -26,6 +26,7 @@ import {
 import { lerDetalheDaExecucao } from "@/server/execucoes/detalhe";
 import { lerLacunas } from "@/server/lacunas/consulta";
 import { lerLeva, levaPadrao } from "@/server/renovacao/consulta";
+import { diaDeEntrarEmRenovacao } from "@/server/renovacao/regras";
 import { ultimasRodadas } from "@/server/renovacao/retrato";
 import { O_QUE_FORNECER, ROTULO_DO_TIPO } from "@/server/lacunas/regras";
 import {
@@ -1117,6 +1118,11 @@ const verLevaDeRenovacao = ferramenta({
   async executar({ mes, limite }) {
     const [leva, rodadas] = await Promise.all([lerLeva(mes ?? levaPadrao()), ultimasRodadas(3)]);
     const teto = limite ?? 50;
+    const hojeEmSP = diaEmSaoPaulo(new Date());
+
+    // Dinheiro arredondado: a divisão por 12 do plano anual devolve dízima
+    // (3.980000000000004), e número assim na saída se lê como precisão falsa.
+    const dinheiro = (n: number | null) => (n == null ? null : Math.round(n * 100) / 100);
 
     const linha = (l: (typeof leva.linhas)[number]) => ({
       contrato: l.contratoId,
@@ -1124,10 +1130,10 @@ const verLevaDeRenovacao = ferramenta({
       nome: l.nome,
       plano: l.plano,
       fidelidade: l.fidelidade,
-      valorAnterior: l.anterior?.valor ?? null,
+      valorAnterior: dinheiro(l.anterior?.valor ?? null),
       origemDoValorAnterior: l.anterior?.origem ?? null,
-      valor: l.valor,
-      diferencaPorMes: l.diferenca,
+      valor: dinheiro(l.valor),
+      diferencaPorMes: dinheiro(l.diferenca),
       reajuste: l.reajusteEm
         ? { em: l.reajusteEm, indice: l.reajusteIndice, percentual: l.reajustePct }
         : null,
@@ -1145,7 +1151,14 @@ const verLevaDeRenovacao = ferramenta({
       totais: {
         naLeva: leva.linhas.length,
         jaReajustados: leva.linhas.filter((l) => l.reajusteEm).length,
-        foraDoFluxo: leva.linhas.filter((l) => !l.tarefa).length,
+        // Quem já passou do D-30 e não tem tarefa: é o que pede ação. Quem
+        // ainda não chegou ao D-30 não devia mesmo estar no fluxo.
+        deviamEstarNoFluxo: leva.linhas.filter(
+          (l) => !l.tarefa && l.fidelidade && diaDeEntrarEmRenovacao(l.fidelidade) <= hojeEmSP,
+        ).length,
+        aindaNaoChegaramAoD30: leva.linhas.filter(
+          (l) => !l.tarefa && l.fidelidade && diaDeEntrarEmRenovacao(l.fidelidade) > hojeEmSP,
+        ).length,
         fidelidadeVencida: leva.atrasados.length,
         tarefasSemContratoNaLeva: leva.orfas.length,
       },
