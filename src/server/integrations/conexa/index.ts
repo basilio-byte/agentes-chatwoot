@@ -15,7 +15,11 @@ import {
 } from "./entrada";
 import { conferirHorario, instanteEmSaoPaulo } from "./agenda";
 import { escolherSolicitante, pessoaDaApi } from "./solicitante";
-import { cadastroExistente } from "./duplicidade";
+import {
+  cadastroExistente,
+  contratoExistente,
+  linkDoClienteNoConexa,
+} from "./duplicidade";
 import { acharCobrancaDaVenda, situacaoDeFaturamento } from "./faturamento";
 import {
   exigenciaDeIdentidade,
@@ -629,7 +633,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_criar_contrato",
       categoria: "Contratos",
       description:
-        "Cria o contrato do cliente num plano. É o passo que efetiva a venda no ERP. Confirme plano, periodicidade e data de início com o cliente ANTES de chamar.",
+        "Cria o contrato do cliente num plano. É o passo que efetiva a venda no ERP e começa a cobrança recorrente. Confirme plano, periodicidade e data de início ANTES de chamar. Se o cliente já tiver contrato ativo NESSE plano, não cria outro: devolve o que já existe. Devolve também o link da tela de contratos do cliente, pronto para registrar num comentário — use esse link, não monte um.",
       requiresConfirmation: true,
       inputSchema: z.object({
         clienteId: z.number().int().positive(),
@@ -658,7 +662,40 @@ export const conexaIntegration: IntegrationDefinition = {
           valor?: number;
           observacoes?: string;
         };
-        const { cliente } = contexto(ctx);
+        const { cliente, config } = contexto(ctx);
+
+        // ⚠ Contrato duplicado é SEGUNDA COBRANÇA RECORRENTE no cliente, não um
+        // cadastro órfão. E o prompt dos agentes de contrato manda repetir o
+        // acionamento quando algo falha ("atualize o status para Onboarding"),
+        // então a repetição é esperada. Quem confere é o código.
+        let jaExiste;
+        try {
+          const { itens } = await cliente.listarContratos({
+            customerId: args.clienteId,
+            isActive: 1,
+            limit: LIMITE,
+          });
+          jaExiste = contratoExistente(itens, args.planoId);
+        } catch {
+          return {
+            criado: false,
+            erro: "não consegui conferir os contratos que o cliente já tem.",
+            comoResolver:
+              "Sem essa conferência eu não crio: o risco é o cliente ficar com dois contratos do mesmo plano e ser cobrado duas vezes. Tente de novo; se persistir, peça para alguém criar o contrato no Conexa.",
+          };
+        }
+
+        if (jaExiste) {
+          return {
+            criado: false,
+            jaExistia: true,
+            contratoId: jaExiste.id,
+            inicio: jaExiste.inicio,
+            link: linkDoClienteNoConexa(config.baseUrl, args.clienteId),
+            observacao:
+              "O cliente JÁ tem um contrato ativo neste plano — nenhum contrato novo foi criado, para não gerar cobrança em dobro. Use o contrato acima. Se a contratação for mesmo outra (outro endereço, por exemplo), peça para alguém da equipe criar no Conexa.",
+          };
+        }
 
         const { id } = await cliente.criarContrato(
           semVazios({
@@ -674,6 +711,9 @@ export const conexaIntegration: IntegrationDefinition = {
         return {
           criado: true,
           contratoId: id,
+          // Montado aqui, e não pelo modelo: é o link que vai para o comentário
+          // da task, e endereço inventado parece certo e não leva a lugar nenhum.
+          link: linkDoClienteNoConexa(config.baseUrl, args.clienteId),
           proximoPasso:
             "Para o cliente assinar, chame conexa_enviar_contrato_para_assinatura.",
         };

@@ -448,6 +448,55 @@ describe("clientes", () => {
     });
   });
 
+  it("contrato: cliente que já tem contrato ativo no plano NÃO ganha outro", async () => {
+    // ⚠ Duplicado aqui é segunda cobrança recorrente. E o prompt dos agentes de
+    // contrato manda repetir o acionamento quando algo falha.
+    responder(({ metodo }) =>
+      metodo === "GET"
+        ? { corpo: { data: [{ contractId: 12946, planId: 151, isActive: true, startDate: "2026-11-10" }], pagination: { hasNext: false } } }
+        : { corpo: { id: 7777 } },
+    );
+
+    const r = (await tool("conexa_criar_contrato").execute(
+      { clienteId: 6048, planoId: 151, periodicidade: "monthly", inicio: "2026-11-10" },
+      ctx(),
+    )) as Record<string, unknown>;
+
+    expect(r).toMatchObject({ criado: false, jaExistia: true, contratoId: 12946 });
+    expect(String(r.link)).toContain("idCliente=6048");
+    // Nenhum POST: o contrato novo não chegou a ser criado.
+    expect(chamadas.every((c) => c.metodo === "GET")).toBe(true);
+  });
+
+  it("contrato: outro plano do mesmo cliente não barra, e o link volta pronto", async () => {
+    responder(({ metodo }) =>
+      metodo === "GET"
+        ? { corpo: { data: [{ contractId: 12946, planId: 151, isActive: true }], pagination: { hasNext: false } } }
+        : { corpo: { id: 7777 } },
+    );
+
+    const r = (await tool("conexa_criar_contrato").execute(
+      { clienteId: 6048, planoId: 43, periodicidade: "monthly", inicio: "2026-11-10" },
+      ctx(),
+    )) as Record<string, unknown>;
+
+    expect(r).toMatchObject({ criado: true, contratoId: 7777 });
+    expect(String(r.link)).toContain("r=vendaRecorrente/gerenciarContratos&idCliente=6048");
+  });
+
+  it("contrato: sem conseguir conferir, NÃO cria", async () => {
+    responder(({ metodo }) => (metodo === "GET" ? { status: 503, corpo: {} } : { corpo: { id: 7777 } }));
+
+    const r = (await tool("conexa_criar_contrato").execute(
+      { clienteId: 6048, planoId: 151, periodicidade: "monthly", inicio: "2026-11-10" },
+      ctx(),
+    )) as Record<string, unknown>;
+
+    expect(r.criado).toBe(false);
+    expect(String(r.erro)).toContain("conferir");
+    expect(chamadas.every((c) => c.metodo === "GET")).toBe(true);
+  });
+
   it("criar: falha do servidor manda procurar antes de cadastrar de novo", async () => {
     responder(({ metodo }) => (metodo === "GET" ? { corpo: semCadastro } : { status: 503, corpo: {} }));
 
