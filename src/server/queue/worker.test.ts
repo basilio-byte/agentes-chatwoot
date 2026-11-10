@@ -328,6 +328,26 @@ describe("transferência", () => {
     expect(bastoesRecebidos[0]).toBeNull();
   });
 
+  it("⚠⚠ o bastão se GASTA no turno: a mensagem seguinte não recebe outro", async () => {
+    // Conversa 15150 (10/11/2026): o bastão só era zerado quando a conversa era
+    // RESOLVIDA, então todo turno até lá recebia "você assumiu, apresente-se".
+    // O agente se reapresentava a cada mensagem e voltava ao menu de entrada —
+    // o cliente digitou "2" três vezes e recebeu três vezes o mesmo menu.
+    respostasDoModelo = [passarPara("reservas"), { resposta: "ok" }];
+    await processarAtendimento(job());
+
+    expect(bastoesRecebidos[1]).toContain("Recepção");
+    // O turno entregou a resposta: o bastão foi usado e não vale mais.
+    expect(conversa.handoffParaAgentId).toBeNull();
+
+    // Segunda mensagem do cliente, mesmo atendimento: nenhum bastão.
+    bastoesRecebidos.length = 0;
+    respostasDoModelo = [{ resposta: "a sala está livre às 14h" }];
+    await processarAtendimento(job());
+
+    expect(bastoesRecebidos).toEqual([null]);
+  });
+
   it("grava a passagem para auditoria e move o dono da conversa", async () => {
     respostasDoModelo = [passarPara("reservas"), { resposta: "ok" }];
 

@@ -529,9 +529,25 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
         // Respondeu: ninguém mais está esperando, o vigia pode soltar esta. Se
         // a conversa tinha voltado para o agente, a retomada aconteceu — o
         // próximo turno volta a exigir mensagem nova do cliente.
+        //
+        // ⚠⚠ **E o bastão se gasta aqui.** Ele era zerado só quando a conversa
+        // era RESOLVIDA, então todo turno entre a transferência e o fim do
+        // atendimento recebia de novo "você assumiu este atendimento,
+        // apresente-se". O agente se reapresentava a cada mensagem e, pior,
+        // agia como quem acabou de chegar: voltava ao próprio menu de entrada e
+        // lia o número do cliente contra ELE, não contra o submenu que tinha
+        // acabado de mandar. Visto na conversa 15150 em 10/11/2026 — o cliente
+        // digitou "2" três vezes e recebeu três vezes o mesmo menu, com "de
+        // novo por aqui" em cada volta. A retomada já se gastava aqui; o bastão
+        // não, e era a mesma ideia: quem se apresenta é quem ACABOU de chegar.
         await db.conversation.updateMany({
           where: { chatwootConversationId },
-          data: { lastMessageAt: new Date(), aguardandoDesde: null, retomadaPendente: false },
+          data: {
+            lastMessageAt: new Date(),
+            aguardandoDesde: null,
+            retomadaPendente: false,
+            handoffParaAgentId: null,
+          },
         });
 
         log.info(
