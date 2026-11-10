@@ -1651,15 +1651,29 @@ model RetratoDeRenovacao {
   /// Id do contrato no Conexa.
   contratoId    Int
   clienteId     Int
-  /// O valor no dia do retrato: o "Valor Anterior" da planilha.
+  /// O valor da VÉSPERA do lote: o "Valor Anterior" da planilha. Congela
+  /// quando o reajuste muda — ver `decidirRetrato`.
   valorCentavos Int
-  fidelidade    String
-  periodicidade String?
-  /// O reajuste que o contrato JÁ tinha quando o retrato foi tirado. É o que
-  /// diz se o retrato é de antes do lote: se for igual ao de agora, o lote
-  /// aconteceu antes da leitura e este valor já é o novo.
-  reajusteEm    String?
-  lidoEm        DateTime @default(now())
+  /// O reajuste que o contrato tinha quando `valorCentavos` foi guardado. É o
+  /// que diz se o retrato é de antes do lote: igual ao de agora = o lote
+  /// aconteceu antes da leitura, e aquele valor já é o novo.
+  reajusteDoRetrato String?
+
+  /// O estado do contrato na ÚLTIMA leitura — é o que a tela mostra. Fica
+  /// aqui, e não numa consulta ao vivo, porque ler a leva custa dezenas de
+  /// idas ao Conexa: a tela de 10/11/2026 estourou o prazo de 20 s do cliente
+  /// e abriu com zero contratos. Mesma doutrina de `CobrancaFiscal`, que
+  /// guarda a cobrança lida.
+  valorAtualCentavos Int      @default(0)
+  fidelidade         String
+  periodicidade      String?
+  /// `contractSummary` — o nome do plano como o ERP mostra.
+  plano              String?
+  reajusteEm         String?
+  reajustePct        Float?
+  reajusteIndice     String?
+  lidoEm             DateTime @default(now())
+  atualizadoEm       DateTime @updatedAt
 
   @@unique([leva, contratoId])
   @@index([leva])

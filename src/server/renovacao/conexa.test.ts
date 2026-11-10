@@ -94,7 +94,7 @@ describe("lerContratosAtivos", () => {
       [{ ...BRUTO, contractId: 3, customerId: 3 }],
     ]);
 
-    const leitura = await lerContratosAtivos(cliente);
+    const leitura = await lerContratosAtivos(cliente, null);
 
     expect(leitura.contratos.map((c) => c.id)).toEqual([10601, 2, 3]);
     expect(leitura.completa).toBe(true);
@@ -111,7 +111,7 @@ describe("lerContratosAtivos", () => {
     ]);
     const { cliente } = clienteFalso(paginas);
 
-    const leitura = await lerContratosAtivos(cliente);
+    const leitura = await lerContratosAtivos(cliente, null);
 
     expect(leitura.completa).toBe(false);
     expect(leitura.paginas).toBe(PAGINAS_MAXIMAS);
@@ -120,7 +120,7 @@ describe("lerContratosAtivos", () => {
 
   it("uma página só não pede a segunda", async () => {
     const { cliente } = clienteFalso([[BRUTO]]);
-    const leitura = await lerContratosAtivos(cliente);
+    const leitura = await lerContratosAtivos(cliente, null);
     expect(cliente.listarContratos).toHaveBeenCalledTimes(1);
     expect(leitura.completa).toBe(true);
   });

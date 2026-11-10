@@ -2,7 +2,6 @@ import { db } from "@/lib/db";
 import { lerComReserva } from "@/lib/leitura-remota";
 import { diaEmSaoPaulo } from "@/lib/tempo";
 import { abrirClickUp } from "@/server/integrations/clickup/sistema";
-import { abrirConexa } from "@/server/integrations/conexa/sistema";
 
 import {
   cruzarComAsTarefas,
@@ -10,10 +9,7 @@ import {
   tarefasOrfas,
   type TarefaDoFluxo,
 } from "./clickup";
-import { lerContratosAtivos } from "./conexa";
 import {
-  atrasados,
-  daLeva,
   diferencaMensal,
   valorAnterior,
   type ContratoDaLeva,
@@ -23,16 +19,16 @@ import {
 /**
  * A leitura da tela `/renovacoes`.
  *
- * ⚠ **Passa por `lerComReserva`**, como a tela de Integrações: ler a leva custa
- * ~14 idas ao Conexa (não há filtro por fidelidade) e a listagem do ClickUp mais
- * duas. Sem isso, cada abertura da tela — e cada troca de mês — esperaria tudo
- * de novo. Quem abre recebe o último valor lido na hora e a renovação vai por
- * trás.
+ * ⚠⚠ **A tela NÃO abre o Conexa.** A primeira versão lia a leva ao vivo e
+ * morria: são dezenas de páginas de `/contracts` (não há filtro por
+ * fidelidade), e em 10/11/2026 uma delas passou dos 20 s de prazo do cliente —
+ * a tela abriu com zero contratos e um aviso de timeout. Quem lê o Conexa é a
+ * rodada diária (`retrato.ts`), que grava o estado de cada contrato da leva em
+ * `RetratoDeRenovacao`. Mesma doutrina de `CobrancaFiscal`, que guarda a
+ * cobrança lida em vez de reler o ERP a cada abertura.
  *
- * ⚠ **Leitura incompleta é dita, nunca escondida.** A tela precisa poder
- * afirmar "a leva de dezembro tem 66 contratos"; com a lista cortada, esse
- * número seria mentira — e os contratos que faltam são justamente os que
- * ninguém renovou.
+ * O ClickUp continua ao vivo: são duas idas, e o status da tarefa é o dado que
+ * mais muda durante o dia.
  */
 
 const MIN = 60_000;
@@ -60,61 +56,54 @@ export type LevaDaTela = {
   mes: string;
   linhas: LinhaDaRenovacao[];
   atrasados: LinhaDaRenovacao[];
-  /** Tarefas no fluxo sem contrato ativo correspondente — o outro lado do buraco. */
+  /** Tarefas no fluxo sem contrato correspondente — o outro lado do buraco. */
   orfas: TarefaDoFluxo[];
-  conexaCompleto: boolean;
+  /** Quando a rodada leu o Conexa pela última vez. Nulo = nunca leu. */
+  lidoEm: Date | null;
   clickupCompleto: boolean;
   erros: string[];
 };
 
-type Fontes = {
-  contratos: ContratoDaLeva[];
-  conexaCompleto: boolean;
-  tarefas: TarefaDoFluxo[];
-  clickupCompleto: boolean;
-  erros: string[];
+type LinhaGravada = {
+  contratoId: number;
+  clienteId: number;
+  valorCentavos: number;
+  reajusteDoRetrato: string | null;
+  valorAtualCentavos: number;
+  fidelidade: string;
+  periodicidade: string | null;
+  plano: string | null;
+  reajusteEm: string | null;
+  reajustePct: number | null;
+  reajusteIndice: string | null;
+  lidoEm: Date;
 };
 
-async function lerFontes(): Promise<Fontes> {
-  const erros: string[] = [];
+const CAMPOS = {
+  contratoId: true,
+  clienteId: true,
+  valorCentavos: true,
+  reajusteDoRetrato: true,
+  valorAtualCentavos: true,
+  fidelidade: true,
+  periodicidade: true,
+  plano: true,
+  reajusteEm: true,
+  reajustePct: true,
+  reajusteIndice: true,
+  lidoEm: true,
+} as const;
 
-  const [contratos, tarefas] = await Promise.all([
-    lerComReserva("renovacao:contratos", {
-      validadeMs: 10 * MIN,
-      idadeMaximaMs: 6 * 60 * MIN,
-      carregar: async () => {
-        const conexa = await abrirConexa("tela de renovações");
-        if ("erro" in conexa) throw new Error(conexa.erro);
-        return lerContratosAtivos(conexa.cliente);
-      },
-      // Lista vazia por erro não pode substituir a boa e ficar 10 min no lugar dela.
-      deveGuardar: (r) => r.contratos.length > 0,
-    }).catch((erro: unknown) => {
-      erros.push(`contratos do Conexa: ${(erro as Error).message}`);
-      return { contratos: [] as ContratoDaLeva[], completa: false, paginas: 0 };
-    }),
-
-    lerComReserva("renovacao:tarefas", {
-      validadeMs: 5 * MIN,
-      idadeMaximaMs: 60 * MIN,
-      carregar: async () => {
-        const clickup = await abrirClickUp("tela de renovações");
-        if ("erro" in clickup) throw new Error(clickup.erro);
-        return lerTarefasDoFluxo(clickup.cliente);
-      },
-    }).catch((erro: unknown) => {
-      erros.push(`tarefas do ClickUp: ${(erro as Error).message}`);
-      return { tarefas: [] as TarefaDoFluxo[], completa: false };
-    }),
-  ]);
-
-  return {
-    contratos: contratos.contratos,
-    conexaCompleto: contratos.completa,
-    tarefas: tarefas.tarefas,
-    clickupCompleto: tarefas.completa,
-    erros,
-  };
+async function tarefasDoFluxo() {
+  return lerComReserva("renovacao:tarefas", {
+    validadeMs: 5 * MIN,
+    idadeMaximaMs: 60 * MIN,
+    carregar: async () => {
+      const clickup = await abrirClickUp("tela de renovações");
+      if ("erro" in clickup) throw new Error(clickup.erro);
+      return lerTarefasDoFluxo(clickup.cliente);
+    },
+  });
 }
 
 /** O mês da leva que a tela abre por padrão: o PRÓXIMO, que é o que está em jogo. */
@@ -125,76 +114,92 @@ export function levaPadrao(hoje = diaEmSaoPaulo(new Date())) {
 }
 
 export async function lerLeva(mes: string): Promise<LevaDaTela> {
-  const fontes = await lerFontes();
+  const erros: string[] = [];
   const hoje = diaEmSaoPaulo(new Date());
 
-  const daVez = daLeva(fontes.contratos, mes);
-  const emAtraso = atrasados(fontes.contratos, hoje);
+  const [daVez, vencidos, tarefas] = await Promise.all([
+    db.retratoDeRenovacao.findMany({
+      where: { leva: mes },
+      select: CAMPOS,
+      orderBy: { fidelidade: "asc" },
+    }),
+    db.retratoDeRenovacao.findMany({
+      where: { fidelidade: { lt: hoje } },
+      select: CAMPOS,
+      orderBy: { fidelidade: "asc" },
+      take: 200,
+    }),
+    tarefasDoFluxo().catch((erro: unknown) => {
+      erros.push(`tarefas do ClickUp: ${(erro as Error).message}`);
+      return { tarefas: [] as TarefaDoFluxo[], completa: false };
+    }),
+  ]);
 
-  const retratos = await lerRetratos([...daVez, ...emAtraso]);
-  const montar = (contratos: ContratoDaLeva[]) =>
-    cruzarComAsTarefas(contratos, fontes.tarefas).map((l) =>
-      montarLinha(l.contrato, l.tarefa, l.outrasTarefas.length, retratos),
+  const montar = (linhas: LinhaGravada[]) =>
+    cruzarComAsTarefas(linhas.map(comoContrato), tarefas.tarefas).map((l, i) =>
+      montarLinha(linhas[i], l.tarefa, l.outrasTarefas.length),
     );
 
-  const linhas = montar(daVez);
-  const cruzamento = cruzarComAsTarefas(daVez, fontes.tarefas);
+  const cruzamento = cruzarComAsTarefas(daVez.map(comoContrato), tarefas.tarefas);
+  const lidoEm = daVez[0]?.lidoEm ?? vencidos[0]?.lidoEm ?? null;
 
   return {
     mes,
-    linhas,
-    atrasados: montar(emAtraso),
-    orfas: tarefasOrfas(cruzamento, fontes.tarefas),
-    conexaCompleto: fontes.conexaCompleto,
-    clickupCompleto: fontes.clickupCompleto,
-    erros: fontes.erros,
+    linhas: montar(daVez),
+    atrasados: montar(vencidos),
+    orfas: tarefasOrfas(cruzamento, tarefas.tarefas),
+    lidoEm,
+    clickupCompleto: tarefas.completa,
+    erros,
   };
 }
 
-type RetratoLido = { valor: number; reajusteEm: string | null };
-
-async function lerRetratos(contratos: ContratoDaLeva[]) {
-  const ids = contratos.map((c) => c.id);
-  if (!ids.length) return new Map<number, RetratoLido>();
-
-  const linhas = await db.retratoDeRenovacao.findMany({
-    where: { contratoId: { in: ids } },
-    select: { contratoId: true, valorCentavos: true, reajusteEm: true },
-  });
-
-  return new Map(
-    linhas.map((l) => [
-      l.contratoId,
-      { valor: l.valorCentavos / 100, reajusteEm: l.reajusteEm },
-    ]),
-  );
+/** A linha gravada no formato que `cruzarComAsTarefas` espera. */
+function comoContrato(l: LinhaGravada): ContratoDaLeva {
+  return {
+    id: l.contratoId,
+    clienteId: l.clienteId,
+    fidelidade: l.fidelidade,
+    valor: l.valorAtualCentavos / 100,
+    periodicidade: l.periodicidade,
+    inicio: null,
+    fim: null,
+    ativo: true,
+    reajusteEm: l.reajusteEm,
+    reajustePct: l.reajustePct,
+    reajusteIndice: l.reajusteIndice,
+    resumo: l.plano,
+  };
 }
 
 function montarLinha(
-  contrato: ContratoDaLeva,
+  l: LinhaGravada,
   tarefa: TarefaDoFluxo | null,
   outrasTarefas: number,
-  retratos: Map<number, RetratoLido>,
 ): LinhaDaRenovacao {
-  const anterior = valorAnterior(contrato, retratos.get(contrato.id));
+  const contrato = comoContrato(l);
+  const anterior = valorAnterior(contrato, {
+    valor: l.valorCentavos / 100,
+    reajusteEm: l.reajusteDoRetrato,
+  });
   const diferenca =
     anterior && contrato.valor != null
       ? diferencaMensal(anterior.valor, contrato.valor, contrato.periodicidade)
       : null;
 
   return {
-    contratoId: contrato.id,
-    clienteId: contrato.clienteId,
+    contratoId: l.contratoId,
+    clienteId: l.clienteId,
     nome: tarefa?.nome ?? null,
-    plano: contrato.resumo ?? null,
-    periodicidade: contrato.periodicidade,
-    fidelidade: contrato.fidelidade,
+    plano: l.plano,
+    periodicidade: l.periodicidade,
+    fidelidade: l.fidelidade,
     valor: contrato.valor,
     anterior,
     diferenca,
-    reajusteEm: contrato.reajusteEm,
-    reajustePct: contrato.reajustePct,
-    reajusteIndice: contrato.reajusteIndice,
+    reajusteEm: l.reajusteEm,
+    reajustePct: l.reajustePct,
+    reajusteIndice: l.reajusteIndice,
     tarefa,
     outrasTarefas,
   };

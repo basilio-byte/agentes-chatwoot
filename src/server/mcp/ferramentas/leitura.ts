@@ -25,6 +25,7 @@ import {
 } from "@/server/consumo/periodo";
 import { lerDetalheDaExecucao } from "@/server/execucoes/detalhe";
 import { lerLacunas } from "@/server/lacunas/consulta";
+import { lerLeva, levaPadrao } from "@/server/renovacao/consulta";
 import { O_QUE_FORNECER, ROTULO_DO_TIPO } from "@/server/lacunas/regras";
 import {
   listarIntegracoes,
@@ -1091,6 +1092,72 @@ const listarLacunasDosAgentes = ferramenta({
   },
 });
 
+const verLevaDeRenovacao = ferramenta({
+  name: "ver_leva_de_renovacao",
+  title: "Ver a leva de renovação do mês",
+  description:
+    "Os contratos cuja FIDELIDADE no Conexa vence no mês pedido — a leva que a equipe renova —, com valor anterior, valor de agora, diferença por mês, último reajuste (índice e percentual) e o status da tarefa no ClickUp. Traz também os que já venceram e continuam ativos, e as tarefas que estão num status de renovação sem contrato correspondente. Os contratos vêm da leitura diária gravada no banco, não do Conexa ao vivo: `lidoEm` diz de quando é o retrato. É a mesma leitura da tela /renovacoes.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    mes: z
+      .string()
+      .regex(/^\d{4}-\d{2}$/, "Use AAAA-MM.")
+      .optional()
+      .describe("Padrão: o mês que vem, que é a leva em jogo."),
+    limite: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Quantas linhas de cada bloco devolver. Padrão 50."),
+  }),
+  async executar({ mes, limite }) {
+    const leva = await lerLeva(mes ?? levaPadrao());
+    const teto = limite ?? 50;
+
+    const linha = (l: (typeof leva.linhas)[number]) => ({
+      contrato: l.contratoId,
+      cliente: l.clienteId,
+      nome: l.nome,
+      plano: l.plano,
+      fidelidade: l.fidelidade,
+      valorAnterior: l.anterior?.valor ?? null,
+      origemDoValorAnterior: l.anterior?.origem ?? null,
+      valor: l.valor,
+      diferencaPorMes: l.diferenca,
+      reajuste: l.reajusteEm
+        ? { em: l.reajusteEm, indice: l.reajusteIndice, percentual: l.reajustePct }
+        : null,
+      statusNoClickUp: l.tarefa?.status ?? null,
+      tarefa: l.tarefa?.id ?? null,
+      outrasTarefasDoMesmoCliente: l.outrasTarefas || undefined,
+    });
+
+    return responder({
+      leva: leva.mes,
+      lidoEm: leva.lidoEm ? quando(leva.lidoEm) : null,
+      aviso: leva.lidoEm
+        ? undefined
+        : "A rodada diária ainda não leu os contratos do Conexa — por isso a leva está vazia.",
+      totais: {
+        naLeva: leva.linhas.length,
+        jaReajustados: leva.linhas.filter((l) => l.reajusteEm).length,
+        foraDoFluxo: leva.linhas.filter((l) => !l.tarefa).length,
+        fidelidadeVencida: leva.atrasados.length,
+        tarefasSemContratoNaLeva: leva.orfas.length,
+      },
+      erros: leva.erros.length ? leva.erros : undefined,
+      contratos: leva.linhas.slice(0, teto).map(linha),
+      fidelidadeVencida: leva.atrasados.slice(0, teto).map(linha),
+      tarefasSemContratoNaLeva: leva.orfas
+        .slice(0, teto)
+        .map((t) => ({ tarefa: t.id, nome: t.nome, status: t.status, cliente: t.clienteId })),
+    });
+  },
+});
+
 export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   listarAgentes,
   verAgente,
@@ -1105,4 +1172,5 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   listarAgendamentos,
   resumoDeConsumo,
   listarLacunasDosAgentes,
+  verLevaDeRenovacao,
 ];

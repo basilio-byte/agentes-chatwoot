@@ -17,13 +17,24 @@ import type { ContratoDaLeva } from "./regras";
  * `completa: false` sobe junto e quem usa precisa decidir o que fazer.
  */
 
-export const CONTRATOS_POR_PAGINA = 100;
+/**
+ * ⚠ **50, e não 100.** Com 100 por página, `GET /contracts` passou dos 20 s de
+ * prazo do cliente em 10/11/2026 e a leitura inteira morreu. O registro do
+ * contrato é grande (serviços complementares, cotas); meia página volta bem
+ * dentro do prazo, e o dobro de idas continua folgado nos 60 pedidos por
+ * minuto que a Conexa permite.
+ */
+export const CONTRATOS_POR_PAGINA = 50;
+
+/** Respiro entre páginas, para a leitura inteira não encostar no limite da API. */
+export const PAUSA_ENTRE_PAGINAS_MS = 300;
 
 /**
- * Teto de páginas. Com 1.358 ativos em 09/11/2026, 30 páginas dão folga de
- * mais do que o dobro — e impedem laço infinito se o `hasNext` vier errado.
+ * Teto de páginas. Com ~1.360 ativos e 50 por página são ~28 idas; 60 dão
+ * folga de mais do que o dobro — e impedem laço infinito se o `hasNext` vier
+ * errado.
  */
-export const PAGINAS_MAXIMAS = 30;
+export const PAGINAS_MAXIMAS = 60;
 
 type Bruto = Record<string, unknown>;
 
@@ -96,6 +107,8 @@ export type LeituraDosContratos = {
  */
 export async function lerContratosAtivos(
   cliente: Pick<ConexaClient, "listarContratos">,
+  pausar: ((ms: number) => Promise<void>) | null = (ms) =>
+    new Promise((pronto) => setTimeout(pronto, ms)),
 ): Promise<LeituraDosContratos> {
   const contratos: ContratoDaLeva[] = [];
   let paginas = 0;
@@ -114,6 +127,7 @@ export async function lerContratosAtivos(
     }
 
     if (!temMais) return { contratos, completa: true, paginas };
+    if (pausar) await pausar(PAUSA_ENTRE_PAGINAS_MS);
   }
 
   return { contratos, completa: false, paginas };

@@ -4,7 +4,7 @@ import { diaEmSaoPaulo } from "@/lib/tempo";
 import { abrirConexa } from "@/server/integrations/conexa/sistema";
 
 import { lerContratosAtivos } from "./conexa";
-import { daLeva, type ContratoDaLeva } from "./regras";
+import { atrasados, daLeva, type ContratoDaLeva } from "./regras";
 
 /**
  * A rodada que tira o RETRATO da leva — o que garante a coluna "Valor
@@ -102,8 +102,17 @@ export async function tirarRetratoDaLeva(
     const leitura = await lerContratosAtivos(conexa.cliente);
     const levas = levasDoRetrato(diaEmSaoPaulo(agora));
 
-    const alvo: ContratoDaLeva[] = [];
-    for (const leva of levas) alvo.push(...daLeva(leitura.contratos, leva));
+    // As levas dos próximos meses MAIS os que já venceram: o atraso é o que a
+    // equipe mais precisa ver, e sem gravá-los a tela não teria de onde tirá-los
+    // (ela não abre mais o Conexa).
+    const porContrato = new Map<number, ContratoDaLeva>();
+    for (const leva of levas) {
+      for (const c of daLeva(leitura.contratos, leva)) porContrato.set(c.id, c);
+    }
+    for (const c of atrasados(leitura.contratos, diaEmSaoPaulo(agora))) {
+      porContrato.set(c.id, c);
+    }
+    const alvo = [...porContrato.values()];
 
     let novos = 0;
     let atualizados = 0;
@@ -115,33 +124,43 @@ export async function tirarRetratoDaLeva(
 
       const existente = await db.retratoDeRenovacao.findUnique({
         where: { leva_contratoId: { leva, contratoId: c.id } },
-        select: { id: true, reajusteEm: true, valorCentavos: true },
+        select: { id: true, reajusteDoRetrato: true, valorCentavos: true },
       });
 
-      const decisao = decidirRetrato({ valor: c.valor, reajusteEm: c.reajusteEm }, existente);
+      const decisao = decidirRetrato(
+        { valor: c.valor, reajusteEm: c.reajusteEm },
+        existente && { reajusteEm: existente.reajusteDoRetrato, valorCentavos: existente.valorCentavos },
+      );
 
-      if (decisao === "criar") {
-        await db.retratoDeRenovacao.create({
-          data: {
-            leva,
-            contratoId: c.id,
-            clienteId: c.clienteId,
-            valorCentavos: centavos(c.valor),
-            fidelidade: c.fidelidade,
-            periodicidade: c.periodicidade,
-            reajusteEm: c.reajusteEm,
-          },
-        });
-        novos++;
-      } else if (decisao === "congelar") {
-        congelados++;
-      } else if (decisao === "atualizar") {
-        await db.retratoDeRenovacao.update({
-          where: { id: existente!.id },
-          data: { valorCentavos: centavos(c.valor), fidelidade: c.fidelidade },
-        });
-        atualizados++;
-      }
+      // O estado de AGORA é reescrito em toda rodada: é o que a tela lê, e é
+      // por isso que ela não precisa abrir o Conexa.
+      const estadoAtual = {
+        clienteId: c.clienteId,
+        valorAtualCentavos: centavos(c.valor),
+        fidelidade: c.fidelidade,
+        periodicidade: c.periodicidade,
+        plano: c.resumo ?? null,
+        reajusteEm: c.reajusteEm,
+        reajustePct: c.reajustePct,
+        reajusteIndice: c.reajusteIndice,
+        lidoEm: agora,
+      };
+
+      // O valor CONGELADO só é tocado enquanto o lote daquela leva não veio.
+      const anterior =
+        decisao === "criar" || decisao === "atualizar"
+          ? { valorCentavos: centavos(c.valor), reajusteDoRetrato: c.reajusteEm }
+          : {};
+
+      await db.retratoDeRenovacao.upsert({
+        where: { leva_contratoId: { leva, contratoId: c.id } },
+        create: { leva, contratoId: c.id, ...estadoAtual, ...anterior, valorCentavos: centavos(c.valor) },
+        update: { ...estadoAtual, ...anterior },
+      });
+
+      if (decisao === "criar") novos++;
+      else if (decisao === "atualizar") atualizados++;
+      else if (decisao === "congelar") congelados++;
     }
 
     return {

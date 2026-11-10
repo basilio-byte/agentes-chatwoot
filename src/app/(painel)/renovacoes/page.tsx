@@ -1,5 +1,6 @@
 import { AlertTriangle, CalendarClock, ExternalLink } from "lucide-react";
 
+import { formatarData } from "@/lib/utils";
 import { Filtros, type Campo } from "@/components/filtros";
 import { Badge, Card, EmptyState, PageHeader, Stat } from "@/components/ui";
 import { exigirSessao } from "@/server/auth-guard";
@@ -192,18 +193,30 @@ export default async function RenovacoesPage({
     <div className="space-y-6">
       <PageHeader
         titulo="Renovação de contratos"
-        descricao="A leva do mês vem da data de fidelidade do contrato no Conexa. Esta tela não altera nada — é só leitura."
+        descricao={
+          <>
+            A leva do mês vem da data de fidelidade do contrato no Conexa. Esta tela não
+            altera nada — é só leitura.
+            {leva.lidoEm && (
+              <>
+                {" "}
+                Contratos lidos em <strong>{formatarData(leva.lidoEm)}</strong>.
+              </>
+            )}
+          </>
+        }
       />
 
-      {(leva.erros.length > 0 || !leva.conexaCompleto || !leva.clickupCompleto) && (
+      {(leva.erros.length > 0 || !leva.lidoEm || !leva.clickupCompleto) && (
         <Card className="border-warning/40">
           <div className="flex gap-3 text-sm">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
             <div className="space-y-1">
-              {!leva.conexaCompleto && (
+              {!leva.lidoEm && (
                 <p>
-                  A lista de contratos do Conexa veio <strong>incompleta</strong>: a leva pode
-                  ter mais contratos do que os mostrados.
+                  O sistema <strong>ainda não leu</strong> os contratos do Conexa. A leitura
+                  roda uma vez por dia e guarda as levas dos próximos meses mais as já
+                  vencidas; até ela rodar, esta tela fica vazia.
                 </p>
               )}
               {!leva.clickupCompleto && (
