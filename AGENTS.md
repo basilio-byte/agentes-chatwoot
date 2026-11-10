@@ -1859,6 +1859,58 @@ Regras puras e testadas em `auto-venda/regras.ts`; a rodada em
   reserva paga. ClickUp ou Conexa desligado no painel vale para a rodada também.
 - Só reserva por enquanto: a venda de Endereço Fiscal (contrato) não passa por aqui.
 
+### Renovação de contratos: a leva do mês e o retrato do valor
+
+Pedido do Diego (task 17twvjx0tky, OKR de novembro/2026). Fase 1 no ar desde
+10/11: **só leitura**, nada escrito no ClickUp, no Conexa ou na planilha da
+equipe. Módulos em `src/server/renovacao/` (regras puras em `regras.ts`),
+tela `/renovacoes` e a ferramenta `ver_leva_de_renovacao` no MCP.
+
+- **A leva do mês é a `fidelityDate` do contrato no Conexa**, nunca a
+  `DATA DE REAJUSTE` do ClickUp. ⚠ Essa continua preenchida em cliente que já
+  saiu: listando dezembro por ela vêm 76 tarefas, várias em `inativo`, e as
+  amostradas não têm contrato ativo. ⚠ E `GET /contracts` **não filtra por
+  fidelidade** — o recorte é no nosso código, percorrendo os ativos.
+- ⚠ **A tela NÃO abre o Conexa.** A primeira versão lia ao vivo e morria: são
+  ~28 páginas, e uma delas passou dos 20 s de prazo do cliente — a tela abriu
+  com zero contratos. Quem lê é a rodada diária, que grava o estado de cada
+  contrato da leva; a tela lê o banco. Mesma doutrina de `CobrancaFiscal`.
+  ⚠ `limit=100` em `/contracts` estoura o prazo; 50 com 300 ms entre páginas
+  passa folgado. E página que falha é tentada mais uma vez, devolvendo o que
+  já leu com `completa: false` em vez de derrubar a leitura inteira.
+- ⚠⚠ **O retrato existe porque o Conexa não guarda o valor anterior.** O lote
+  de reajuste sobrescreve o `amount`, e a coluna "Valor Anterior" da planilha
+  não tem outra fonte. A rodada **atualiza o valor enquanto o lote daquela leva
+  não veio e CONGELA nele** (`decidirRetrato`): o que fica gravado é o valor da
+  véspera. Sem retrato, o valor é deduzido do percentual — e a tela diz qual
+  dos dois está mostrando, porque deduzido mente se alguém negociou fora do
+  reajuste.
+- **O reajuste continua sendo da pessoa.** Medido: é aplicado em LOTE, num
+  único dia por mês (82 contratos em 23/10/2026 e zero em qualquer outro dia de
+  outubro), índice IPCA. A API não tem endpoint de reajuste e
+  `lastContractualReadjustment.index/percentage` são só de leitura — o sistema
+  LÊ o que a pessoa aplicou e propaga.
+- ⚠ **A fidelidade avança 1 ANO (mesmo dia)**, não +365 nem +364 dias como os
+  dois fluxos do n8n fazem — o +364 recua um dia a cada ciclo e o +365 erra no
+  bissexto.
+- **A diferença é MENSAL**, como a planilha calcula: no plano anual, dividida
+  por 12. Conferido nas linhas reais da aba de fevereiro.
+- ⚠ **"Fora do fluxo" sozinho é alarme falso.** A automação do ClickUp só move
+  para `renovação` 30 dias antes, então quem vence no fim do mês ainda nem devia
+  estar lá: dos 45 sem tarefa na leva de dezembro, 42 eram isso e só **3**
+  tinham passado do D-30. A tela e o MCP contam só esses 3 — número que assusta
+  à toa é número que a equipe aprende a ignorar.
+- ⚠ **A rodada deixa o desfecho gravado** em `WebhookEvent` (provider
+  `RENOVACAO`, uma linha por dia) e ele sai no MCP. Sem isso ela era silêncio: o
+  único lugar onde a falha aparecia era o log do contêiner. E falha espera 30
+  min para tentar de novo — o vigia bate de minuto em minuto, e zerar o relógio
+  faria ~28 idas ao Conexa a cada 60 s.
+- ⚠ **O corte com o n8n ainda não foi feito.** Quem avança as datas hoje é o
+  fluxo `Atualizar datas do processo de renovação` (`+365`, e **só no primeiro
+  contrato do cliente**), chamado pela automação `Atualizar datas renovação -
+  N8N`. Portar exige repontar aquela automação e despublicar o fluxo **no mesmo
+  movimento**: os dois juntos adiantariam a data em dobro.
+
 ### Notas fiscais (Spedy): modo sombra primeiro
 
 Integração `NOTAS_FISCAIS`, fora do registry como o NPS e a cobrança: sem
@@ -2354,6 +2406,16 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
     encerrada, marcada e parada recusam — não agem em nome de ninguém.
   - O que isto NÃO é: autenticação. CPF não é segredo; a régua passou de
     "saber o nome" para "saber o documento", que é a que o usuário escolheu.
+- ⚠⚠ **`conexa_criar_contrato` não cria o segundo contrato do mesmo plano**
+  (`conexa/duplicidade.ts`, 10/11/2026). Duplicado aqui não é cadastro órfão: é
+  uma **segunda cobrança recorrente** no cliente. E a repetição é esperada — o
+  prompt dos agentes de contrato manda "atualize o status da task para
+  Onboarding" para tentar de novo. Procura contrato ATIVO do cliente **no mesmo
+  plano** e devolve `jaExistia` com o id; casa pelo PLANO e não pelo cliente,
+  porque um cliente legitimamente tem endereço fiscal e sala; e **não cria
+  quando a conferência falha**. Devolve também o **link** da tela de contratos
+  do cliente, montado pelo sistema — endereço inventado pelo modelo vai para um
+  comentário que uma pessoa clica e não leva a lugar nenhum.
 - ⚠ **`conexa_criar_cliente` não cadastra CPF/CNPJ que já tem cadastro na
   unidade** (`conexa/duplicidade.ts`, 19/10/2026): procura pelo documento antes
   e devolve o `clienteId` existente (`jaExistia`). Aconteceu três vezes, sempre
@@ -3186,6 +3248,17 @@ pensa, e toda resposta sai pela porta — o cliente vê uma identidade só.
   nos prompts; renomear não pode quebrar transferência já escrita.
 - **`routingDescription` vazio esconde o agente do roster.** É proposital: sem a
   descrição, o modelo não tem como decidir e transferiria no escuro.
+- ⚠⚠ **O bastão se GASTA no turno que o usou.** Ele era zerado só quando a
+  conversa era RESOLVIDA, e por isso voltava em TODO turno até lá: o agente se
+  reapresentava a cada mensagem e, pior, agia como quem acabou de chegar —
+  voltava ao próprio menu de entrada e lia o número do cliente contra ELE, nunca
+  contra o submenu que tinha acabado de mandar. Na conversa 15150 (10/11/2026) a
+  cliente digitou "2" três vezes e recebeu três vezes o mesmo menu. Hoje
+  `handoffParaAgentId` é zerado na MESMA escrita que já zerava
+  `retomadaPendente`, logo depois de a resposta chegar ao cliente — turno que
+  falha antes de falar mantém o bastão para a nova tentativa, e a transferência
+  no meio do turno continua valendo porque quem assume já o usou naquele ciclo.
+  ⚠ Atingia toda conversa transferida, que é quase toda.
 - **O roster vai no system prompt; o bastão vai como mensagem.** O roster é
   estável (só muda quando alguém mexe na equipe), então cacheia. O bastão muda
   por conversa — no prefixo, destruiria o cache a cada mensagem.
