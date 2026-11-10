@@ -26,6 +26,7 @@ import {
 import { lerDetalheDaExecucao } from "@/server/execucoes/detalhe";
 import { lerLacunas } from "@/server/lacunas/consulta";
 import { lerLeva, levaPadrao } from "@/server/renovacao/consulta";
+import { ultimasRodadas } from "@/server/renovacao/retrato";
 import { O_QUE_FORNECER, ROTULO_DO_TIPO } from "@/server/lacunas/regras";
 import {
   listarIntegracoes,
@@ -1114,7 +1115,7 @@ const verLevaDeRenovacao = ferramenta({
       .describe("Quantas linhas de cada bloco devolver. Padrão 50."),
   }),
   async executar({ mes, limite }) {
-    const leva = await lerLeva(mes ?? levaPadrao());
+    const [leva, rodadas] = await Promise.all([lerLeva(mes ?? levaPadrao()), ultimasRodadas(3)]);
     const teto = limite ?? 50;
 
     const linha = (l: (typeof leva.linhas)[number]) => ({
@@ -1149,6 +1150,14 @@ const verLevaDeRenovacao = ferramenta({
         tarefasSemContratoNaLeva: leva.orfas.length,
       },
       erros: leva.erros.length ? leva.erros : undefined,
+      // O desfecho das últimas rodadas: é por aqui que se descobre POR QUE a
+      // leva está vazia, sem precisar do log do contêiner.
+      rodadas: rodadas.map((r) => ({
+        dia: r.externalId.replace("rodada:", ""),
+        resultado: r.resultado,
+        detalhe: r.detalhe,
+        em: r.processedAt ? quando(r.processedAt) : null,
+      })),
       contratos: leva.linhas.slice(0, teto).map(linha),
       fidelidadeVencida: leva.atrasados.slice(0, teto).map(linha),
       tarefasSemContratoNaLeva: leva.orfas

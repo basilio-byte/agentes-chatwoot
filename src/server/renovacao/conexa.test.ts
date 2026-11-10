@@ -125,3 +125,45 @@ describe("lerContratosAtivos", () => {
     expect(leitura.completa).toBe(true);
   });
 });
+
+describe("lerContratosAtivos: página que falha", () => {
+  const BOM = { contractId: 1, customerId: 1, fidelityDate: "2026-12-04", amount: 10 };
+
+  it("⚠ uma página que falha não derruba a leitura: devolve o que leu e diz por quê", async () => {
+    let chamadas = 0;
+    const cliente = {
+      listarContratos: vi.fn(async (f: Record<string, unknown>) => {
+        chamadas++;
+        if (Number(f.offset) === 0) return { itens: [BOM], temMais: true };
+        throw new Error("The operation was aborted due to timeout");
+      }),
+    };
+
+    const leitura = await lerContratosAtivos(cliente, null);
+
+    expect(leitura.contratos).toHaveLength(1);
+    expect(leitura.completa).toBe(false);
+    expect(leitura.erro).toContain("página 2");
+    // Tentou a segunda página duas vezes antes de desistir.
+    expect(chamadas).toBe(3);
+  });
+
+  it("soluço numa página é superado pela segunda tentativa", async () => {
+    let falhou = false;
+    const cliente = {
+      listarContratos: vi.fn(async (f: Record<string, unknown>) => {
+        if (Number(f.offset) > 0 && !falhou) {
+          falhou = true;
+          throw new Error("ECONNRESET");
+        }
+        return { itens: [BOM], temMais: Number(f.offset) === 0 };
+      }),
+    };
+
+    const leitura = await lerContratosAtivos(cliente, null);
+
+    expect(leitura.completa).toBe(true);
+    expect(leitura.erro).toBeUndefined();
+    expect(leitura.contratos).toHaveLength(2);
+  });
+});

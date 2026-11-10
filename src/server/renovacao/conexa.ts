@@ -94,13 +94,23 @@ export function contratoDaLeva(bruto: Bruto): ContratoDaLeva | null {
 
 export type LeituraDosContratos = {
   contratos: ContratoDaLeva[];
-  /** `false` = o teto de páginas foi atingido e falta contrato na lista. */
+  /** `false` = faltou contrato: o teto de páginas, ou uma página que não veio. */
   completa: boolean;
   paginas: number;
+  /** Por que a leitura parou antes do fim, quando parou. */
+  erro?: string;
 };
 
 /**
  * Lê todos os contratos ATIVOS, percorrendo as páginas.
+ *
+ * ⚠ **Uma página que falha NÃO derruba a leitura inteira.** A primeira versão
+ * deixava o erro subir, e bastou uma página passar dos 20 s de prazo (com 100
+ * por página, em 10/11/2026) para a rodada do dia não gravar nada — e, sem
+ * log à mão, para o sintoma ser uma tela vazia sem explicação. Agora a página
+ * é tentada mais uma vez e, se ainda assim não vier, a leitura devolve o que
+ * já tem com `completa: false` e o motivo. Meia leva gravada e dita vale mais
+ * que nenhuma.
  *
  * Recebe o cliente já aberto (`abrirConexa`) para a rodada e a tela usarem o
  * mesmo caminho, e para o teste poder passar um cliente de mentira.
@@ -114,21 +124,49 @@ export async function lerContratosAtivos(
   let paginas = 0;
 
   for (let pagina = 0; pagina < PAGINAS_MAXIMAS; pagina++) {
-    const { itens, temMais } = await cliente.listarContratos({
-      isActive: 1,
-      limit: CONTRATOS_POR_PAGINA,
-      offset: pagina * CONTRATOS_POR_PAGINA,
-    });
-    paginas++;
+    const offset = pagina * CONTRATOS_POR_PAGINA;
+    let resposta;
 
-    for (const bruto of itens) {
+    try {
+      resposta = await cliente.listarContratos({
+        isActive: 1,
+        limit: CONTRATOS_POR_PAGINA,
+        offset,
+      });
+    } catch (erro) {
+      // Uma segunda tentativa cobre o soluço; a terceira seria insistir num
+      // ERP que está lento, e a rodada volta amanhã.
+      if (pausar) await pausar(PAUSA_ENTRE_PAGINAS_MS * 10);
+      try {
+        resposta = await cliente.listarContratos({
+          isActive: 1,
+          limit: CONTRATOS_POR_PAGINA,
+          offset,
+        });
+      } catch (deNovo) {
+        return {
+          contratos,
+          completa: false,
+          paginas,
+          erro: `a página ${pagina + 1} não veio: ${(deNovo as Error).message}`,
+        };
+      }
+    }
+
+    paginas++;
+    for (const bruto of resposta.itens) {
       const contrato = contratoDaLeva(bruto);
       if (contrato) contratos.push(contrato);
     }
 
-    if (!temMais) return { contratos, completa: true, paginas };
+    if (!resposta.temMais) return { contratos, completa: true, paginas };
     if (pausar) await pausar(PAUSA_ENTRE_PAGINAS_MS);
   }
 
-  return { contratos, completa: false, paginas };
+  return {
+    contratos,
+    completa: false,
+    paginas,
+    erro: `o teto de ${PAGINAS_MAXIMAS} páginas foi atingido`,
+  };
 }

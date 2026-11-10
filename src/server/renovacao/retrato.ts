@@ -34,6 +34,17 @@ export const MESES_DE_RETRATO = 3;
 /** Uma vez por dia basta: o lote é mensal. */
 export const CONFERIR_A_CADA_MS = 24 * 60 * 60_000;
 
+/**
+ * Depois de uma falha, espera isto antes de tentar de novo.
+ *
+ * ⚠ Não é zero. O vigia bate de minuto em minuto; zerar o relógio na falha
+ * faria a rodada refazer ~28 idas ao Conexa a cada 60 s, indefinidamente.
+ */
+export const ESPERA_APOS_FALHA_MS = 30 * 60_000;
+
+/** Onde o desfecho de cada rodada fica — é por aqui que se vê o que aconteceu. */
+export const PROVIDER_RODADA = "RENOVACAO";
+
 let ultimaConferencia = 0;
 let rodando = false;
 
@@ -46,6 +57,10 @@ export type RodadaDeRetrato = {
   atualizados?: number;
   congelados?: number;
   leituraCompleta?: boolean;
+  erroDaLeitura?: string;
+  paginasLidas?: number;
+  contratosAtivosLidos?: number;
+  erro?: string;
 };
 
 /** Os meses `AAAA-MM` do retrato, a partir do dia de hoje em São Paulo. */
@@ -163,7 +178,7 @@ export async function tirarRetratoDaLeva(
       else if (decisao === "congelar") congelados++;
     }
 
-    return {
+    const rodada: RodadaDeRetrato = {
       acao: "conferido",
       levas,
       contratos: alvo.length,
@@ -171,14 +186,64 @@ export async function tirarRetratoDaLeva(
       atualizados,
       congelados,
       leituraCompleta: leitura.completa,
+      erroDaLeitura: leitura.erro,
+      paginasLidas: leitura.paginas,
+      contratosAtivosLidos: leitura.contratos.length,
     };
+    await registrarRodada(agora, leitura.completa ? "conferido" : "incompleto", rodada);
+    return rodada;
   } catch (erro) {
     logger.error({ erro }, "retrato da renovação falhou");
-    // A próxima rodada tenta de novo: deixar o relógio zerado faria a falha de
-    // uma leitura custar o retrato do dia inteiro.
-    ultimaConferencia = 0;
+    await registrarRodada(agora, "falhou", { erro: (erro as Error).message });
+    // Tenta de novo em meia hora, não no minuto seguinte: a leitura é cara.
+    ultimaConferencia = agora.getTime() - CONFERIR_A_CADA_MS + ESPERA_APOS_FALHA_MS;
     throw erro;
   } finally {
     rodando = false;
   }
+}
+
+/**
+ * Deixa o desfecho da rodada gravado em `WebhookEvent`, uma linha por dia.
+ *
+ * ⚠ **Sem isto a rodada é silêncio.** Em 10/11/2026 ela não gravou nada e a
+ * única pista era o log do contêiner, que não se lê daqui — o sintoma foi uma
+ * tela vazia sem explicação. Nunca lança: registrar o desfecho não pode
+ * derrubar a rodada.
+ */
+async function registrarRodada(agora: Date, resultado: string, detalhe: unknown) {
+  try {
+    const dia = diaEmSaoPaulo(agora);
+    await db.webhookEvent.upsert({
+      where: {
+        provider_externalId: { provider: PROVIDER_RODADA, externalId: `rodada:${dia}` },
+      },
+      create: {
+        provider: PROVIDER_RODADA,
+        externalId: `rodada:${dia}`,
+        eventType: "retrato",
+        payload: {},
+        resultado,
+        detalhe: JSON.stringify(detalhe).slice(0, 2000),
+        processedAt: agora,
+      },
+      update: {
+        resultado,
+        detalhe: JSON.stringify(detalhe).slice(0, 2000),
+        processedAt: agora,
+      },
+    });
+  } catch (erro) {
+    logger.error({ erro }, "não consegui registrar o desfecho do retrato");
+  }
+}
+
+/** O desfecho das últimas rodadas, para a tela e para o MCP. */
+export async function ultimasRodadas(limite = 5) {
+  return db.webhookEvent.findMany({
+    where: { provider: PROVIDER_RODADA, externalId: { startsWith: "rodada:" } },
+    select: { externalId: true, resultado: true, detalhe: true, processedAt: true },
+    orderBy: { createdAt: "desc" },
+    take: limite,
+  });
 }
