@@ -16,6 +16,7 @@ import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
 import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
 import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
+import { propagarReajustes } from "@/server/renovacao/propagar";
 import { pedirAquecimentoDoPainel } from "@/server/painel/aquecer";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
@@ -298,6 +299,17 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.acao === "conferido") logger.info(rodada, "renovação: retrato da leva");
     } catch (erro) {
       logger.error({ erro }, "renovação: o retrato da leva falhou");
+    }
+
+    // Propagação do reajuste para o ClickUp: de meia em meia hora, em horário
+    // comercial, e só abre o ClickUp quando o lote passou em algum contrato da
+    // leva. Num `try` próprio — é a última tarefa, e falhar aqui não pode calar
+    // o resto do vigia.
+    try {
+      const rodada = await propagarReajustes();
+      if (rodada.acao === "propagado") logger.info(rodada, "renovação: reajuste propagado");
+    } catch (erro) {
+      logger.error({ erro }, "renovação: a propagação do reajuste falhou");
     }
   };
 

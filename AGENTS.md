@@ -1911,6 +1911,77 @@ tela `/renovacoes` e a ferramenta `ver_leva_de_renovacao` no MCP.
   N8N`. Portar exige repontar aquela automação e despublicar o fluxo **no mesmo
   movimento**: os dois juntos adiantariam a data em dobro.
 
+#### Fase 2: o reajuste do Conexa chega à tarefa do ClickUp
+
+No ar desde 10/11/2026. Regras puras em `renovacao/propagacao.ts`, a rodada em
+`propagar.ts`, no vigia, de 30 em 30 min e em horário comercial. **A primeira
+escrita desta capacidade em sistema de terceiro** — até aqui a renovação só lia.
+
+- **O gatilho é o retrato, não o relógio.** Candidato é o contrato cujo
+  `reajusteEm` de agora não é o que o retrato viu (`loteChegou`, a MESMA régua
+  que `decidirRetrato` usa para congelar o valor). A pergunta é respondida no
+  NOSSO banco: rodada sem candidato não custa uma chamada externa.
+- ⚠⚠ **O status só avança DE `notificação renovação`.** Duas automações do
+  ClickUp mandam o e-mail de notificação ao cliente exatamente na transição
+  `renovação` → `notificação renovação`; pular de `renovação` direto para
+  `pg pendente - renovação` faria o cliente **nunca ser avisado** do reajuste,
+  sem erro nenhum. Tarefa que o lote pegou ainda em `renovação` recebe os campos
+  e espera os dois dias (fase 2b). Conferido automação por automação que
+  `notificação renovação` → `pg pendente - renovação` não acorda nenhuma: a
+  `Atualizar datas renovação - N8N` só dispara para os 4 status de continuidade.
+  O único efeito é uma execução vazia do `CRM RENOVAÇAO` do n8n, que só age em
+  `ongoing` e tem o ramo de ação desconectado.
+- ⚠ **`VALOR CONTRATO` não segue o "só preenche o vazio"** do cadastro
+  completo: ali o campo está preenchido e VELHO, e consertá-lo é o serviço. O
+  que protege o trabalho de uma pessoa é outra régua — só escreve quando o que
+  está na tarefa é reconhecidamente o valor de ANTES do lote (o congelado no
+  retrato) ou nada. Valor que não é nem o antigo nem o novo é negociação de
+  alguém, e negociação vence reajuste: a rodada deixa como está e o comentário
+  mostra os TRÊS números.
+- ⚠ **`REAJUSTE` (%) é sobrescrito sem olhar.** O campo é preenchido à mão e
+  deriva: na tarefa 86a1ncr9p ele diz 4,46 e o Conexa, 4,68% em 19/11/2025. O
+  do ERP é o certo.
+- ⚠⚠ **Os checkboxes `REAJUSTE ✅` e `NOTIFICAÇÃO RENOVAÇÃO` NÃO são tocados.**
+  Ninguém os desmarca entre ciclos: naquela mesma tarefa os dois estão marcados
+  desde a renovação de 2025 e o reajuste de 2026 ainda não aconteceu. Eles
+  dizem "já passou por aqui alguma vez", não "está feito neste ciclo" — marcar
+  mais um só aumentaria o ruído. O estado deste ciclo é a reserva em
+  `WebhookEvent` (`reajuste:<contrato>:<data do reajuste>`).
+- ⚠ **Não toca em `DATA DE REAJUSTE` nem em `DATA DE ENCERRAMENTO`**: as duas
+  são escritas na transição para `ongoing`, pela automação 9 do ClickUp e pelo
+  n8n, com âncoras diferentes. Mexer nelas é a fase 3, e exige desligar o n8n
+  no mesmo movimento.
+- ⚠ **`DATA DE REAJUSTE` nem sempre é a `fidelityDate`.** No contrato 3713 a
+  tarefa diz 10/12 e o Conexa, 11/12 — um dia, a deriva do `+364` de um fluxo
+  contra o `+365` do outro. A nota anterior deste arquivo dizia que as duas
+  eram sempre o mesmo dia; são o mesmo dia em alguns clientes, não em todos. A
+  leva continua saindo da fidelidade do Conexa, então isso não a afeta; afeta a
+  automação do D-30, que lê o campo do ClickUp.
+- ⚠ **O teto de 10 contratos por rodada existe por causa do TOKEN.** O ClickUp
+  limita por minuto, o cliente não tem balde de fichas (só re-tentativa em 429)
+  e é o MESMO token que os agentes usam para gravar no CRM durante o
+  atendimento. Uma rodada de cem chamadas poria um turno com cliente do outro
+  lado a esperar o `retry-after`. Dez por rodada, com 400 ms entre tarefas,
+  escoam o lote mensal (~80) em quatro rodadas — e o prazo da renovação é de
+  dias.
+- **Reserva antes de escrever, e desfaz quando NADA entrou.** Cada escrita tem
+  o seu `try` (lição do cadastro completo): um campo que o ClickUp recusa não
+  custa os outros nem o comentário. Nada a fazer fecha a reserva como "já
+  estava em dia", senão o contrato voltaria à fila de meia em meia hora.
+- ⚠ **Cliente com mais de uma tarefa no fluxo não é escrito.** Medido: `(5051)
+  PAULO HENRIQUE` tem quatro em `notificação renovação` e `(1858) WENDRILL
+  CASSOL`, duas. Escolher uma deixaria metade das tarefas com o valor velho, em
+  silêncio. Fica pendente, sem reserva, e volta quando a equipe resolver.
+- ⚠ **O cruzamento leva com tarefa é pelo NOME** (`(5060) RAZÃO SOCIAL`), e nome
+  é editável. `confereOCliente` usa o `CONEXA LINK` como segunda testemunha e
+  barra a contradição; link ausente não barra, porque tarefa antiga não o tem.
+- **A janela é de `DIAS_PARA_PROPAGAR` (45) dias** depois do reajuste. Sem ela,
+  todo reajuste já visto ficaria na fila de candidatos para sempre.
+- **O comentário diz também o que NÃO foi feito, e por quê.** Comentário que só
+  anuncia sucesso faz a pessoa acreditar que o resto foi feito.
+- **O desfecho da rodada fica em `WebhookEvent` (`propagacao:<dia>`)** e sai no
+  MCP, ao lado do da leitura, com os `pendentes`.
+
 ### Notas fiscais (Spedy): modo sombra primeiro
 
 Integração `NOTAS_FISCAIS`, fora do registry como o NPS e a cobrança: sem

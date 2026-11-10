@@ -28,6 +28,7 @@ import { lerLacunas } from "@/server/lacunas/consulta";
 import { lerLeva, levaPadrao } from "@/server/renovacao/consulta";
 import { diaDeEntrarEmRenovacao } from "@/server/renovacao/regras";
 import { ultimasRodadas } from "@/server/renovacao/retrato";
+import { CHAVE_DA_RODADA, ultimasPropagacoes } from "@/server/renovacao/propagar";
 import { O_QUE_FORNECER, ROTULO_DO_TIPO } from "@/server/lacunas/regras";
 import {
   listarIntegracoes,
@@ -1098,7 +1099,7 @@ const verLevaDeRenovacao = ferramenta({
   name: "ver_leva_de_renovacao",
   title: "Ver a leva de renovação do mês",
   description:
-    "Os contratos cuja FIDELIDADE no Conexa vence no mês pedido — a leva que a equipe renova —, com valor anterior, valor de agora, diferença por mês, último reajuste (índice e percentual) e o status da tarefa no ClickUp. Traz também os que já venceram e continuam ativos, e as tarefas que estão num status de renovação sem contrato correspondente. Os contratos vêm da leitura diária gravada no banco, não do Conexa ao vivo: `lidoEm` diz de quando é o retrato. É a mesma leitura da tela /renovacoes.",
+    "Os contratos cuja FIDELIDADE no Conexa vence no mês pedido — a leva que a equipe renova —, com valor anterior, valor de agora, diferença por mês, último reajuste (índice e percentual) e o status da tarefa no ClickUp. Traz também os que já venceram e continuam ativos, e as tarefas que estão num status de renovação sem contrato correspondente. Os contratos vêm da leitura diária gravada no banco, não do Conexa ao vivo: `lidoEm` diz de quando é o retrato. É a mesma leitura da tela /renovacoes. `rodadas` é o desfecho da leitura do Conexa e `propagacoes`, o da escrita no ClickUp depois do lote de reajuste (com o que foi olhado e não escrito, e por quê).",
   papel: UserRole.VIEWER,
   anotacoes: CONSULTA,
   entrada: z.strictObject({
@@ -1116,7 +1117,11 @@ const verLevaDeRenovacao = ferramenta({
       .describe("Quantas linhas de cada bloco devolver. Padrão 50."),
   }),
   async executar({ mes, limite }) {
-    const [leva, rodadas] = await Promise.all([lerLeva(mes ?? levaPadrao()), ultimasRodadas(3)]);
+    const [leva, rodadas, propagacoes] = await Promise.all([
+      lerLeva(mes ?? levaPadrao()),
+      ultimasRodadas(3),
+      ultimasPropagacoes(3),
+    ]);
     const teto = limite ?? 50;
     const hojeEmSP = diaEmSaoPaulo(new Date());
 
@@ -1170,6 +1175,16 @@ const verLevaDeRenovacao = ferramenta({
         resultado: r.resultado,
         detalhe: r.detalhe,
         em: r.processedAt ? quando(r.processedAt) : null,
+      })),
+      // A fase 2: o que o sistema levou do Conexa para a tarefa do ClickUp
+      // depois do lote de reajuste. `pendentes` é o que ele olhou e NÃO
+      // escreveu, com o motivo — é aí que aparecem as duplicatas de tarefa e os
+      // valores negociados fora do reajuste.
+      propagacoes: propagacoes.map((p) => ({
+        dia: p.externalId.replace(`${CHAVE_DA_RODADA}:`, ""),
+        resultado: p.resultado,
+        detalhe: p.detalhe,
+        em: p.processedAt ? quando(p.processedAt) : null,
       })),
       contratos: leva.linhas.slice(0, teto).map(linha),
       fidelidadeVencida: leva.atrasados.slice(0, teto).map(linha),
