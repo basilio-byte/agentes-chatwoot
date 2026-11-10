@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot,
+  CalendarClock,
   FileText,
   Gauge,
   KeyRound,
@@ -37,6 +38,7 @@ const SECOES = [
       { href: "/conversas", label: "Conversas", icone: MessagesSquare },
       { href: "/execucoes", label: "Execuções", icone: ScrollText },
       { href: "/lacunas", label: "Lacunas", icone: Puzzle },
+      { href: "/renovacoes", label: "Renovações", icone: CalendarClock },
       { href: "/consumo", label: "Consumo", icone: Wallet },
       {
         href: "/prazos",

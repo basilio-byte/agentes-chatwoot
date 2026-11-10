@@ -228,11 +228,20 @@ export class ConexaClient {
     return this.requisitar<Record<string, unknown>>(`/contract/${id}`);
   }
 
+  /**
+   * ⚠ **Não existe filtro por data de fidelidade.** A leva do mês da renovação
+   * é recortada no nosso código (`renovacao/regras.ts`), percorrendo as páginas
+   * dos ativos — por isso `offset` existe aqui.
+   */
   listarContratos(filtros: {
     companyId?: number;
     customerId?: number;
     isActive?: 0 | 1;
+    /** Data do último reajuste, AAAA-MM-DD. O lote mensal é um dia só. */
+    lastReadjustmentDateFrom?: string;
+    lastReadjustmentDateTo?: string;
     limit?: number;
+    offset?: number;
   }) {
     const { companyId, customerId, ...resto } = filtros;
     return this.listar<Record<string, unknown>>("/contracts", {

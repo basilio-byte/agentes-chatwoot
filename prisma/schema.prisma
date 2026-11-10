@@ -1630,3 +1630,37 @@ model OpenClawConfig {
   atualizadoPorId String?
   updatedAt      DateTime  @updatedAt
 }
+
+/// Retrato de um contrato na leva de renovação, tirado ANTES do lote de
+/// reajuste do mês.
+///
+/// Existe por UM motivo: **o Conexa não guarda o valor anterior**. `GET
+/// /contract` devolve só o `amount` de agora, e o lote de reajuste (um dia por
+/// mês, na tela do ERP) apaga para sempre o valor de antes. A coluna "Valor
+/// Anterior" da planilha da equipe não tem outra fonte. Dá para deduzir pelo
+/// percentual do reajuste, mas deduzido mente quando alguém negociou um valor
+/// fora do reajuste — por isso o retrato, e por isso a tela diz qual dos dois
+/// está mostrando.
+///
+/// ⚠ A linha é escrita UMA vez por leva e contrato (`@@unique`) e nunca
+/// atualizada depois que o lote passa: o que vale é a leitura da véspera.
+model RetratoDeRenovacao {
+  id            String   @id @default(cuid())
+  /// Mês da fidelidade, `AAAA-MM` — a leva a que este retrato pertence.
+  leva          String
+  /// Id do contrato no Conexa.
+  contratoId    Int
+  clienteId     Int
+  /// O valor no dia do retrato: o "Valor Anterior" da planilha.
+  valorCentavos Int
+  fidelidade    String
+  periodicidade String?
+  /// O reajuste que o contrato JÁ tinha quando o retrato foi tirado. É o que
+  /// diz se o retrato é de antes do lote: se for igual ao de agora, o lote
+  /// aconteceu antes da leitura e este valor já é o novo.
+  reajusteEm    String?
+  lidoEm        DateTime @default(now())
+
+  @@unique([leva, contratoId])
+  @@index([leva])
+}

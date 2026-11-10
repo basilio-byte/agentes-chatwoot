@@ -15,6 +15,7 @@ import { conferirPresentes } from "@/server/aniversario/conferir";
 import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
 import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
+import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { pedirAquecimentoDoPainel } from "@/server/painel/aquecer";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
@@ -287,6 +288,16 @@ export function iniciarVigia(): NodeJS.Timeout {
       await conferirAutoVendas();
     } catch (erro) {
       logger.error({ erro }, "auto venda: a conferência falhou ao iniciar");
+    }
+
+    // Retrato da leva de renovação: uma vez por dia, guarda o valor de cada
+    // contrato ENQUANTO o lote de reajuste daquela leva não acontece. É a
+    // única fonte do "Valor Anterior" — o Conexa sobrescreve o valor no lote.
+    try {
+      const rodada = await tirarRetratoDaLeva();
+      if (rodada.acao === "conferido") logger.info(rodada, "renovação: retrato da leva");
+    } catch (erro) {
+      logger.error({ erro }, "renovação: o retrato da leva falhou");
     }
   };
 
