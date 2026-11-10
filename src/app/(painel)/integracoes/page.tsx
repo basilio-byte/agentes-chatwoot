@@ -70,6 +70,8 @@ import { lerConfigAvisos } from "@/server/avisos/regras";
 import { lerConfigAniversario } from "@/server/aniversario/regras";
 import { formatarTelefone } from "@/server/alerta-de-saldo/regras";
 import { lerConfigCobranca, PROVIDER_DA_COBRANCA } from "@/server/cobranca/regras";
+import { PROVIDER_ACOMPANHAMENTO } from "@/server/acompanhamento/regras";
+import { AcompanhamentoConfigForm } from "@/components/acompanhamento-config";
 import { configMateriaisSchema } from "@/server/integrations/materiais";
 import { GoogleConfigForm } from "@/components/google-config";
 import { NpsConfigForm } from "@/components/nps-config";
@@ -212,6 +214,9 @@ export default async function IntegracoesPage({
   const avisos = registros.find((i) => i.provider === IntegrationProvider.AVISOS);
   const configAvisos = lerConfigAvisos(avisos?.config);
   const cobranca = registros.find((i) => i.provider === IntegrationProvider.COBRANCA);
+  const acompanhamento = registros.find(
+    (i) => i.provider === IntegrationProvider.ACOMPANHAMENTO,
+  );
   const configCobranca = lerConfigCobranca(cobranca?.config);
   const notasFiscais = registros.find((i) => i.provider === IntegrationProvider.NOTAS_FISCAIS);
   const configNotas = lerConfigNotasFiscais(notasFiscais?.config);
@@ -268,6 +273,7 @@ export default async function IntegracoesPage({
     agentesComAvisos,
     presentes,
     avisosDeCobranca,
+    envosDoAcompanhamento,
     categoriasFiscais,
     cobrancasFiscais,
     resumoFiscal,
@@ -328,6 +334,13 @@ export default async function IntegracoesPage({
       orderBy: { createdAt: "desc" },
       take: 15,
       select: { id: true, eventType: true, resultado: true, detalhe: true, createdAt: true, payload: true },
+    }),
+    // O acompanhamento de contratos: o que saiu, e o desfecho de cada rodada.
+    db.webhookEvent.findMany({
+      where: { provider: PROVIDER_ACOMPANHAMENTO, resultado: { not: "reservado" } },
+      orderBy: { createdAt: "desc" },
+      take: 15,
+      select: { id: true, externalId: true, resultado: true, detalhe: true, createdAt: true },
     }),
     // Guardadas por `lerComReserva` e com prazo curto na leitura: um Conexa lento não segura a página.
     categoriasFiscaisDoPainel(),
@@ -1583,6 +1596,113 @@ export default async function IntegracoesPage({
                           </tr>
                         );
                       })}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            id: "acompanhamento",
+            rotulo: "Acompanhamento",
+            icone: <Receipt size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Acompanhamento de contratos</h2>
+                    {acompanhamento?.enabled ? (
+                      <Badge tone="success">ligado</Badge>
+                    ) : (
+                      <Badge>desligado</Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    Depois que o agente gera o contrato no Conexa e o documento na
+                    ZapSign, o sistema manda ao cliente os <strong>dois links</strong>{" "}
+                    pela conversa do WhatsApp, confere pagamento e assinatura de{" "}
+                    <strong>10 em 10 minutos</strong>, avisa a cada confirmação e,
+                    quando as duas fecham, move a task para <strong>ongoing</strong>.
+                    Sem modelo: os textos são fixos.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+                    <li>
+                      A fila são as etiquetas <strong>pagamento pendente</strong> e{" "}
+                      <strong>falta assinatura</strong> nas tasks em{" "}
+                      <strong>onboarding</strong>. Cada uma sai quando o que ela
+                      cobra é confirmado.
+                    </li>
+                    <li>
+                      O link de pagamento é o da <strong>fatura</strong> daquele
+                      contrato — o que o cliente abre —, e o de assinatura é o do
+                      documento daquela task.
+                    </li>
+                    <li>
+                      ⚠ <strong>Ele fala numa conversa que está com o vendedor</strong>,
+                      que é exceção no sistema. Por isso espera quando a equipe
+                      acabou de escrever, espera quando o cliente perguntou e
+                      ninguém respondeu, e não fala em conversa resolvida.
+                    </li>
+                    <li>
+                      Toda mensagem deixa uma <strong>nota interna</strong> na mesma
+                      conversa, dizendo que foi o sistema e que a conversa continua
+                      com quem está atendendo.
+                    </li>
+                    <li>
+                      Conversa fechada é <strong>reaberta e devolvida</strong> a quem
+                      atendeu por último, antes de qualquer mensagem.
+                    </li>
+                  </ul>
+
+                  <AcompanhamentoConfigForm
+                    habilitada={acompanhamento?.enabled ?? false}
+                    somenteLeitura={!editavel}
+                  />
+                </Card>
+
+                <Card className="space-y-3">
+                  <h3 className="font-medium">Últimos envios e rodadas</h3>
+                  {envosDoAcompanhamento.length === 0 ? (
+                    <p className="text-sm text-muted">
+                      Nada ainda. Com a integração ligada, cada conferência aparece
+                      aqui — inclusive as tasks em que o sistema decidiu NÃO falar, e
+                      por quê.
+                    </p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>O quê</th>
+                          <th>Resultado</th>
+                          <th>Detalhe</th>
+                          <th>Quando</th>
+                        </>
+                      }
+                    >
+                      {envosDoAcompanhamento.map((e) => (
+                        <tr key={e.id}>
+                          <td className="whitespace-nowrap">{e.externalId}</td>
+                          <td className="whitespace-nowrap">
+                            <Badge
+                              tone={
+                                e.resultado === "enviado"
+                                  ? "success"
+                                  : e.resultado === "falhou"
+                                    ? "danger"
+                                    : "neutral"
+                              }
+                            >
+                              {e.resultado ?? "—"}
+                            </Badge>
+                          </td>
+                          <td className="text-xs text-muted">{e.detalhe ?? "—"}</td>
+                          <td className="whitespace-nowrap tabular-nums">
+                            {formatarData(e.createdAt)}
+                          </td>
+                        </tr>
+                      ))}
                     </Tabela>
                   )}
                 </Card>
