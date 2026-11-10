@@ -29,6 +29,7 @@ import { lerLeva, levaPadrao } from "@/server/renovacao/consulta";
 import { diaDeEntrarEmRenovacao } from "@/server/renovacao/regras";
 import { ultimasRodadas } from "@/server/renovacao/retrato";
 import { CHAVE_DA_RODADA, ultimasPropagacoes } from "@/server/renovacao/propagar";
+import { ultimasRodadasDoAcompanhamento } from "@/server/acompanhamento/conferir";
 import { O_QUE_FORNECER, ROTULO_DO_TIPO } from "@/server/lacunas/regras";
 import {
   listarIntegracoes,
@@ -1195,6 +1196,54 @@ const verLevaDeRenovacao = ferramenta({
   },
 });
 
+/**
+ * O acompanhamento de contratos visto de fora: o que cada rodada fez e, quando
+ * não falou com o cliente, por quê.
+ *
+ * ⚠ Esta capacidade MANDA MENSAGEM A CLIENTE numa conversa que está com um
+ * vendedor — é a exceção consciente do projeto. Poder ler o desfecho sem abrir
+ * o Chatwoot é o que torna a exceção vigiável.
+ */
+const verAcompanhamentoDeContratos = ferramenta({
+  name: "ver_acompanhamento_de_contratos",
+  title: "Ver o acompanhamento de contratos",
+  description:
+    "As últimas rodadas do acompanhamento de contratos (o que acontece depois que o agente gera o contrato no Conexa e o documento na ZapSign): a quem o sistema mandou os links, o que confirmou de pagamento e assinatura, e o motivo de cada task em que ele NÃO falou — conversa resolvida sem dono anterior, vendedor escrevendo no momento, cliente esperando resposta, cobrança ainda não gerada. Diz também se a integração está ligada.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    limite: z
+      .number()
+      .int()
+      .min(1)
+      .max(30)
+      .optional()
+      .describe("Quantas rodadas devolver. Padrão 5."),
+  }),
+  async executar({ limite }) {
+    const [integracao, rodadas] = await Promise.all([
+      db.integration.findUnique({
+        where: { provider: IntegrationProvider.ACOMPANHAMENTO },
+        select: { enabled: true },
+      }),
+      ultimasRodadasDoAcompanhamento(limite ?? 5),
+    ]);
+
+    return responder({
+      ligada: integracao?.enabled ?? false,
+      aviso: integracao?.enabled
+        ? undefined
+        : "A integração está DESLIGADA: a rodada não confere nada e não fala com cliente nenhum.",
+      rodadas: rodadas.map((r) => ({
+        dia: r.externalId.replace("rodada:", ""),
+        resultado: r.resultado,
+        detalhe: r.detalhe,
+        em: r.processedAt ? quando(r.processedAt) : null,
+      })),
+    });
+  },
+});
+
 export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   listarAgentes,
   verAgente,
@@ -1210,4 +1259,5 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   resumoDeConsumo,
   listarLacunasDosAgentes,
   verLevaDeRenovacao,
+  verAcompanhamentoDeContratos,
 ];

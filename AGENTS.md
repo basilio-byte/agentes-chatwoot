@@ -1982,6 +1982,82 @@ escrita desta capacidade em sistema de terceiro** — até aqui a renovação s�
 - **O desfecho da rodada fica em `WebhookEvent` (`propagacao:<dia>`)** e sai no
   MCP, ao lado do da leitura, com os `pendentes`.
 
+### Acompanhamento de contratos: a exceção que fala por cima do vendedor
+
+Integração `ACOMPANHAMENTO`, fora do registry como o NPS e a cobrança: sem
+modelo, sem ferramenta. Pedido do Diego em 10/11/2026, escrito por ele como
+prompt de um "Agente 3". Regras puras e testadas em `acompanhamento/regras.ts`,
+a leitura do que o Agente 2 gerou em `contratacao.ts`, o lado Chatwoot em
+`conversa.ts`, e a rodada em `conferir.ts`, no vigia, de 10 em 10 min.
+
+Depois que o agente de contratos gera o contrato (Conexa) e o documento
+(ZapSign) e põe as etiquetas, o sistema manda ao cliente os dois links, confere
+pagamento e assinatura, tira a etiqueta de cada um quando confirma, e na
+confirmação total move a task para `ongoing`.
+
+- ⚠⚠ **É a EXCEÇÃO consciente à regra que cala o robô em conversa com dono.** Em
+  todo o resto do sistema, conversa atribuída a uma pessoa é silêncio — é o que
+  impede o robô de falar por cima de quem atende. Aqui ele fala, porque o
+  cliente fica com o vendedor o processo inteiro. Por isso `podeFalar` tem
+  travas, e elas são a capacidade: **conversa resolvida não recebe mensagem**;
+  **a equipe falou nos últimos 10 min, espera** (o vendedor está no meio de uma
+  troca); **o cliente perguntou e ninguém respondeu, espera** (é o pior caso —
+  entrar com "segue o link" por cima de uma pergunta em aberto); e remetente de
+  tipo desconhecido conta como equipe.
+- ⚠ **Toda mensagem ao cliente deixa NOTA INTERNA no mesmo fio**, dizendo o que
+  o sistema mandou e que a conversa continua com o vendedor. Sem ela, quem
+  atende leria uma mensagem que não escreveu, sem saber de onde veio. O cliente
+  vê mensagem normal, **sem carimbo de robô** — tem teste.
+- ⚠⚠ **NÃO é um agente, e o motivo é concreto:** nenhuma das 8 ferramentas do
+  Chatwoot manda mensagem a cliente, não há como achar conversa por telefone nem
+  abrir conversa; e um agente não cabe na fila — o teto é de 12 passos de
+  ferramenta por execução e cada task consome de 4 a 6. Por fora, o
+  comportamento é o que o Diego especificou: mesmos textos, mesmos marcadores
+  (`🤖 [Acomp. Contrato]`), mesma cadência, mesmos status.
+- ⚠⚠ **O status da lista tem EMOJI: `🏃‍♂️onboarding`** (e o de contrato é
+  `📝 contrato`), conferido em `GET /list/900701122530`. Filtrar por
+  `"onboarding"` devolve ZERO tarefas e a rodada diria "nada a enviar" para
+  sempre, sem erro. `ongoing` é limpo. O filtro da API usa o nome exato;
+  `ehOStatusAlvo` compara por "contém onboarding", para não quebrar se alguém
+  tirar o emoji.
+- ⚠⚠ **O link de pagamento NÃO é o do contrato.** `conexa_criar_contrato`
+  devolve a tela de contratos do cliente no ERP
+  (`…r=vendaRecorrente/gerenciarContratos&idCliente=…`), que é painel interno —
+  mandá-la ao cliente é mandá-lo para uma tela em que ele não entra. O link do
+  cliente é o da **cobrança** (`chargeUrl`, `…r=cobranca/fatura&id=<hash>`),
+  conferido na cobrança real 19733, que o Conexa registra com "visualizações
+  pelo cliente: 2". ⚠ E `billetUrl` vem **nulo** na prática.
+- ⚠ **A cobrança é amarrada ao contrato por cobrança → venda → contrato**, o
+  mesmo caminho das notas fiscais. Cliente com dois produtos tem duas cobranças
+  contratuais abertas, e mandar a do outro seria cobrar o valor errado. Medido:
+  a cobrança do contrato já existe no dia em que ele é criado (contrato 12833,
+  20/10/2026), então esperar por ela é exceção, não regra.
+- ⚠ **Os links vêm das `ToolCall` do Agente 2, não do comentário.** A
+  especificação mandava extrair do texto, e isso quebra quando alguém edita o
+  comentário ou o template muda. O que amarra a execução à task é o `taskId` do
+  input das ferramentas do ClickUp daquele turno — o agente roda por gatilho
+  HTTP, sem conversa, então não há `conversationId` para cruzar.
+  Task reprocessada: vale o documento **mais recente**.
+- ⚠ **Com UM link só, não manda nada.** O Agente 2 cria contrato e documento no
+  mesmo turno: ter apenas um significa que o outro falhou, e há uma pessoa para
+  resolver. Mandar meia mensagem ao cliente só atrapalharia.
+- ⚠ **A etiqueta sai JUNTO com a mensagem, nunca antes.** Ela é a fila: tirá-la
+  sem avisar o cliente tiraria a task do ciclo com a mensagem por mandar.
+- ⚠ **Reabrir vem ANTES de `podeFalar`.** Aquela função recusa conversa
+  resolvida, então pedir permissão primeiro tornava o caminho de reabertura
+  inalcançável — a conversa fechada nunca voltava ao vendedor. Foi defeito real,
+  achado pelo teste. Conversa resolvida é reaberta e devolvida ao **último
+  atendente que escreveu** (o robô não conta: devolver a ele é deixá-la sem dono).
+- **Reserva por etapa** (`<etapa>:<task>`), não o comentário com o marcador:
+  `clickup_listar_comentarios` devolve só os 25 mais recentes, e numa task
+  movimentada o marcador sai da janela e a mensagem iria de novo.
+- **Nasce DESLIGADA.** Desligada, a rodada é uma consulta ao banco e para.
+- ⏳ **Efeito colateral conhecido, não resolvido:** a mensagem do sistema é
+  pública e vira a última mensagem da conversa — então o Assistente Vendedor,
+  que procura conversas paradas, deixa de enxergar aquela.
+- ⏳ **Sem tela ainda**: liga/desliga pelo `ligar_desligar_integracao` do MCP. O
+  desfecho de cada rodada sai em `ver_acompanhamento_de_contratos`.
+
 ### Notas fiscais (Spedy): modo sombra primeiro
 
 Integração `NOTAS_FISCAIS`, fora do registry como o NPS e a cobrança: sem

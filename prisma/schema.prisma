@@ -637,6 +637,14 @@ enum IntegrationProvider {
   /// como o NPS e a cobrança. Substitui o fluxo "Template Boas Vindas" do n8n.
   /// A credencial é o token da NotificaMe (cifrado).
   BOAS_VINDAS
+  /// Acompanhamento de contratos: depois que o agente gera o contrato (Conexa)
+  /// e o documento (ZapSign), o sistema manda ao cliente os dois links, confere
+  /// pagamento e assinatura, tira as etiquetas e move a task para `ongoing`.
+  /// Função do sistema, sem modelo, FORA do registry como o NPS e a cobrança.
+  /// ⚠ É a EXCEÇÃO consciente à regra que cala o robô em conversa com dono:
+  /// aqui ele fala numa conversa que está com o vendedor (pedido do Diego em
+  /// 10/11/2026). Nasce desligada.
+  ACOMPANHAMENTO
 }
 
 enum IntegrationStatus {

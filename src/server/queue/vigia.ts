@@ -17,6 +17,7 @@ import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
 import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { propagarReajustes } from "@/server/renovacao/propagar";
+import { acompanharContratos } from "@/server/acompanhamento/conferir";
 import { pedirAquecimentoDoPainel } from "@/server/painel/aquecer";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
@@ -310,6 +311,18 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.acao === "propagado") logger.info(rodada, "renovação: reajuste propagado");
     } catch (erro) {
       logger.error({ erro }, "renovação: a propagação do reajuste falhou");
+    }
+
+    // Acompanhamento de contratos: de dez em dez minutos, confere pagamento e
+    // assinatura das tasks em Onboarding com etiqueta e fala com o cliente.
+    // ⚠ Nasce DESLIGADA — desligada, a rodada é uma consulta ao banco e para.
+    try {
+      const rodada = await acompanharContratos();
+      if (rodada.acao === "conferido" && rodada.enviadas) {
+        logger.info(rodada, "acompanhamento de contratos");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "o acompanhamento de contratos falhou");
     }
   };
 
