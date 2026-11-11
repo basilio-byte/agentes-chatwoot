@@ -183,3 +183,23 @@ export function documentoAssinado(doc: {
   if (!assinaturas.length) return false;
   return assinaturas.every((s) => (s.situacao ?? "").trim().toLowerCase() === "assinou");
 }
+
+/**
+ * O documento foi EXCLUÍDO na ZapSign?
+ *
+ * ⚠⚠ Existe porque excluir na ZapSign manda para a lixeira e **deixa o
+ * `status` como estava** (`pending`): quem lê só o status acha que o contrato
+ * continua de pé. `formatarDocumento` já resolve isso — devolve `excluido` —,
+ * mas o acompanhamento não olhava, e o link do signatário continua vindo no
+ * retorno, apontando para um documento que não existe mais.
+ *
+ * O risco é concreto e nasceu em 11/11/2026: a equipe apaga o documento para
+ * refazer a contratação do zero, e entre a exclusão e a geração do novo a
+ * rodada mandaria ao CLIENTE um link de assinatura morto. Sem link de
+ * assinatura utilizável, a regra de "com UM link só não manda nada" segura a
+ * mensagem, que é o desfecho certo: é melhor esperar do que mandar link que
+ * não abre.
+ */
+export function documentoExcluido(doc: { status?: string | null }): boolean {
+  return (doc.status ?? "").trim().toLowerCase() === "excluido";
+}

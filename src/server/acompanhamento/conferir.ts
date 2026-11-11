@@ -23,6 +23,7 @@ import {
 import {
   contratacaoDaTask,
   documentoAssinado,
+  documentoExcluido,
   type Chamada,
   type Contratacao,
 } from "./contratacao";
@@ -230,13 +231,17 @@ async function tratarTask(
     return { taskId, motivo: "não achei o contrato nem o documento gerados para esta task" };
   }
 
-  const { pago, linkPagamento, assinado } = await conferirEstado(contratacao, leitura);
+  const { pago, linkPagamento, assinado, assinaturaMorta } = await conferirEstado(
+    contratacao,
+    leitura,
+  );
+  const linkAssinatura = assinaturaMorta ? null : contratacao.linkAssinatura;
   const jaEnviadas = await etapasJaEnviadas(taskId);
 
   const etapa = etapaAEnviar(
     {
       pagamento: linkPagamento,
-      assinatura: contratacao.linkAssinatura,
+      assinatura: linkAssinatura,
       documentoZapSign: contratacao.documentoZapSign,
       contratoConexa: contratacao.contratoConexa,
     },
@@ -247,8 +252,10 @@ async function tratarTask(
   if (!etapa) {
     const falta = !linkPagamento
       ? "aguardando a cobrança do contrato no Conexa"
-      : !contratacao.linkAssinatura
-        ? "aguardando o link de assinatura"
+      : !linkAssinatura
+        ? assinaturaMorta
+          ? "o documento da ZapSign foi excluído — esperando um novo"
+          : "aguardando o link de assinatura"
         : "sem novidade: nada a enviar";
     return { taskId, cliente: nome ?? undefined, motivo: falta };
   }
@@ -264,7 +271,7 @@ async function tratarTask(
     nome,
     celular,
     linkPagamento,
-    linkAssinatura: contratacao.linkAssinatura,
+    linkAssinatura,
     clickup,
     agora,
   });
@@ -302,12 +309,18 @@ async function conferirEstado(contratacao: Contratacao, leitura: Leituras) {
     }
   }
 
+  // ⚠ Documento excluído na ZapSign continua devolvendo `pending` e o link do
+  // signatário; mandá-lo ao cliente é mandar um link que não abre.
+  let assinaturaMorta = false;
   if (leitura.verDocumento && contratacao.documentoZapSign) {
     const doc = await leitura.verDocumento(contratacao.documentoZapSign);
-    if (doc) assinado = documentoAssinado(doc);
+    if (doc) {
+      assinado = documentoAssinado(doc);
+      assinaturaMorta = documentoExcluido(doc);
+    }
   }
 
-  return { pago, linkPagamento, assinado };
+  return { pago, linkPagamento, assinado, assinaturaMorta };
 }
 
 /**

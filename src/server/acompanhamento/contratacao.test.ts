@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  documentoExcluido,
   contratacaoDaTask,
   documentoAssinado,
   execucoesDaTask,
@@ -239,5 +240,32 @@ describe("documento que já existia conta igual", () => {
     const r = contratacaoDaTask(chamadas, "17twvjx2kmm");
     expect(r.documentoZapSign).toBe("751b0293");
     expect(r.linkAssinatura).toBe("https://app.zapsign.com.br/verificar/5159d047");
+  });
+});
+
+/**
+ * 11/11/2026: a equipe apaga o documento na ZapSign para refazer a
+ * contratação do zero. A ZapSign manda para a lixeira e DEIXA o status como
+ * `pending`, devolvendo o link do signatário — que não abre mais.
+ */
+describe("documentoExcluido", () => {
+  it("⚠ reconhece o excluído, que o status sozinho esconde", () => {
+    expect(documentoExcluido({ status: "excluido" })).toBe(true);
+    expect(documentoExcluido({ status: "Excluido" })).toBe(true);
+  });
+
+  it("documento vivo não é excluído", () => {
+    expect(documentoExcluido({ status: "pending" })).toBe(false);
+    expect(documentoExcluido({ status: "signed" })).toBe(false);
+    expect(documentoExcluido({ status: null })).toBe(false);
+    expect(documentoExcluido({})).toBe(false);
+  });
+
+  it("⚠ excluído NÃO conta como assinado", () => {
+    // Senão a rodada concluiria a etapa de assinatura de um contrato que a
+    // equipe acabou de jogar fora.
+    expect(
+      documentoAssinado({ status: "excluido", signatarios: [{ situacao: "nao_abriu" }] }),
+    ).toBe(false);
   });
 });
