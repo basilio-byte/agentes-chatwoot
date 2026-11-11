@@ -113,3 +113,38 @@ export function payloadDaReconferencia(tarefa: ClickUpTarefa) {
     },
   };
 }
+
+/**
+ * A fila tem CENTENAS de subtarefas de cadência, e elas não são trabalho.
+ *
+ * A Base de clientes acumula subtarefas criadas pelo ClickBot desde 2024 —
+ * "Whatsapp de follow up", "Ligação de qualificação", "Envio de proposta",
+ * "Whatsapp Break Up" — todas paradas em `📝 contrato`. Medido em 11/11/2026: a
+ * primeira página da listagem traz 100 tarefas e quase todas são isso.
+ *
+ * ⚠ Sem esta peneira, a varredura anotaria centenas de linhas na primeira
+ * rodada e, pior, acionaria o agente numa task chamada "Whatsapp de follow up",
+ * que não tem campo nenhum para conferir. É o mesmo risco que fez a automação
+ * do Agente 1 ser trocada de "Tarefas ou subtarefas" para "Tarefas".
+ *
+ * Duas marcas, porque nenhuma sozinha é garantida: o `parent` preenchido e a
+ * etiqueta `subtarefas` que o ClickBot põe.
+ */
+export const ETIQUETA_DE_CADENCIA = "subtarefas";
+
+export function ehTarefaDeCliente(
+  tarefa: Pick<ClickUpTarefa, "parent" | "tags">,
+): boolean {
+  if (tarefa.parent) return false;
+  const etiquetas = (tarefa.tags ?? []).map((t) => t.name.trim().toLowerCase());
+  return !etiquetas.includes(ETIQUETA_DE_CADENCIA);
+}
+
+/**
+ * Teto de tasks ANOTADAS por rodada.
+ *
+ * A anotação é barata (uma linha), mas descobrir quem cuida de cada task custa
+ * consulta. Sem teto, a primeira rodada depois do deploy faria isso para a
+ * fila inteira de uma vez.
+ */
+export const ANOTACOES_POR_RODADA = 20;

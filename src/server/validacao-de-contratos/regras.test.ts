@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   chaveDaReconferencia,
   ehAFila,
+  ehTarefaDeCliente,
   payloadDaReconferencia,
   precisaReconferir,
   STATUS_DA_FILA,
@@ -92,5 +93,32 @@ describe("payloadDaReconferencia", () => {
     const p = payloadDaReconferencia(TAREFA);
     expect(p.motivo).toContain("mova para Onboarding");
     expect(p.motivo).toContain("sem repetir comentário igual ao anterior");
+  });
+});
+
+/**
+ * Medido em 11/11/2026: a primeira página da fila `📝 contrato` traz 100
+ * tarefas, e quase todas são subtarefas de cadência criadas pelo ClickBot
+ * desde 2024.
+ */
+describe("ehTarefaDeCliente", () => {
+  it("a task de contratação de verdade passa", () => {
+    expect(ehTarefaDeCliente({ parent: null, tags: [{ name: "venda autonoma" }] })).toBe(true);
+    expect(ehTarefaDeCliente({ parent: null, tags: [{ name: "fazer_contrato" }] })).toBe(true);
+  });
+
+  it("⚠ subtarefa de cadência não passa — não tem campo nenhum para conferir", () => {
+    // "Whatsapp de follow up", "Ligação de qualificação", "Envio de proposta"…
+    expect(ehTarefaDeCliente({ parent: "86a4e8nz1", tags: [] })).toBe(false);
+    expect(ehTarefaDeCliente({ parent: null, tags: [{ name: "subtarefas" }] })).toBe(false);
+  });
+
+  it("as duas marcas valem sozinhas: nenhuma é garantida", () => {
+    expect(ehTarefaDeCliente({ parent: "x", tags: [{ name: "fazer_contrato" }] })).toBe(false);
+    expect(ehTarefaDeCliente({ parent: null, tags: [{ name: "SubTarefas" }] })).toBe(false);
+  });
+
+  it("sem etiqueta nenhuma, passa", () => {
+    expect(ehTarefaDeCliente({ parent: null, tags: undefined })).toBe(true);
   });
 });

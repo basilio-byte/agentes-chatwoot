@@ -7,10 +7,12 @@ import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 import type { ClickUpTarefa } from "@/server/integrations/clickup/tipos";
 import { agendarGatilho } from "@/server/queue/gatilho";
 import {
+  ANOTACOES_POR_RODADA,
   chaveDaReconferencia,
   CONFERIR_A_CADA_MS,
   DIAS_PARA_TRAS,
   ehAFila,
+  ehTarefaDeCliente,
   LISTA_BASE_DE_CLIENTES,
   payloadDaReconferencia,
   precisaReconferir,
@@ -197,9 +199,12 @@ export async function conferirValidacaoDeContratos(
     const { tasks } = await clickup.cliente.listarTarefasDaLista(LISTA_BASE_DE_CLIENTES, {
       statuses: [STATUS_DA_FILA],
     });
-    // ⚠ O filtro da API é literal e o nome tem emoji; `ehAFila` é a segunda
-    // peneira, para o dia em que alguém tirar o emoji do status.
-    const naFila = tasks.filter((t) => ehAFila(t.status?.status));
+    // ⚠ Duas peneiras. `ehAFila` porque o filtro da API é literal e o nome tem
+    // emoji; `ehTarefaDeCliente` porque a fila guarda centenas de subtarefas de
+    // cadência de 2024, que não têm campo nenhum para conferir.
+    const naFila = tasks.filter(
+      (t) => ehAFila(t.status?.status) && ehTarefaDeCliente(t),
+    );
     if (!naFila.length) return { acao: "fila vazia", naFila: 0 };
 
     const conhecido = await estadoConhecido(naFila.map((t) => t.id));
@@ -213,7 +218,7 @@ export async function conferirValidacaoDeContratos(
 
       const anterior = conhecido.get(tarefa.id);
       if (!precisaReconferir(tarefa, anterior ? { mudouEm: anterior } : null)) {
-        if (!anterior) {
+        if (!anterior && anotadas < ANOTACOES_POR_RODADA) {
           await anotar(tarefa.id, mudouEm, await agenteQueCuidaDaTask(tarefa.id));
           anotadas++;
         }
