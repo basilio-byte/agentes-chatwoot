@@ -9,7 +9,13 @@ import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
 import { opcoesDeAusencia } from "@/server/integrations/chatwoot/ausencias-config";
 import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 import { abrirConexa } from "@/server/integrations/conexa/sistema";
+import type { ClickUpClient } from "@/server/integrations/clickup/client";
 import type { ClickUpTarefa } from "@/server/integrations/clickup/tipos";
+import {
+  abrirZapSignCru,
+  anexarContratoAssinado,
+  type ZapSignAberta,
+} from "./anexo";
 
 import {
   cobrancaDoContratoNoConexa,
@@ -157,6 +163,7 @@ export async function acompanharContratos(
     const leitura: Leituras = {
       conexa: "erro" in conexa ? null : conexa.cliente,
       verDocumento,
+      zapsign: await abrirZapSignCru(),
     };
 
     const desfechos: DesfechoDaTask[] = [];
@@ -213,6 +220,13 @@ async function etapasJaEnviadas(taskId: string): Promise<Set<Etapa>> {
 type Leituras = {
   conexa: (LeitorDeCobrancas & FaturadorDeContrato) | null;
   verDocumento: VerDocumento | null;
+  /**
+   * O cliente CRU da ZapSign, ao lado de `verDocumento`, que passa pela
+   * ferramenta. Os dois existem porque a ferramenta não devolve `signed_file`
+   * de propósito (a URL expira em 60 min e morreria na mão do modelo) — e é
+   * justamente esse arquivo que vai para o campo da task.
+   */
+  zapsign: ZapSignAberta | null;
 };
 
 async function tratarTask(
@@ -273,6 +287,8 @@ async function tratarTask(
     linkPagamento,
     linkAssinatura,
     clickup,
+    documentoZapSign: contratacao.documentoZapSign,
+    zapsign: leitura.zapsign,
     agora,
   });
 }
@@ -389,6 +405,9 @@ async function falarComOCliente(args: {
   linkPagamento: string | null;
   linkAssinatura: string | null;
   clickup: ClickUpClienteMinimo;
+  /** Só a etapa final usa: é com eles que o contrato assinado vai para o campo. */
+  documentoZapSign: string | null;
+  zapsign: ZapSignAberta | null;
   agora: Date;
 }): Promise<DesfechoDaTask> {
   const { taskId, etapa, nome, celular, agora } = args;
@@ -475,9 +494,25 @@ async function falarComOCliente(args: {
   }
 
   if (etapa === "final") {
-    await args.clickup
-      .atualizarTarefa(taskId, { status: STATUS_FINAL })
-      .catch((e: Error) => problemas.push(`status: ${e.message}`));
+    // ⚠ O anexo vem ANTES do status, e o status só anda se ele entrou. Uma
+    // trava do ClickBot devolve a task de `ongoing` para `onboarding` quando o
+    // campo "Contrato Assinado" está vazio — mover sem o anexo faria a task
+    // quicar e esta entrega dizer "concluído" sobre algo que não concluiu.
+    const anexo = await anexarContratoAssinado({
+      clickup: args.clickup,
+      zapsign: args.zapsign,
+      taskId,
+      documentoToken: args.documentoZapSign,
+      cliente: nome,
+    });
+
+    if (anexo.feito === "falhou") {
+      problemas.push(`contrato assinado no campo: ${anexo.motivo} — não movi o status`);
+    } else {
+      await args.clickup
+        .atualizarTarefa(taskId, { status: STATUS_FINAL })
+        .catch((e: Error) => problemas.push(`status: ${e.message}`));
+    }
   }
 
   await db.webhookEvent
@@ -504,7 +539,7 @@ type ClickUpClienteMinimo = {
   comentarTarefa: (taskId: string, texto: string) => Promise<unknown>;
   removerTag: (taskId: string, tag: string) => Promise<unknown>;
   atualizarTarefa: (taskId: string, dados: { status?: string }) => Promise<unknown>;
-};
+} & Pick<ClickUpClient, "obterTarefa" | "enviarArquivoParaCampo" | "associarAnexoAoCampo">;
 
 function etiquetasASair(etapa: Etapa): string[] {
   if (etapa === "pagamento") return [ETIQUETA_PAGAMENTO];

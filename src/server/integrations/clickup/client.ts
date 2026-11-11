@@ -14,6 +14,16 @@ import { hostDeAnexoPermitido } from "./fotos";
 
 const BASE = "https://api.clickup.com/api/v2";
 
+/**
+ * ⚠ A v3 existe aqui por UM motivo: campo personalizado do tipo `attachment`
+ * não se escreve pela v2. O `POST /task/{id}/attachment` da v2 anexa na TASK, e
+ * o campo continua vazio — foi exatamente isso que fez a trava do ClickBot
+ * devolver a contratação de 11/11/2026 de `ongoing` para `onboarding` com o
+ * contrato e a cobrança prontos. Não use a v3 para mais nada sem necessidade:
+ * o resto do cliente é v2 e é o que está provado em produção.
+ */
+const BASE_V3 = "https://api.clickup.com/api/v3";
+
 export class AnexoGrandeDemaisError extends Error {
   constructor(tamanho: number, limite: number) {
     super(
@@ -337,6 +347,81 @@ export class ClickUpClient {
     }
 
     return { bytes, mimeType: resposta.headers.get("content-type") };
+  }
+
+  /**
+   * Sobe um arquivo para um campo personalizado do tipo `attachment`.
+   *
+   * ⚠ **Só existe na v3** — ver o comentário de `BASE_V3`. O caminho é
+   * `/workspaces/{w}/custom_fields/{campo}/attachments`, com o ARQUIVO no
+   * corpo multipart.
+   *
+   * ⚠ **Não defina `Content-Type`**: quem escreve o `boundary` do multipart é
+   * o `fetch`, a partir do `FormData`. Pôr o header à mão produz um corpo que
+   * o servidor não consegue separar, e o erro não diz isso.
+   *
+   * ⚠ Fora do `requisitar`, como o download: aquele método manda
+   * `Content-Type: application/json` em tudo e repete a chamada em 429 —
+   * repetir um upload é arriscar o anexo em dobro.
+   *
+   * ⚠ **A associação com a task não está provada.** A documentação da ClickUp
+   * diz "use Set Custom Field Value para associar o arquivo à tarefa", não
+   * mostra exemplo, e se contradiz na descrição do 400. Por isso este método
+   * faz o upload e devolve o id, e quem chama decide: `associarAnexoAoCampo`
+   * tenta a associação, e os dois passos são conferidos lendo o campo de
+   * volta. A primeira execução real é quem ensina.
+   */
+  async enviarArquivoParaCampo(args: {
+    workspaceId: string;
+    campoId: string;
+    nome: string;
+    bytes: Buffer;
+    mimeType?: string | null;
+  }): Promise<{ id: string; url: string | null }> {
+    const form = new FormData();
+    form.append(
+      "attachment",
+      new Blob([new Uint8Array(args.bytes)], {
+        type: args.mimeType ?? "application/octet-stream",
+      }),
+      args.nome,
+    );
+    form.append("filename", args.nome);
+
+    const resposta = await fetch(
+      `${BASE_V3}/workspaces/${args.workspaceId}/custom_fields/${args.campoId}/attachments`,
+      {
+        method: "POST",
+        headers: { Authorization: this.token },
+        body: form,
+        signal: AbortSignal.timeout(60_000),
+      },
+    );
+
+    if (!resposta.ok) {
+      const corpo = await resposta.text().catch(() => "");
+      throw new ClickUpApiError(resposta.status, corpo.slice(0, 300));
+    }
+
+    const corpo = (await resposta.json().catch(() => ({}))) as {
+      id?: string;
+      url?: string;
+    };
+    if (!corpo.id) {
+      throw new Error("a ClickUp aceitou o upload mas não devolveu o id do anexo");
+    }
+    return { id: corpo.id, url: corpo.url ?? null };
+  }
+
+  /**
+   * Liga um anexo já enviado ao campo da tarefa (o "Set Custom Field Value" da
+   * documentação). Formato não documentado: ver o ⚠ de `enviarArquivoParaCampo`.
+   */
+  associarAnexoAoCampo(taskId: string, campoId: string, anexoId: string) {
+    return this.requisitar<unknown>(`/task/${taskId}/field/${campoId}`, {
+      method: "POST",
+      body: JSON.stringify({ value: { add: [anexoId] } }),
+    });
   }
 
   // --- tarefas: exclusão ---------------------------------------------------

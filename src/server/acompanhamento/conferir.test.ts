@@ -29,6 +29,10 @@ let mensagens: Array<Record<string, unknown>> = [];
 let enviadas: Array<{ conversa: number; texto: string; privado: boolean }> = [];
 let noClickUp: string[] = [];
 let statusDaConversa = "open";
+/** O campo "Contrato Assinado" da task, que a trava do ClickBot lê. */
+let campoContrato: unknown = null;
+let uploadFalha = false;
+let zapsignDoc: Record<string, unknown> | null = null;
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -74,6 +78,17 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/crypto", () => ({ decifrar: () => "token" }));
 
+// Só `abrirZapSignCru` é dublada: `anexarContratoAssinado` e `campoTemArquivo`
+// rodam de verdade, que é o que estes casos existem para proteger.
+vi.mock("./anexo", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./anexo")>();
+  return {
+    ...real,
+    abrirZapSignCru: async () =>
+      zapsignDoc ? { cliente: { detalhar: async () => zapsignDoc } } : null,
+  };
+});
+
 vi.mock("@/server/integrations/clickup/sistema", () => ({
   abrirClickUp: async () => ({
     cliente: {
@@ -86,6 +101,21 @@ vi.mock("@/server/integrations/clickup/sistema", () => ({
       },
       atualizarTarefa: async (id: string, dados: { status?: string }) => {
         noClickUp.push(`status:${dados.status}`);
+      },
+      // ⚠ A forma é a REAL do ClickUp: `custom_fields` é lista de {id, value}.
+      obterTarefa: async () => ({
+        custom_fields: [
+          { id: "04047e09-391d-4b43-9357-ddd15a2b9531", value: campoContrato },
+        ],
+      }),
+      enviarArquivoParaCampo: async () => {
+        if (uploadFalha) throw new Error("ClickUp respondeu 400");
+        noClickUp.push("upload:contrato");
+        return { id: "anexo-1", url: null };
+      },
+      associarAnexoAoCampo: async () => {
+        noClickUp.push("associou:contrato");
+        campoContrato = [{ id: "anexo-1" }];
       },
     },
     config: {},
@@ -203,6 +233,17 @@ beforeEach(() => {
   enviadas = [];
   noClickUp = [];
   statusDaConversa = "open";
+  campoContrato = null;
+  uploadFalha = false;
+  zapsignDoc = { signed_file: "https://zapsign.test/assinado.pdf", deleted: false };
+
+  // O download do assinado é a única coisa que sairia para a rede.
+  vi.stubGlobal("fetch", async (url: string | URL) => {
+    if (String(url).includes("assinado.pdf")) {
+      return new Response(new Uint8Array([37, 80, 68, 70]), { status: 200 });
+    }
+    throw new Error(`fetch inesperado no teste: ${String(url)}`);
+  });
 });
 
 describe("o caminho que funciona", () => {
@@ -248,6 +289,45 @@ describe("o caminho que funciona", () => {
     expect(enviadas[0].texto).not.toContain("http");
     expect(noClickUp).toContain("removeu:pagamento pendente");
     expect(noClickUp).toContain("removeu:falta assinatura");
+    // O contrato assinado vai para o campo ANTES de o status andar.
+    expect(noClickUp).toContain("upload:contrato");
+    expect(noClickUp).toContain("status:ongoing");
+    expect(noClickUp.indexOf("upload:contrato")).toBeLessThan(
+      noClickUp.indexOf("status:ongoing"),
+    );
+  });
+
+  /**
+   * ⚠⚠ A trava do ClickBot devolve a task de `ongoing` para `onboarding`
+   * quando o campo "Contrato Assinado" está vazio. Foi o que aconteceu na
+   * primeira contratação real, em 11/11/2026, com tudo o mais pronto. Mover o
+   * status sem o anexo faz a task quicar E esta entrega dizer "concluído"
+   * sobre algo que não concluiu.
+   */
+  it("⚠ anexo que não entra: NÃO move o status, e a entrega diz por quê", async () => {
+    eventos.push({ id: "e0", provider: "ACOMPANHAMENTO", externalId: `inicial:${TASK}`, resultado: "enviado" });
+    cobrancas[0].status = "paid";
+    documento = { status: "signed", signatarios: [{ situacao: "assinou" }] };
+    uploadFalha = true;
+
+    await acompanharContratos({ forcar: true }, AGORA);
+
+    expect(noClickUp).not.toContain("status:ongoing");
+    const linha = eventos.find((e) => e.externalId === `final:${TASK}`);
+    expect(linha?.resultado).toBe("enviado com pendência");
+    expect(linha?.detalhe).toContain("não movi o status");
+  });
+
+  /** O que a equipe já anexou à mão não é substituído, e não trava o status. */
+  it("campo já preenchido: não sobe de novo e segue para ongoing", async () => {
+    eventos.push({ id: "e0", provider: "ACOMPANHAMENTO", externalId: `inicial:${TASK}`, resultado: "enviado" });
+    cobrancas[0].status = "paid";
+    documento = { status: "signed", signatarios: [{ situacao: "assinou" }] };
+    campoContrato = [{ id: "anexo-da-equipe" }];
+
+    await acompanharContratos({ forcar: true }, AGORA);
+
+    expect(noClickUp).not.toContain("upload:contrato");
     expect(noClickUp).toContain("status:ongoing");
   });
 
