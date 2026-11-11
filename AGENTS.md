@@ -2186,6 +2186,38 @@ minutos e em horário comercial:
   `ehAFila` compara por "contém contrato" como segunda peneira, e nenhum outro
   status da lista contém essa palavra (`distrato` não contém).
 
+#### ⏳ Cliente com mais de um endereço NO MESMO PLANO: limitação aceita
+
+O Diego, em 11/11/2026: *"tem cliente com 5 empresas e todos são no mesmo
+plano"* — e, ao ouvir o custo, *"como não é comum de acontecer, deixa assim por
+enquanto; poucos clientes possuem mais de um contrato ativo assim; melhor
+atender a maioria"*. Fica escrito aqui porque o dia em que acontecer alguém vai
+procurar a causa.
+
+Duas travas assumem **um contrato por plano por cliente**, e as duas erram
+nesse caso:
+
+- ⚠ **`conexa_criar_contrato` recusa o segundo** (`duplicidade.ts` casa cliente
+  + plano + ativo) e devolve `jaExistia` com o contrato da PRIMEIRA empresa.
+  Consequência: a task da segunda recebe o `linkDePagamentoDoCliente` da
+  primeira — fatura errada, não cobrança em dobro (a trava de cobrança
+  pendente segura o faturamento).
+- ⚠ **A regra de documento repetido do prompt** ("mesmo e-mail + mesmo modelo +
+  últimas 24 h") bloqueia o segundo documento quando a pessoa contrata vários
+  endereços no mesmo dia. A unidade de contratação é a TASK, e o próprio prompt
+  já tem o critério certo ao lado ("registro anterior na task"); é a regra das
+  24 h que sobra.
+
+**Não é silencioso**, e é isso que torna a limitação aceitável: desde o EV v13 /
+SeaBox v8 o comentário da task leva UMA linha começando com ⚠ quando o contrato
+ou o documento já existia.
+
+⚠ **Não foi medido** se existe hoje um cliente com dois contratos ativos no
+mesmo plano — a página de 100 contratos do plano 151 não tinha cliente repetido,
+e não vale afirmar pelo resto. Quando for consertar, a pergunta que falta é se
+cada empresa tem cadastro próprio no Conexa (aí a trava do contrato nem dispara)
+ou se os contratos penduram no mesmo cliente.
+
 #### A ordem das ETAPAS mudou nos dois prompts: etiqueta ANTES de comentário
 
 A etiqueta é a **fila** — é por ela que o Agente 3 pega o trabalho. O comentário
