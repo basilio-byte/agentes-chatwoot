@@ -69,7 +69,20 @@ export type ClickUpTarefa = {
   parent?: string | null;
   archived?: boolean | null;
   /** O valor de cada campo personalizado — vem na listagem e no detalhe. */
-  custom_fields?: Array<{ id: string; value?: unknown }>;
+  /**
+   * ⚠ Em campo de LISTA, `value` é o **id da opção** (ou o índice), nunca o
+   * nome — quem traduz é `type_config.options`, que a API manda junto na task.
+   * Ler `value` como texto num dropdown devolve um UUID, e comparar isso com
+   * um nome não casa nunca, sem erro nenhum.
+   *
+   * `type_config` é opcional de propósito: nem toda leitura o traz, e quem
+   * depende dele precisa sobreviver à ausência.
+   */
+  custom_fields?: Array<{
+    id: string;
+    value?: unknown;
+    type_config?: { options?: Array<Record<string, unknown>> } | null;
+  }>;
   /** Só no detalhe (`GET /task/{id}`), inclusive o que foi anexado por comentário. */
   attachments?: ClickUpAnexo[];
 };

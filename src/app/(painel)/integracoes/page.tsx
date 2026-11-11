@@ -1658,6 +1658,12 @@ export default async function IntegracoesPage({
 
                   <AcompanhamentoConfigForm
                     habilitada={acompanhamento?.enabled ?? false}
+                    documentos={
+                      typeof (acompanhamento?.config as { documentos?: unknown } | null)
+                        ?.documentos === "string"
+                        ? ((acompanhamento?.config as { documentos: string }).documentos ?? "")
+                        : ""
+                    }
                     somenteLeitura={!editavel}
                   />
                 </Card>

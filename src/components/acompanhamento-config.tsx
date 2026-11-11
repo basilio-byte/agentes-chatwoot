@@ -17,9 +17,11 @@ import { Aviso, Button } from "@/components/ui";
  */
 export function AcompanhamentoConfigForm({
   habilitada,
+  documentos,
   somenteLeitura,
 }: {
   habilitada: boolean;
+  documentos: string;
   somenteLeitura: boolean;
 }) {
   const [estado, salvar, salvando] = useActionState<EstadoAcompanhamento, FormData>(
@@ -56,6 +58,39 @@ export function AcompanhamentoConfigForm({
           acabou de falar ali, e deixa uma nota interna a cada mensagem.
         </Aviso>
       ) : null}
+
+      <div className="space-y-2">
+        <label htmlFor="documentos" className="block text-sm font-medium">
+          Documentação do endereço, por produto
+        </label>
+        <p className="text-sm text-muted">
+          Estes links vão ao cliente no WhatsApp quando o pagamento e a
+          assinatura são confirmados. Um produto por seção, um documento por
+          linha. Produto sem seção aqui recebe a mensagem <strong>sem</strong>{" "}
+          links — melhor isso do que a documentação do prédio errado.
+        </p>
+        <textarea
+          id="documentos"
+          name="documentos"
+          defaultValue={documentos}
+          rows={10}
+          spellCheck={false}
+          disabled={somenteLeitura}
+          placeholder={[
+            "[Endereço Fiscal Litoral]",
+            "AVCB: https://…",
+            "Habite-se: https://…",
+            "",
+            "[Endereço Fiscal Batial]",
+            "AVCB: https://…",
+          ].join("\n")}
+          className="w-full rounded border border-borda bg-fundo px-3 py-2 font-mono text-xs"
+        />
+        <p className="text-sm text-muted">
+          ⚠ O original é a automação do ClickBot, que manda esses mesmos
+          documentos por e-mail. Mudou lá, mude aqui também — são dois lugares.
+        </p>
+      </div>
 
       {estado.erro ? <Aviso tone="danger">{estado.erro}</Aviso> : null}
       {estado.ok ? <Aviso tone="success">{estado.ok}</Aviso> : null}

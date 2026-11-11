@@ -11,6 +11,13 @@ import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 import { abrirConexa } from "@/server/integrations/conexa/sistema";
 import type { ClickUpClient } from "@/server/integrations/clickup/client";
 import type { ClickUpTarefa } from "@/server/integrations/clickup/tipos";
+import { opcaoEscolhida } from "@/server/auto-venda/regras";
+import {
+  blocoDaDocumentacao,
+  documentosDoProduto,
+  lerDocumentos,
+  type DocumentoDoEndereco,
+} from "./documentos";
 import {
   abrirZapSignCru,
   anexarContratoAssinado,
@@ -71,6 +78,8 @@ import {
 /** O `CELULAR` e o `RESPONSÁVEL` da Base de clientes. */
 const CAMPO_CELULAR = "3399c6f6-c890-40a6-865e-5a4e810fe8c6";
 const CAMPO_RESPONSAVEL = "feaf1d19-755e-4b84-850a-b1ad42ee5957";
+/** É ele que diz de qual prédio é a documentação. */
+const CAMPO_PRODUTO = "140813a9-01ce-4b63-a7d7-b44bba3cb1c8";
 
 /** Até onde a rodada olha para trás nas ferramentas que o Agente 2 usou. */
 export const DIAS_PARA_TRAS = 60;
@@ -100,6 +109,30 @@ function campo(tarefa: ClickUpTarefa, id: string): string | null {
   return typeof c?.value === "string" && c.value.trim() ? c.value.trim() : null;
 }
 
+/**
+ * O produto da task, pelo NOME da opção.
+ *
+ * ⚠ `TIPO DE PRODUTO` é dropdown, e a API crua devolve o **id da opção** (ou o
+ * índice), nunca o nome — `campo()` leria texto e devolveria `null`, e a
+ * documentação nunca sairia. Quem traduz é `opcaoEscolhida`, que já existe
+ * para a venda autônoma: mesma armadilha, mesma solução.
+ */
+function produtoDaTarefa(tarefa: ClickUpTarefa): string | null {
+  const c = tarefa.custom_fields?.find((f) => f.id === CAMPO_PRODUTO);
+  if (!c) return null;
+
+  const pelaOpcao = opcaoEscolhida(
+    { type_config: c.type_config ?? undefined } as Parameters<typeof opcaoEscolhida>[0],
+    c.value,
+  );
+  if (pelaOpcao) return pelaOpcao;
+
+  // Sem `type_config` na leitura, sobra o valor cru. Se for um id de opção,
+  // ele não casa com nome de produto nenhum e a documentação simplesmente não
+  // sai — que é o desfecho seguro.
+  return typeof c.value === "string" && c.value.trim() ? c.value.trim() : null;
+}
+
 export async function acompanharContratos(
   opcoes: { forcar?: boolean } = {},
   agora = new Date(),
@@ -114,9 +147,15 @@ export async function acompanharContratos(
   try {
     const integracao = await db.integration.findUnique({
       where: { provider: IntegrationProvider.ACOMPANHAMENTO },
-      select: { enabled: true },
+      select: { enabled: true, config: true },
     });
     if (!integracao?.enabled) return { acao: "desligada" };
+
+    // Os links da documentação do endereço, por produto. Vazio é o normal
+    // enquanto ninguém configurou: a mensagem final sai sem eles.
+    const documentos = lerDocumentos(
+      ((integracao.config ?? {}) as { documentos?: unknown }).documentos as string | undefined,
+    );
 
     const clickup = await abrirClickUp("acompanhamento de contratos");
     if ("erro" in clickup) return { acao: "sem clickup", motivo: clickup.erro };
@@ -164,6 +203,7 @@ export async function acompanharContratos(
       conexa: "erro" in conexa ? null : conexa.cliente,
       verDocumento,
       zapsign: await abrirZapSignCru(),
+      documentos,
     };
 
     const desfechos: DesfechoDaTask[] = [];
@@ -227,6 +267,8 @@ type Leituras = {
    * justamente esse arquivo que vai para o campo da task.
    */
   zapsign: ZapSignAberta | null;
+  /** Os links da documentação por produto, lidos uma vez por rodada. */
+  documentos: Record<string, DocumentoDoEndereco[]>;
 };
 
 async function tratarTask(
@@ -289,6 +331,12 @@ async function tratarTask(
     clickup,
     documentoZapSign: contratacao.documentoZapSign,
     zapsign: leitura.zapsign,
+    // ⚠ Pelo PRODUTO da task: Litoral, Batial, Abissal e Comércio são prédios
+    // diferentes, e mandar a documentação do endereço errado é pior do que não
+    // mandar nenhuma. Produto sem seção configurada devolve lista vazia.
+    linhasDaDocumentacao: blocoDaDocumentacao(
+      documentosDoProduto(leitura.documentos, produtoDaTarefa(tarefa)),
+    ),
     agora,
   });
 }
@@ -408,6 +456,8 @@ async function falarComOCliente(args: {
   /** Só a etapa final usa: é com eles que o contrato assinado vai para o campo. */
   documentoZapSign: string | null;
   zapsign: ZapSignAberta | null;
+  /** Só a etapa final usa. Vazio = a mensagem sai sem os links. */
+  linhasDaDocumentacao: string[];
   agora: Date;
 }): Promise<DesfechoDaTask> {
   const { taskId, etapa, nome, celular, agora } = args;
@@ -464,6 +514,7 @@ async function falarComOCliente(args: {
         nome: nome ?? "",
         linkPagamento: args.linkPagamento,
         linkAssinatura: args.linkAssinatura,
+        linhasDaDocumentacao: args.linhasDaDocumentacao,
       }),
     );
   } catch (erro) {

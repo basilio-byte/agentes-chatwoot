@@ -224,6 +224,12 @@ export type DadosDaMensagem = {
   nome: string;
   linkPagamento?: string | null;
   linkAssinatura?: string | null;
+  /**
+   * As linhas com os links da documentação do endereço, já montadas por
+   * `blocoDaDocumentacao`. Vêm prontas de fora para este módulo seguir sem
+   * import nenhum. Vazio = a mensagem sai como saía antes.
+   */
+  linhasDaDocumentacao?: string[];
 };
 
 /**
@@ -285,13 +291,16 @@ export function mensagemDaEtapa(etapa: Etapa, dados: DadosDaMensagem): string {
     "✅ Pagamento identificado",
     "✅ Assinatura identificada",
     "",
-    // ⚠ Esta linha NÃO pode afirmar que a documentação já foi entregue. Até
-    // 11/11/2026 ela dizia "já foi enviada por e-mail, com todas as orientações
-    // necessárias" — e ninguém a envia: o texto com a documentação é o que o
-    // ClickBot escreve em COMENTÁRIO na task, que o cliente não vê. O cliente
-    // procurava no e-mail algo que não existia. Só volte a prometer um canal
-    // quando o sistema for quem entrega por ele.
-    "Em breve você recebe a documentação da sua contratação, com todas as orientações.",
+    // Os documentos vão AQUI, e não só por e-mail. Pedido do Diego em
+    // 11/11/2026: quem mandava esses links no WhatsApp era o Felipe, à mão.
+    ...(dados.linhasDaDocumentacao ?? []),
+    "",
+    // ⚠ Esta linha já dizia "a documentação JÁ FOI enviada por e-mail". O
+    // e-mail existe — é a automação do ClickBot —, mas sai quando a task entra
+    // em `ongoing`, que é DEPOIS desta mensagem; e, desde que o status passou a
+    // depender do anexo do contrato, pode não sair. Por isso ela anuncia o
+    // e-mail como algo que vem, nunca como algo que foi.
+    "Você também vai receber a documentação completa e as orientações por e-mail.",
     "",
     "Qualquer dúvida, é só chamar por aqui. Seja bem-vindo(a)! 🙌",
   ].join("\n");

@@ -14,6 +14,7 @@ const AGORA = new Date("2026-11-10T15:00:00Z");
 const TASK = "86adm4t1k";
 const CAMPO_CELULAR = "3399c6f6-c890-40a6-865e-5a4e810fe8c6";
 const CAMPO_RESPONSAVEL = "feaf1d19-755e-4b84-850a-b1ad42ee5957";
+const CAMPO_PRODUTO = "140813a9-01ce-4b63-a7d7-b44bba3cb1c8";
 
 type Linha = { id: string; provider: string; externalId: string; resultado: string | null; detalhe?: string | null };
 
@@ -33,13 +34,15 @@ let statusDaConversa = "open";
 let campoContrato: unknown = null;
 let uploadFalha = false;
 let zapsignDoc: Record<string, unknown> | null = null;
+let produtoDaTask = "Endereço Fiscal Litoral";
+let documentosConfig = "";
 
 vi.mock("@/lib/db", () => ({
   db: {
     integration: {
       findUnique: async ({ where }: { where: { provider: string } }) =>
         where.provider === "ACOMPANHAMENTO"
-          ? { enabled: ligada }
+          ? { enabled: ligada, config: { documentos: documentosConfig } }
           : { enabled: true, credential: "cifrado", config: {} },
     },
     toolCall: { findMany: async () => chamadas },
@@ -182,6 +185,13 @@ function tarefa(etiquetas: string[] = ["pagamento pendente", "falta assinatura"]
     custom_fields: [
       { id: CAMPO_CELULAR, value: "+558482000879" },
       { id: CAMPO_RESPONSAVEL, value: "Carla Adriana de Lima" },
+      // ⚠ Forma REAL do ClickUp: dropdown devolve o ID da opção, e o nome só
+      // existe em `type_config.options`.
+      {
+        id: CAMPO_PRODUTO,
+        value: "opt-produto",
+        type_config: { options: [{ id: "opt-produto", name: produtoDaTask }] },
+      },
     ],
   };
 }
@@ -235,6 +245,8 @@ beforeEach(() => {
   statusDaConversa = "open";
   campoContrato = null;
   uploadFalha = false;
+  produtoDaTask = "Endereço Fiscal Litoral";
+  documentosConfig = "";
   zapsignDoc = { signed_file: "https://zapsign.test/assinado.pdf", deleted: false };
 
   // O download do assinado é a única coisa que sairia para a rede.
@@ -316,6 +328,48 @@ describe("o caminho que funciona", () => {
     const linha = eventos.find((e) => e.externalId === `final:${TASK}`);
     expect(linha?.resultado).toBe("enviado com pendência");
     expect(linha?.detalhe).toContain("não movi o status");
+  });
+
+  /**
+   * ⚠ Pedido do Diego em 11/11/2026. Quem mandava esses links no WhatsApp era
+   * o Felipe, à mão, e ele está saindo. O e-mail do ClickBot continua saindo,
+   * mas só DEPOIS de a task entrar em `ongoing` — por isso os links vão na
+   * mensagem, e por isso ela não afirma que o e-mail já foi.
+   */
+  it("a mensagem final leva os links da documentação do PRODUTO da task", async () => {
+    eventos.push({ id: "e0", provider: "ACOMPANHAMENTO", externalId: `inicial:${TASK}`, resultado: "enviado" });
+    cobrancas[0].status = "paid";
+    documento = { status: "signed", signatarios: [{ situacao: "assinou" }] };
+    documentosConfig = [
+      "[Endereço Fiscal Litoral]",
+      "AVCB: https://drive.google.com/file/d/litoral-avcb/view",
+      "Habite-se: https://drive.google.com/file/d/litoral-habite/view",
+      "[Endereço Fiscal Batial]",
+      "AVCB: https://drive.google.com/file/d/batial-avcb/view",
+    ].join("\n");
+
+    await acompanharContratos({ forcar: true }, AGORA);
+
+    expect(enviadas[0].texto).toContain("AVCB: https://drive.google.com/file/d/litoral-avcb/view");
+    expect(enviadas[0].texto).not.toContain("batial");
+    // ⚠ O e-mail sai quando a task entra em ongoing, DEPOIS desta mensagem.
+    expect(enviadas[0].texto).not.toContain("já foi enviada");
+    expect(enviadas[0].texto).toContain("por e-mail");
+  });
+
+  /** Prédio errado é pior que prédio nenhum. */
+  it("⚠ produto sem documentação configurada: manda a mensagem SEM links", async () => {
+    eventos.push({ id: "e0", provider: "ACOMPANHAMENTO", externalId: `inicial:${TASK}`, resultado: "enviado" });
+    cobrancas[0].status = "paid";
+    documento = { status: "signed", signatarios: [{ situacao: "assinou" }] };
+    // A task é de Litoral (fixture) e só Batial está configurado.
+    documentosConfig =
+      "[Endereço Fiscal Batial]\nAVCB: https://drive.google.com/file/d/batial-avcb/view";
+
+    await acompanharContratos({ forcar: true }, AGORA);
+
+    expect(enviadas[0].texto).toContain("confirmamos tudo!");
+    expect(enviadas[0].texto).not.toContain("http");
   });
 
   /** O que a equipe já anexou à mão não é substituído, e não trava o status. */
