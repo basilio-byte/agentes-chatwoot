@@ -2032,6 +2032,18 @@ confirmação total move a task para `ongoing`.
   contratuais abertas, e mandar a do outro seria cobrar o valor errado. Medido:
   a cobrança do contrato já existe no dia em que ele é criado (contrato 12833,
   20/10/2026), então esperar por ela é exceção, não regra.
+- ⚠⚠ **O parâmetro chama `tarefaId`, não `taskId` — e por isso nada disto
+  funcionava.** `execucoesDaTask` procurava `input.taskId`; as ferramentas do
+  ClickUp deste projeto são em português (76 `tarefaId`, nenhum `taskId`).
+  Nenhuma execução casava com task nenhuma: a rodada achava a task na fila,
+  concluía que não havia contrato nem documento, e não mandava nada. Achado em
+  11/11/2026, ao diagnosticar por que o Agente 3 não rodou — **e os testes
+  passavam**, porque as chamadas de mentira deles tinham sido escritas com
+  `taskId` e confirmavam a ficção em vez do mundo. Hoje `idDaTarefa` aceita os
+  dois nomes e há caso de regressão com o input REAL de produção.
+  ⭐ **A lição é de fixture, não de ClickUp:** teste cujo dado de entrada foi
+  escrito por quem escreveu o código não prova integração nenhuma. O input de
+  uma execução real é a única testemunha.
 - ⚠ **Os links vêm das `ToolCall` do Agente 2, não do comentário.** A
   especificação mandava extrair do texto, e isso quebra quando alguém edita o
   comentário ou o template muda. O que amarra a execução à task é o `taskId` do
