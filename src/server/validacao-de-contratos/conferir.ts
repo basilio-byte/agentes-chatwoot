@@ -1,6 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { RunSource } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
+import { diaEmSaoPaulo } from "@/lib/tempo";
 import { logger } from "@/lib/logger";
 import { dentroDoHorario } from "@/server/cobranca/regras";
 import { abrirClickUp } from "@/server/integrations/clickup/sistema";
@@ -34,6 +35,9 @@ import {
 /** Mesma fila e mesmo provider do gatilho HTTP: a entrega aparece em Entregas. */
 const PROVIDER = "TRIGGER";
 
+/** O desfecho da rodada fica aqui, um por dia. */
+export const CHAVE_DA_RODADA = "reconferencia-rodada";
+
 let ultimaConferencia = 0;
 let rodando = false;
 
@@ -44,6 +48,7 @@ export type RodadaDeValidacao = {
     | "fora do horário"
     | "fila vazia"
     | "sem clickup"
+    | "falhou"
     | "conferido";
   motivo?: string;
   naFila?: number;
@@ -194,7 +199,9 @@ export async function conferirValidacaoDeContratos(
 
   try {
     const clickup = await abrirClickUp("re-conferência de contratos");
-    if ("erro" in clickup) return { acao: "sem clickup", motivo: clickup.erro };
+    if ("erro" in clickup) {
+      return await fechar(agora, { acao: "sem clickup", motivo: clickup.erro });
+    }
 
     const { tasks } = await clickup.cliente.listarTarefasDaLista(LISTA_BASE_DE_CLIENTES, {
       statuses: [STATUS_DA_FILA],
@@ -205,7 +212,7 @@ export async function conferirValidacaoDeContratos(
     const naFila = tasks.filter(
       (t) => ehAFila(t.status?.status) && ehTarefaDeCliente(t),
     );
-    if (!naFila.length) return { acao: "fila vazia", naFila: 0 };
+    if (!naFila.length) return await fechar(agora, { acao: "fila vazia", naFila: 0 });
 
     const conhecido = await estadoConhecido(naFila.map((t) => t.id));
     const desfechos: string[] = [];
@@ -244,11 +251,76 @@ export async function conferirValidacaoDeContratos(
       desfechos.push(await acionar(agentId, tarefa, mudouEm));
     }
 
-    return { acao: "conferido", naFila: naFila.length, acionadas, anotadas, desfechos };
+    return await fechar(agora, {
+      acao: "conferido",
+      naFila: naFila.length,
+      acionadas,
+      anotadas,
+      desfechos,
+    });
   } catch (erro) {
     logger.error({ erro }, "falha na re-conferência de contratos");
-    return { acao: "conferido", motivo: (erro as Error).message };
+    return await fechar(agora, { acao: "falhou", motivo: (erro as Error).message });
   } finally {
     rodando = false;
   }
+}
+
+/**
+ * O desfecho da RODADA, um por dia, como nas outras rodadas do vigia.
+ *
+ * ⚠ Sem isto a varredura era silêncio: as entregas por task contam o que foi
+ * acionado, mas não distinguem "a fila estava vazia" de "o ClickUp não
+ * respondeu" nem de "nunca rodou". É o que `ver_reconferencia_de_contratos`
+ * lê no MCP.
+ */
+async function fechar(agora: Date, rodada: RodadaDeValidacao) {
+  try {
+    const externalId = `${CHAVE_DA_RODADA}:${diaEmSaoPaulo(agora)}`;
+    const detalhe = JSON.stringify(rodada).slice(0, 2000);
+    await db.webhookEvent.upsert({
+      where: { provider_externalId: { provider: PROVIDER, externalId } },
+      create: {
+        provider: PROVIDER,
+        externalId,
+        eventType: "reconferencia-rodada",
+        payload: {},
+        resultado: rodada.acao,
+        detalhe,
+        processedAt: agora,
+      },
+      update: { resultado: rodada.acao, detalhe, processedAt: agora },
+    });
+  } catch (erro) {
+    // Registrar o desfecho nunca pode derrubar a rodada que já aconteceu.
+    logger.error({ erro }, "não consegui registrar a rodada da re-conferência");
+  }
+  return rodada;
+}
+
+/** As últimas rodadas, para o MCP. */
+export async function ultimasRodadasDaReconferencia(limite = 5) {
+  return db.webhookEvent.findMany({
+    where: { provider: PROVIDER, externalId: { startsWith: `${CHAVE_DA_RODADA}:` } },
+    select: { externalId: true, resultado: true, detalhe: true, processedAt: true },
+    orderBy: { createdAt: "desc" },
+    take: limite,
+  });
+}
+
+/** As últimas tasks que a varredura olhou, com o que fez em cada uma. */
+export async function ultimasReconferencias(limite = 20) {
+  return db.webhookEvent.findMany({
+    where: { provider: PROVIDER, externalId: { startsWith: "reconferencia:" } },
+    select: {
+      externalId: true,
+      eventType: true,
+      resultado: true,
+      detalhe: true,
+      agentId: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+    take: limite,
+  });
 }

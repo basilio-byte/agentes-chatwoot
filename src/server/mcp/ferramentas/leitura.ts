@@ -30,6 +30,11 @@ import { diaDeEntrarEmRenovacao } from "@/server/renovacao/regras";
 import { ultimasRodadas } from "@/server/renovacao/retrato";
 import { CHAVE_DA_RODADA, ultimasPropagacoes } from "@/server/renovacao/propagar";
 import { ultimasRodadasDoAcompanhamento } from "@/server/acompanhamento/conferir";
+import {
+  CHAVE_DA_RODADA as CHAVE_DA_RODADA_DA_RECONFERENCIA,
+  ultimasReconferencias,
+  ultimasRodadasDaReconferencia,
+} from "@/server/validacao-de-contratos/conferir";
 import { O_QUE_FORNECER, ROTULO_DO_TIPO } from "@/server/lacunas/regras";
 import {
   listarIntegracoes,
@@ -1244,6 +1249,72 @@ const verAcompanhamentoDeContratos = ferramenta({
   },
 });
 
+/**
+ * A varredura que devolve à fila a task corrigida à mão.
+ *
+ * ⚠ Ela é a única rodada do vigia cujo trabalho normal é NÃO fazer nada: task
+ * parada não muda, e não muda = não aciona. Por isso a leitura mostra as duas
+ * coisas — o desfecho da rodada e o que ela fez em cada task —, senão
+ * "0 acionadas" seria indistinguível de "nunca rodou".
+ */
+const verReconferenciaDeContratos = ferramenta({
+  name: "ver_reconferencia_de_contratos",
+  title: "Ver a re-conferência de contratos",
+  description:
+    "A varredura que devolve o agente validador à task em que faltava dado, quando alguém corrige à mão. Mostra as últimas rodadas (quantas tasks estavam na fila do status Contrato, quantas foram acionadas e quantas só anotadas) e, por task, o que foi feito. ⚠ Rodada com 0 acionadas é o normal: ela só aciona quando a task MUDOU desde a última olhada, e nunca na primeira vez que a vê.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    limite: z
+      .number()
+      .int()
+      .min(1)
+      .max(30)
+      .optional()
+      .describe("Quantas rodadas devolver. Padrão 5."),
+    tarefas: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe("Quantas tasks olhadas devolver. Padrão 15."),
+  }),
+  async executar({ limite, tarefas }) {
+    const [rodadas, olhadas] = await Promise.all([
+      ultimasRodadasDaReconferencia(limite ?? 5),
+      ultimasReconferencias(tarefas ?? 15),
+    ]);
+
+    // `WebhookEvent` guarda só o id do agente; a chave é o que serve a quem lê.
+    const ids = [...new Set(olhadas.map((e) => e.agentId).filter((v): v is string => !!v))];
+    const agentes = ids.length
+      ? await db.agent.findMany({ where: { id: { in: ids } }, select: { id: true, key: true } })
+      : [];
+    const chaveDoAgente = new Map(agentes.map((a) => [a.id, a.key]));
+
+    return responder({
+      rodadas: rodadas.map((r) => ({
+        dia: r.externalId.replace(`${CHAVE_DA_RODADA_DA_RECONFERENCIA}:`, ""),
+        resultado: r.resultado,
+        detalhe: r.detalhe,
+        em: r.processedAt ? quando(r.processedAt) : null,
+      })),
+      tarefas: olhadas.map((e) => {
+        const partes = e.externalId.split(":");
+        return {
+          tarefa: partes[1] ?? null,
+          oQueAconteceu:
+            e.eventType === "reconferencia" ? "agente acionado" : "só anotada",
+          agente: e.agentId ? (chaveDoAgente.get(e.agentId) ?? e.agentId) : null,
+          detalhe: e.detalhe,
+          em: quando(e.createdAt),
+        };
+      }),
+    });
+  },
+});
+
 export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   listarAgentes,
   verAgente,
@@ -1260,4 +1331,5 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   listarLacunasDosAgentes,
   verLevaDeRenovacao,
   verAcompanhamentoDeContratos,
+  verReconferenciaDeContratos,
 ];

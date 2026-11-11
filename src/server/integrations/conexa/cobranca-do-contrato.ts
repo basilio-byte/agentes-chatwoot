@@ -24,6 +24,11 @@
  */
 
 import { linkDoClienteNoConexa } from "./duplicidade";
+import {
+  faturarPrimeiraCobranca,
+  type FaturadorDeContrato,
+  type ResultadoDaPrimeiraCobranca,
+} from "./primeira-cobranca";
 
 /** Uma cobrança, no mínimo que este caminho precisa. */
 export type CobrancaResumida = {
@@ -42,11 +47,17 @@ export type CobrancaResumida = {
 export const VENDAS_CONSULTADAS = 8;
 
 /** O que o resolvedor precisa do cliente do Conexa. */
+export type FiltrosDeCobranca = {
+  customerId?: number;
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
 export type LeitorDeCobrancas = {
-  listarCobrancas: (filtros: {
-    customerId?: number;
-    limit?: number;
-  }) => Promise<{ itens: unknown[] }>;
+  listarCobrancas: (
+    filtros: FiltrosDeCobranca,
+  ) => Promise<{ itens: Record<string, unknown>[]; temMais: boolean }>;
   obterVenda: (id: number) => Promise<unknown>;
 };
 
@@ -125,10 +136,11 @@ export async function cobrancaDoContratoNoConexa(
  * Sem o link, o aviso diz que ele não veio.
  */
 export async function linksDoContrato(
-  cliente: LeitorDeCobrancas,
+  cliente: LeitorDeCobrancas & FaturadorDeContrato,
   baseUrl: string,
   clienteId: number,
   contratoId: number,
+  agora = new Date(),
 ) {
   const telaDoContratoNoErp = linkDoClienteNoConexa(baseUrl, clienteId);
 
@@ -139,11 +151,28 @@ export async function linksDoContrato(
     // Leitura que falha não vira "não existe cobrança": vira link que não veio.
   }
 
+  // ⚠ O Conexa gera a VENDA do contrato sozinho, mas NÃO a cobrança — e é a
+  // cobrança que tem o link que o cliente paga. Sem este passo o contrato
+  // nasce sem como ser pago. Ver `primeira-cobranca.ts`.
+  let faturamento: ResultadoDaPrimeiraCobranca | null = null;
+  if (!cobranca?.faturaUrl) {
+    faturamento = await faturarPrimeiraCobranca(cliente, clienteId, contratoId, agora);
+    if (faturamento.feito === "criada" || faturamento.feito === "jaExistia") {
+      cobranca = {
+        id: faturamento.cobrancaId,
+        status: null,
+        faturaUrl: faturamento.faturaUrl,
+        vendas: [],
+      };
+    }
+  }
+
   return {
     linkDePagamentoDoCliente: cobranca?.faturaUrl ?? null,
     telaDoContratoNoErp,
+    primeiraCobranca: faturamento?.feito,
     avisoSobreOsLinks: cobranca?.faturaUrl
       ? "linkDePagamentoDoCliente é o endereço que o CLIENTE abre para pagar — é esse que vai para ele e para o comentário como link de pagamento. telaDoContratoNoErp é painel interno da equipe: nunca mande ao cliente e nunca o chame de link de pagamento."
-      : "A cobrança deste contrato ainda não apareceu no Conexa, então NÃO existe link de pagamento para dar ao cliente agora. ⚠ Não use telaDoContratoNoErp no lugar dele: é painel interno, e o cliente não entra lá. Registre no comentário que o link de pagamento ainda não saiu; o sistema o manda ao cliente quando a cobrança for gerada.",
+      : "Não consegui gerar a cobrança deste contrato agora, então NÃO existe link de pagamento para dar ao cliente. ⚠ Não use telaDoContratoNoErp no lugar dele: é painel interno, e o cliente não entra lá. Registre no comentário que o link de pagamento ainda não saiu — o sistema tenta de novo sozinho e manda ao cliente quando a cobrança existir.",
   };
 }

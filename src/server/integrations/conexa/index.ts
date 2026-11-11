@@ -634,7 +634,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_criar_contrato",
       categoria: "Contratos",
       description:
-        "Cria o contrato do cliente num plano. É o passo que efetiva a venda no ERP e começa a cobrança recorrente. Confirme plano, periodicidade e data de início ANTES de chamar. Se o cliente já tiver contrato ativo NESSE plano, não cria outro: devolve o que já existe. Devolve DOIS endereços, e eles não são a mesma coisa: `linkDePagamentoDoCliente` é o que o cliente abre para pagar, e `telaDoContratoNoErp` é painel interno da equipe — nunca mande o segundo ao cliente. Use os links que vierem; não monte endereço.",
+        "Cria o contrato do cliente num plano, E JÁ GERA a primeira cobrança dele — o Conexa cria a venda do contrato sozinho, mas não a fatura, e sem ela o cliente não tem como pagar. É o passo que efetiva a venda no ERP e começa a cobrança recorrente. Confirme plano, periodicidade e data de início ANTES de chamar. Se o cliente já tiver contrato ativo NESSE plano, não cria outro: devolve o que já existe. Devolve DOIS endereços, e eles não são a mesma coisa: `linkDePagamentoDoCliente` é o que o cliente abre para pagar, e `telaDoContratoNoErp` é painel interno da equipe — nunca mande o segundo ao cliente. Use os links que vierem; não monte endereço.",
       requiresConfirmation: true,
       inputSchema: z.object({
         clienteId: z.number().int().positive(),

@@ -17,16 +17,42 @@ const ITENS = [
   { chargeId: 32200, status: "unpaid", chargeUrl: "https://x/fatura?id=bbb", salesIds: [70000] },
 ];
 
-function leitor(vendas: Record<number, number>) {
+/**
+ * `vendas` liga id da venda → contrato. `doCliente` é o que a listagem de
+ * vendas devolve (o caminho novo, do faturamento da primeira cobrança).
+ */
+function leitor(
+  vendas: Record<number, number>,
+  opcoes: {
+    doCliente?: Array<{ id: number; contractId: number }>;
+    cobrancasPendentes?: Array<Record<string, unknown>>;
+  } = {},
+) {
   const consultadas: number[] = [];
+  const criadas: Array<{ salesIds: number[]; dueDate?: string }> = [];
   return {
     consultadas,
-    listarCobrancas: async () => ({ itens: ITENS }),
+    criadas,
+    listarCobrancas: async (f: { status?: string } = {}) => ({
+      // A busca por cobrança PENDENTE é a trava anti-duplicidade; a sem filtro
+      // é a que amarra cobrança → venda → contrato.
+      itens: f?.status ? (opcoes.cobrancasPendentes ?? []) : ITENS,
+      temMais: false,
+    }),
     obterVenda: async (id: number) => {
       consultadas.push(id);
       if (!(id in vendas)) throw new Error("venda não abre");
       return { contractId: vendas[id] };
     },
+    listarVendas: async () => ({
+      itens: (opcoes.doCliente ?? []).map((v) => ({ id: v.id, contractId: v.contractId })),
+      temMais: false,
+    }),
+    criarCobranca: async (dados: { salesIds: number[]; dueDate?: string }) => {
+      criadas.push(dados);
+      return { id: 40001 };
+    },
+    obterCobranca: async () => ({ chargeUrl: "https://x/fatura?id=nova" }),
   };
 }
 
@@ -79,7 +105,7 @@ describe("cobrancaDoContratoNoConexa", () => {
     const consultadas: number[] = [];
     await cobrancaDoContratoNoConexa(
       {
-        listarCobrancas: async () => ({ itens: muitas }),
+        listarCobrancas: async () => ({ itens: muitas, temMais: false }),
         obterVenda: async (id: number) => {
           consultadas.push(id);
           return { contractId: 0 };
@@ -105,21 +131,67 @@ describe("linksDoContrato", () => {
     expect(r.avisoSobreOsLinks).toContain("nunca mande ao cliente");
   });
 
-  it("⚠ sem cobrança, NÃO oferece a tela interna como substituta", async () => {
+  it("⚠ sem cobrança e sem venda ainda, NÃO oferece a tela interna como substituta", async () => {
     const r = await linksDoContrato(leitor({}), BASE, 6049, 12948);
 
     expect(r.linkDePagamentoDoCliente).toBeNull();
-    expect(r.avisoSobreOsLinks).toContain("NÃO existe link de pagamento");
+    expect(r.primeiraCobranca).toBe("semVenda");
     expect(r.avisoSobreOsLinks).toContain("Não use telaDoContratoNoErp no lugar dele");
+  });
+
+  /**
+   * O defeito de 11/11/2026: o contrato nascia sem cobrança, e o cliente não
+   * tinha como pagar. O Conexa gera a venda sozinho; a cobrança é outro passo.
+   */
+  it("⚠⚠ sem cobrança mas COM a venda do contrato, gera a primeira cobrança", async () => {
+    const c = leitor({}, { doCliente: [{ id: 99001, contractId: 12948 }] });
+
+    const r = await linksDoContrato(c, BASE, 6049, 12948, new Date("2026-11-11T12:00:00Z"));
+
+    expect(r.primeiraCobranca).toBe("criada");
+    expect(r.linkDePagamentoDoCliente).toBe("https://x/fatura?id=nova");
+    expect(c.criadas).toEqual([{ salesIds: [99001], dueDate: "2026-11-14" }]);
+  });
+
+  it("⚠ não cobra de novo quando a venda já tem cobrança pendente", async () => {
+    const c = leitor(
+      {},
+      {
+        doCliente: [{ id: 99001, contractId: 12948 }],
+        cobrancasPendentes: [
+          { chargeId: 32953, salesIds: [99001], chargeUrl: "https://x/fatura?id=velha" },
+        ],
+      },
+    );
+
+    const r = await linksDoContrato(c, BASE, 6049, 12948);
+
+    expect(r.primeiraCobranca).toBe("jaExistia");
+    expect(r.linkDePagamentoDoCliente).toBe("https://x/fatura?id=velha");
+    expect(c.criadas).toEqual([]);
+  });
+
+  it("venda de OUTRO contrato do mesmo cliente não é faturada", async () => {
+    const c = leitor({}, { doCliente: [{ id: 98000, contractId: 12000 }] });
+
+    const r = await linksDoContrato(c, BASE, 6049, 12948);
+
+    expect(r.primeiraCobranca).toBe("semVenda");
+    expect(c.criadas).toEqual([]);
   });
 
   it("⚠ leitura que falha não lança: o contrato já foi criado", async () => {
     const r = await linksDoContrato(
       {
-        listarCobrancas: async () => {
+        listarCobrancas: async (): Promise<{ itens: Record<string, unknown>[]; temMais: boolean }> => {
           throw new Error("conexa caiu");
         },
         obterVenda: async () => ({}),
+        listarVendas: async (): Promise<{ itens: Record<string, unknown>[]; temMais: boolean }> => {
+          throw new Error("conexa caiu");
+        },
+        criarCobranca: async () => ({ id: 0 }),
+        obterCobranca: async () => ({}),
       },
       BASE,
       6049,

@@ -81,7 +81,7 @@ function diaDaReserva(inicio: unknown): string | undefined {
  * que a cobrança não existe, e quem chama não cobra.
  */
 export async function acharCobrancaDaVenda(
-  cliente: ConexaClient,
+  cliente: Pick<ConexaClient, "listarCobrancas">,
   vendaId: number,
   clienteId: number,
 ): Promise<{ cobranca?: Bruto; conferido: boolean }> {

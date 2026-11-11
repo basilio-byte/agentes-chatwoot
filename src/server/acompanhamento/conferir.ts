@@ -17,6 +17,10 @@ import {
   type LeitorDeCobrancas,
 } from "@/server/integrations/conexa/cobranca-do-contrato";
 import {
+  faturarPrimeiraCobranca,
+  type FaturadorDeContrato,
+} from "@/server/integrations/conexa/primeira-cobranca";
+import {
   contratacaoDaTask,
   documentoAssinado,
   type Chamada,
@@ -205,7 +209,7 @@ async function etapasJaEnviadas(taskId: string): Promise<Set<Etapa>> {
 
 /** O que a rodada abriu uma vez e usa em toda task. */
 type Leituras = {
-  conexa: LeitorDeCobrancas | null;
+  conexa: (LeitorDeCobrancas & FaturadorDeContrato) | null;
   verDocumento: VerDocumento | null;
 };
 
@@ -280,6 +284,20 @@ async function conferirEstado(contratacao: Contratacao, leitura: Leituras) {
     if (achado) {
       pago = cobrancaPaga(achado.status);
       linkPagamento = achado.faturaUrl;
+    } else {
+      // ⚠ Rede de segurança do faturamento: o Conexa gera a VENDA do contrato
+      // sozinho, mas não a cobrança, e é ela que tem o link que o cliente
+      // paga. `conexa_criar_contrato` já tenta no instante da criação; se a
+      // venda ainda não tinha aparecido lá, a tentativa é aqui — senão a
+      // contratação fica esperando uma cobrança que ninguém vai gerar.
+      const faturado = await faturarPrimeiraCobranca(
+        leitura.conexa,
+        contratacao.clienteConexa,
+        contratacao.contratoConexa,
+      );
+      if (faturado.feito === "criada" || faturado.feito === "jaExistia") {
+        linkPagamento = faturado.faturaUrl;
+      }
     }
   }
 
