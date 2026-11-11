@@ -2115,6 +2115,70 @@ duas condições precisam ser verdadeiras — então **um webhook só ajuda quan
 evento dele é o ÚLTIMO dos dois**, e nos outros casos espera-se o relógio
 igual. Se alguém reabrir, a pergunta é qual dos dois costuma ser o último.
 
+#### O contrato assinado vai para o campo da task (11/11/2026)
+
+⚠⚠ **Uma trava do ClickBot só deixa a task ficar em `ongoing` quando o campo
+`Contrato Assinado` tem arquivo.** Ela foi criada pela Duda porque os contratos
+vinham sendo gerados à mão e nem sempre chegavam. Na primeira contratação
+completa, a task foi devolvida de `ongoing` para `🏃‍♂️onboarding` segundos
+depois de o sistema movê-la, com contrato, cobrança, pagamento e assinatura
+confirmados: faltava só o anexo. Quem anexava à mão era o Felipe, que está
+saindo. A escolha foi CUMPRIR a trava, não afrouxá-la.
+
+- ⚠ **Campo do tipo `attachment` não se escreve pela v2.** O
+  `POST /task/{id}/attachment` da v2 anexa na TASK e o campo continua vazio. O
+  caminho é a **v3**: `POST /api/v3/workspaces/{w}/custom_fields/{campo}/attachments`,
+  multipart. É o único uso de v3 no projeto, e o `BASE_V3` diz isso.
+- ⚠ **Não defina `Content-Type` no upload**: quem escreve o `boundary` é o
+  `fetch`, a partir do `FormData`.
+- ⚠ **A associação do anexo com a task NÃO é documentada** ("use Set Custom
+  Field Value", sem exemplo, e a própria página se contradiz na descrição do
+  400). Por isso ela fica isolada num método próprio e **não decide nada**:
+  quem decide é a **leitura do campo de volta**. Chamada sem erro não prova
+  campo preenchido, e é o campo que a trava lê.
+- **Ordem: anexo ANTES do status, e status só se o anexo entrou.** Mover sem
+  anexo faz a task quicar e a entrega dizer "concluído" sobre o que não
+  concluiu. Travado por teste.
+- `signed_file` da ZapSign **expira em 60 min**: é lido na hora de usar e nunca
+  guardado — por isso `zapsign_ver_documento` não o devolve ao modelo, e por
+  isso aqui se abre o cliente cru ao lado da ferramenta.
+
+#### A documentação do endereço vai na mensagem (11/11/2026)
+
+Pedido do Diego. Até então o cliente recebia só "confirmamos tudo", e quem
+mandava os links da documentação (AVCB, Habite-se, Ficha do Imóvel, Licença
+Ambiental, ART, Laudo de Acessibilidade, Alvará de Funcionamento) no WhatsApp
+era o Felipe, à mão.
+
+- **Os links ficam em CONFIGURAÇÃO** (aba Acompanhamento), em seções por
+  produto. ⚠ O preço está aceito: os mesmos links passam a existir em DOIS
+  lugares — a automação do ClickBot, que os manda por e-mail, e esta tela — e
+  dois lugares divergem. A tela diz qual é o original.
+- ⚠ **Não se lê do comentário do ClickBot**, que seria a fonte sem cópia, por
+  duas razões: ele só nasce quando a task entra em `ongoing`, **depois** de a
+  gente falar com o cliente; e a API devolve `comment_text`, a versão plana,
+  em que as URLs dos hyperlinks **somem**. O array `comment` poderia tê-las em
+  `attributes.link`, mas esse campo **não está documentado**.
+- ⚠ **Produto sem seção sai SEM links**, nunca com os de outro. Teste nos dois
+  sentidos. ⏳ Falta o Diego dizer se Litoral, Batial, Abissal e Comércio têm
+  documentação diferente — os nomes parecem níveis de plano do mesmo endereço,
+  e nesse caso cabe uma seção `[Todos]`, ainda não feita.
+- ⚠ **O WhatsApp não tem link com texto**: não renderiza markdown nem HTML, só
+  torna clicável a URL escrita. Por isso a sugestão de pôr os sete arquivos
+  numa pasta só — e por isso `blocoDaDocumentacao` colapsa para UM link quando
+  todos apontam para o mesmo endereço.
+- ⚠⚠ **`TIPO DE PRODUTO` é dropdown, e a API crua devolve o ID DA OPÇÃO**,
+  nunca o nome. Ler `value` como texto devolve um UUID, que não casa com nome
+  de produto nenhum — a documentação não sairia, **em silêncio**. Quem traduz é
+  `opcaoEscolhida`, que já existia para a venda autônoma. Vale para qualquer
+  campo de lista lido de uma task.
+- ⚠ **A frase do e-mail mudou duas vezes no mesmo dia, e a segunda é a certa.**
+  Ela dizia "a documentação já foi enviada por e-mail". Eu a troquei achando
+  que ninguém enviava — entendi errado o Diego, que sempre disse o contrário: o
+  e-mail EXISTE. Mas ele sai quando a task entra em `ongoing`, que é DEPOIS
+  dessa mensagem, e desde o anexo pode não sair. Hoje ela anuncia o e-mail como
+  algo que **vem**, nunca como algo que foi.
+
 ### O primeiro dia do fluxo de contratação, e os três defeitos que ele mostrou
 
 Relato do Diego em 11/11/2026, depois da primeira contratação real de ponta a
