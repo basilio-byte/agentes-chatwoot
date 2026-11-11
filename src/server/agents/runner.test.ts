@@ -380,3 +380,36 @@ ${AVISO_TEXTO_JUNTO}`);
   });
 });
 
+
+/**
+ * O que ficou invisível em 10/11/2026: o turno do agente de contratos gastou as
+ * 12 etapas, foi cortado logo depois de comentar na task, e as duas etiquetas
+ * que o próximo agente espera nunca foram marcadas. A execução ficou verde, com
+ * resposta vazia e sem erro, e a conclusão de quem leu foi que o modelo havia
+ * ignorado o prompt.
+ */
+describe("turno cortado no teto de etapas", () => {
+  it("⚠ fica SUCCESS — relançar duplicaria contrato — mas com a ressalva escrita", async () => {
+    // Treze pedidos de ferramenta para um teto de doze: o turno nunca chega ao
+    // texto final.
+    respostasOpenRouter = Array.from({ length: 13 }, (_, i) => pedeTool(`passo ${i}`));
+
+    const r = await rodar();
+
+    expect(r.atingiuLimiteDeIteracoes).toBe(true);
+    const fim = finalDaExecucao();
+    expect(fim.status).toBe("SUCCESS");
+    expect(fim.iterations).toBe(12);
+    expect(fim.error).toContain("[parou no limite de etapas]");
+    // O número é o que alguém vai mudar, então ele aparece.
+    expect(fim.error).toContain("12");
+  });
+
+  it("turno que termina não ganha ressalva nenhuma", async () => {
+    respostasOpenRouter = [pedeTool("sala 3"), final("A sala 3 está livre.", 0.001)];
+
+    await rodar();
+
+    expect(finalDaExecucao().error).toBeNull();
+  });
+});

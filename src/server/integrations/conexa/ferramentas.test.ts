@@ -463,12 +463,12 @@ describe("clientes", () => {
     )) as Record<string, unknown>;
 
     expect(r).toMatchObject({ criado: false, jaExistia: true, contratoId: 12946 });
-    expect(String(r.link)).toContain("idCliente=6048");
+    expect(String(r.telaDoContratoNoErp)).toContain("idCliente=6048");
     // Nenhum POST: o contrato novo não chegou a ser criado.
     expect(chamadas.every((c) => c.metodo === "GET")).toBe(true);
   });
 
-  it("contrato: outro plano do mesmo cliente não barra, e o link volta pronto", async () => {
+  it("contrato: outro plano do mesmo cliente não barra, e os DOIS links vêm separados", async () => {
     responder(({ metodo }) =>
       metodo === "GET"
         ? { corpo: { data: [{ contractId: 12946, planId: 151, isActive: true }], pagination: { hasNext: false } } }
@@ -481,7 +481,16 @@ describe("clientes", () => {
     )) as Record<string, unknown>;
 
     expect(r).toMatchObject({ criado: true, contratoId: 7777 });
-    expect(String(r.link)).toContain("r=vendaRecorrente/gerenciarContratos&idCliente=6048");
+    expect(String(r.telaDoContratoNoErp)).toContain(
+      "r=vendaRecorrente/gerenciarContratos&idCliente=6048",
+    );
+    // ⚠ O defeito de 10/11/2026: a tela interna do ERP saiu no comentário da
+    // task anunciada como link de pagamento. Não existe mais um campo `link`
+    // para o modelo confundir, e sem cobrança o link do cliente é nulo — nunca
+    // a tela interna.
+    expect("link" in r).toBe(false);
+    expect(r.linkDePagamentoDoCliente).toBeNull();
+    expect(String(r.avisoSobreOsLinks)).toContain("painel interno");
   });
 
   it("contrato: sem conseguir conferir, NÃO cria", async () => {

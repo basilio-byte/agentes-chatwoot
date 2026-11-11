@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  cobrancaDoContrato,
-  cobrancaPaga,
   contratacaoDaTask,
   documentoAssinado,
   execucoesDaTask,
@@ -148,36 +146,6 @@ describe("linkDeAssinatura", () => {
   it("sem signatário, nada", () => {
     expect(linkDeAssinatura({ signatarios: [] })).toBeNull();
     expect(linkDeAssinatura({})).toBeNull();
-  });
-});
-
-describe("cobrancaDoContrato", () => {
-  const cobrancas = [
-    { id: 32132, status: "unpaid", faturaUrl: "https://conexa/f/aaa", vendas: [66423] },
-    { id: 32200, status: "unpaid", faturaUrl: "https://conexa/f/bbb", vendas: [70000] },
-  ];
-
-  it("⚠ acha pela VENDA do contrato, não pela mais recente do cliente", () => {
-    expect(cobrancaDoContrato(cobrancas, new Set([70000]))?.id).toBe(32200);
-    expect(cobrancaDoContrato(cobrancas, new Set([66423]))?.id).toBe(32132);
-  });
-
-  it("entre as do contrato, a primeira é a que começa a contratação", () => {
-    expect(cobrancaDoContrato(cobrancas, new Set([66423, 70000]))?.id).toBe(32132);
-  });
-
-  it("nenhuma venda do contrato: não inventa cobrança", () => {
-    expect(cobrancaDoContrato(cobrancas, new Set([1]))).toBeNull();
-  });
-});
-
-describe("cobrancaPaga", () => {
-  it("só `paid` é pago", () => {
-    expect(cobrancaPaga("paid")).toBe(true);
-    expect(cobrancaPaga("unpaid")).toBe(false);
-    expect(cobrancaPaga("negotiated")).toBe(false);
-    expect(cobrancaPaga("cancelled")).toBe(false);
-    expect(cobrancaPaga(null)).toBe(false);
   });
 });
 

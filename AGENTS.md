@@ -2055,8 +2055,131 @@ confirmação total move a task para `ongoing`.
 - ⏳ **Efeito colateral conhecido, não resolvido:** a mensagem do sistema é
   pública e vira a última mensagem da conversa — então o Assistente Vendedor,
   que procura conversas paradas, deixa de enxergar aquela.
-- ⏳ **Sem tela ainda**: liga/desliga pelo `ligar_desligar_integracao` do MCP. O
-  desfecho de cada rodada sai em `ver_acompanhamento_de_contratos`.
+- **Liga/desliga pela aba Acompanhamento de Integrações** (ADMIN, com aviso e
+  auditoria: é o único registro de quem autorizou o robô a falar por cima de um
+  vendedor). ⚠ NÃO pelo `ligar_desligar_integracao` do MCP, que só atende
+  integrações do registry. O desfecho de cada rodada sai em
+  `ver_acompanhamento_de_contratos`.
+- ⚠⚠ **Task ARQUIVADA é invisível para a rodada, e parece que não deveria ser.**
+  Achado em 11/11/2026, no primeiro dia real: a task estava em
+  `🏃‍♂️onboarding`, com as duas etiquetas, e a rodada dizia `tarefas: 0`.
+  Task arquivada some de TODO filtro de lista e de workspace do ClickUp,
+  enquanto `GET /task/{id}` continua devolvendo status e etiquetas normalmente
+  — então, olhando a task, tudo parece certo. Quem prova é
+  `states.is_archived` no objeto cru (`task get_many` do MCP; `ClickUpTarefa`
+  tem `archived`, que a listagem não traz). ⏳ A rodada ainda não distingue
+  "não há nada na fila" de "a task está arquivada": o caminho é conferir por
+  ID as tasks com contratação recente do Agente 2, sem depender do filtro.
+
+### O primeiro dia do fluxo de contratação, e os três defeitos que ele mostrou
+
+Relato do Diego em 11/11/2026, depois da primeira contratação real de ponta a
+ponta (task `17twvjx2j2w`, venda fechada pelo Everton às 22:12 do dia 10).
+Nenhum dos três era o que parecia, e nenhum era o prompt ignorando instrução.
+
+#### 1. As etiquetas não subiram: o turno estourou o teto de etapas
+
+A execução das 22:13 tem `iteracoes: 12` com `maxToolIterations: 12`, resposta
+final **vazia** e `erro: null`. A décima segunda chamada foi o comentário na
+task; as etiquetas são as etapas 13 e 14 do roteiro, e são **uma chamada cada**.
+O prompt não cabia em 12 nem no caminho feliz: o mínimo são 10.
+
+- ⚠⚠ **E a execução ficou registrada como SUCESSO limpo.** O runner devolve
+  `atingiuLimiteDeIteracoes`, mas só a mesa, o playground e a chamada interna
+  olhavam para ele: nada ia para o `AgentRun`. Em Execuções, em Entregas e no
+  MCP, o turno cortado era indistinguível de um que terminou — e a conclusão
+  natural de quem leu foi que o modelo tinha ignorado o prompt.
+  Hoje `AgentRun.error` recebe a marca `[parou no limite de etapas]`
+  (`lib/limite-de-etapas.ts`), o cartão de Execuções ganha o selo em tom de
+  aviso, e `listar_execucoes` a devolve.
+  ⚠ **A execução continua `SUCCESS`, de propósito**: virar `ERROR` faria o
+  BullMQ reexecutar o turno inteiro, que não é idempotente — segundo documento
+  na ZapSign e **segundo contrato no Conexa**, que é segunda cobrança
+  recorrente no cliente. Entre uma execução verde com ressalva escrita e um
+  contrato em dobro, a ressalva é barata.
+- **O teto dos dois agentes de contrato subiu para 20** (o máximo que o painel
+  aceita), e o prompt encurtou — ver logo abaixo.
+
+#### 2. Três etapas gastas à toa, porque a unidade volta como NÚMERO
+
+`conexa_buscar_cliente` e `conexa_ver_cliente` devolvem `"unidade": 3`, e a
+tabela de planos do prompt estava escrita por NOME (`SEAHUB COWORKING` /
+`SEATECH`). Sem como mapear, o modelo fez o que dava: buscou o mesmo CPF de novo
+com `unidade: "Seahub Coworking"` (achou) e com `unidade: "Seatech"` (não achou)
+para deduzir qual era. Gastou três etapas — inclusive o `conexa_ver_cliente`,
+que era redundante, porque a busca já trouxera a unidade.
+
+Hoje a tabela dos dois prompts é por número (**3 = SEAHUB COWORKING, 4 =
+SEATECH**, os mesmos que a configuração das notas fiscais já usa), e o prompt
+diz em letras claras para não reconsultar só por causa disso.
+
+#### 3. ⚠⚠ "O link de pagamento era o link do perfil do usuário"
+
+O comentário saiu com `Contrato no Conexa:
+…r=vendaRecorrente/gerenciarContratos&idCliente=6049`, que é **tela interna do
+ERP**. O modelo não desobedeceu: obedeceu. `conexa_criar_contrato` devolvia um
+campo chamado `link`, e o prompt mandava publicar "o link devolvido pela
+ferramenta". **Um campo chamado `link` ao lado de um contrato é lido como "o
+link do contrato" por qualquer modelo** — a ferramenta oferecia a isca.
+
+- **O conserto é no RETORNO, não no prompt** (`conexa/cobranca-do-contrato.ts`):
+  a ferramenta passou a devolver `linkDePagamentoDoCliente` (o `chargeUrl` da
+  cobrança daquele contrato) e `telaDoContratoNoErp`, mais um `avisoSobreOsLinks`
+  dizendo que o segundo nunca vai ao cliente. Não existe mais campo `link`, e há
+  teste travando isso. Retorno de tool vence o prompt.
+- ⚠ **Sem cobrança, o link do cliente é NULO — nunca a tela interna.** O aviso
+  manda escrever no comentário que o link de pagamento ainda não saiu.
+- **O resolvedor é o mesmo do acompanhamento de contratos** (cobrança → venda →
+  contrato, a mais antiga), que mudou de casa para o módulo do Conexa quando
+  passou a ter dois donos. ⚠ Ele **nunca lança**: o contrato já foi criado
+  quando ele roda, e deixar a exceção subir faria o agente tentar de novo e
+  criar o segundo contrato que `duplicidade.ts` existe para evitar.
+- ⚠ **"O agente tem que faturar a primeira cobrança e gerar" (pedido do Diego)
+  não tem endpoint.** A API do Conexa tem `criarCobranca` e faturar RESERVA;
+  não há como faturar a cobrança de um contrato. O que existe é a cobrança que
+  o próprio contrato gera — e é o `chargeUrl` dela que vai ao cliente. Quem
+  fatura, se for preciso faturar, é uma pessoa na tela do ERP.
+
+#### 4. A task corrigida à mão não voltava para ninguém
+
+*"Faltou uma informação, fiz a correção manual e a nada mais funcionou."* Não era
+defeito: o Agente 1 é acionado por uma automação do ClickUp que dispara na
+**mudança de status** para `📝 contrato`. Preencher um campo não muda status
+nenhum, então não havia o que disparar.
+
+`src/server/validacao-de-contratos/` resolve, no relógio do vigia, de 10 em 10
+minutos e em horário comercial:
+
+- ⚠ **Não roda o modelo a cada 10 minutos.** Isso seria uma chamada paga por
+  task parada, para sempre, quase toda vez para concluir que nada mudou. A
+  rodada compara o `date_updated` que o ClickUp já mantém com o que ela anotou
+  da vez anterior, e só aciona quando a task MUDOU. Parada, custa uma listagem.
+- ⚠ **A primeira vez que vê uma task, não aciona ninguém** — só anota. A
+  automação do ClickUp já disparou quando a task entrou na fila, e sem essa
+  regra o primeiro boot depois do deploy acionaria o agente para toda task
+  parada em `📝 contrato` de uma vez.
+- **Quem é acionado é o agente que JÁ cuidou daquela task**, lido das
+  `ToolCall` daquele `tarefaId` em execuções de gatilho — não há chave de agente
+  escrita no código nem configuração nova. De quebra, isso impede a varredura de
+  acionar agente em task que a equipe pôs na fila à mão e que nenhum agente
+  nunca viu. Agente desligado, arquivado ou com gatilho desligado não conta.
+- **Aciona pela fila do gatilho HTTP**, com `WebhookEvent` de provider `TRIGGER`
+  criado ANTES do job: a entrega aparece em Entregas como qualquer outra, e a
+  chave (`reconferencia:<task>:<date_updated>`) faz a unique impedir que a mesma
+  correção vire dois turnos.
+- **O payload imita o da automação do ClickUp**, com a task em `payload` e o id
+  em `payload.id`: é de lá que o prompt manda tirar o id. Outro formato faria o
+  agente não achar a task e encerrar sem fazer nada.
+- ⚠ **O status da fila tem EMOJI** (`📝 contrato`). O filtro da API vai literal;
+  `ehAFila` compara por "contém contrato" como segunda peneira, e nenhum outro
+  status da lista contém essa palavra (`distrato` não contém).
+
+#### A ordem das ETAPAS mudou nos dois prompts: etiqueta ANTES de comentário
+
+A etiqueta é a **fila** — é por ela que o Agente 3 pega o trabalho. O comentário
+é registro, e registro espera. Com a ordem antiga, um turno cortado deixava a
+contratação parada com os dois documentos prontos; com a nova, o que pode faltar
+é o comentário. EV v12 e SeaBox v7, em 11/11/2026.
 
 ### Notas fiscais (Spedy): modo sombra primeiro
 

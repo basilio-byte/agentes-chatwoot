@@ -12,8 +12,11 @@ import { abrirConexa } from "@/server/integrations/conexa/sistema";
 import type { ClickUpTarefa } from "@/server/integrations/clickup/tipos";
 
 import {
-  cobrancaDoContrato,
+  cobrancaDoContratoNoConexa,
   cobrancaPaga,
+  type LeitorDeCobrancas,
+} from "@/server/integrations/conexa/cobranca-do-contrato";
+import {
   contratacaoDaTask,
   documentoAssinado,
   type Chamada,
@@ -60,9 +63,6 @@ const CAMPO_RESPONSAVEL = "feaf1d19-755e-4b84-850a-b1ad42ee5957";
 
 /** Até onde a rodada olha para trás nas ferramentas que o Agente 2 usou. */
 export const DIAS_PARA_TRAS = 60;
-
-/** Teto de vendas consultadas por task ao amarrar a cobrança ao contrato. */
-export const VENDAS_POR_TAREFA = 8;
 
 let ultimaConferencia = 0;
 let rodando = false;
@@ -205,7 +205,7 @@ async function etapasJaEnviadas(taskId: string): Promise<Set<Etapa>> {
 
 /** O que a rodada abriu uma vez e usa em toda task. */
 type Leituras = {
-  conexa: ClienteDoConexa | null;
+  conexa: LeitorDeCobrancas | null;
   verDocumento: VerDocumento | null;
 };
 
@@ -299,46 +299,9 @@ async function conferirEstado(contratacao: Contratacao, leitura: Leituras) {
  * cobrar o valor errado. É o mesmo caminho das notas fiscais. O teto de
  * consultas existe porque cada venda é uma ida ao ERP.
  */
-type ClienteDoConexa = {
-  listarCobrancas: (f: Record<string, unknown>) => Promise<{ itens: unknown[] }>;
-  obterVenda: (id: number) => Promise<unknown>;
-};
-
 type VerDocumento = (
   documentoId: string,
 ) => Promise<{ status?: string | null; signatarios?: Array<{ situacao?: string | null }> | null } | null>;
-
-async function cobrancaDoContratoNoConexa(
-  cliente: ClienteDoConexa,
-  clienteId: number,
-  contratoId: number,
-) {
-  const { itens } = await cliente.listarCobrancas({ customerId: clienteId, limit: 25 });
-
-  const cobrancas = (itens as Array<Record<string, unknown>>).map((c) => ({
-    id: Number(c.chargeId ?? c.id) || null,
-    status: typeof c.status === "string" ? c.status : null,
-    faturaUrl: typeof c.chargeUrl === "string" ? c.chargeUrl : null,
-    vendas: Array.isArray(c.salesIds) ? c.salesIds.map(Number).filter(Number.isFinite) : [],
-  }));
-
-  const doContrato = new Set<number>();
-  let consultadas = 0;
-  for (const c of cobrancas) {
-    for (const venda of c.vendas) {
-      if (consultadas >= VENDAS_POR_TAREFA) break;
-      consultadas++;
-      try {
-        const bruta = (await cliente.obterVenda(venda)) as Record<string, unknown>;
-        if (Number(bruta.contractId) === contratoId) doContrato.add(venda);
-      } catch {
-        // Venda que não abre não amarra nada; a rodada seguinte tenta de novo.
-      }
-    }
-  }
-
-  return cobrancaDoContrato(cobrancas, doContrato);
-}
 
 /** O cliente da ZapSign, já pronto para detalhar um documento. */
 async function abrirZapSign() {

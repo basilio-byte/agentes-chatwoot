@@ -27,6 +27,7 @@ import {
   ehInterrupcao,
   limparPedido,
 } from "./cancelamento";
+import { marcarLimiteDeEtapas } from "@/lib/limite-de-etapas";
 import { ehSemCredito, marcarSemCredito } from "./sem-credito";
 import { avisarTextoJunto } from "./texto-junto";
 import { RunSource, RunStatus } from "@/generated/prisma/enums";
@@ -375,6 +376,13 @@ export async function executarAgente(
         model: modeloUsado,
         motor: motorUsado,
         voltaDoProxy,
+        // ⚠ Turno cortado no teto de etapas fica `SUCCESS` com a ressalva
+        // escrita, e não `ERROR`: o erro faria o BullMQ reexecutar o turno
+        // inteiro, que não é idempotente — segundo documento na ZapSign,
+        // segundo contrato no Conexa. Ver `limite-de-etapas.ts`.
+        error: atingiuLimite
+          ? marcarLimiteDeEtapas(agente.maxToolIterations)
+          : null,
         output: resposta,
         messages: JSON.parse(JSON.stringify(messages)),
         ...uso,

@@ -18,6 +18,7 @@ import { conferirAutoVendas } from "@/server/auto-venda/conferir";
 import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { propagarReajustes } from "@/server/renovacao/propagar";
 import { acompanharContratos } from "@/server/acompanhamento/conferir";
+import { conferirValidacaoDeContratos } from "@/server/validacao-de-contratos/conferir";
 import { pedirAquecimentoDoPainel } from "@/server/painel/aquecer";
 import { vereditoDaEscalada } from "./escalada";
 import { esperouDemais, minutosDeEspera } from "./espera";
@@ -323,6 +324,18 @@ export function iniciarVigia(): NodeJS.Timeout {
       }
     } catch (erro) {
       logger.error({ erro }, "o acompanhamento de contratos falhou");
+    }
+
+    // Re-conferência de contratos: de dez em dez minutos, devolve à fila a task
+    // que a equipe corrigiu à mão. ⚠ Só aciona o agente quando a task MUDOU
+    // desde a última olhada — parada, a rodada custa uma listagem.
+    try {
+      const rodada = await conferirValidacaoDeContratos();
+      if (rodada.acao === "conferido" && rodada.acionadas) {
+        logger.info(rodada, "re-conferência de contratos");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "a re-conferência de contratos falhou");
     }
   };
 

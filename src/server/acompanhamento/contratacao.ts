@@ -131,28 +131,12 @@ export function linkDeAssinatura(saida: Record<string, unknown>): string | null 
   return texto(obj(signatarios[0]).linkParaAssinar);
 }
 
-/**
- * A cobrança daquele contrato, entre as do cliente.
- *
- * ⚠ **O vínculo é cobrança → venda → contrato**, e não "a mais recente do
- * cliente": um cliente que contrata um segundo produto tem duas cobranças
- * contratuais abertas ao mesmo tempo, e mandar a do outro produto seria cobrar
- * o valor errado. É o mesmo caminho que as notas fiscais usam.
+/*
+ * ⚠ `cobrancaDoContrato` e `cobrancaPaga` MUDARAM DE CASA em 11/11/2026, para
+ * `integrations/conexa/cobranca-do-contrato.ts`: deixaram de ser só da rodada
+ * do acompanhamento quando `conexa_criar_contrato` passou a devolver o link de
+ * pagamento do cliente. Dois donos, um lugar.
  */
-export function cobrancaDoContrato(
-  cobrancas: Array<{ id: number | null; status: string | null; faturaUrl: string | null; vendas: number[] }>,
-  vendasDoContrato: ReadonlySet<number>,
-) {
-  const daqui = cobrancas.filter((c) => c.vendas.some((v) => vendasDoContrato.has(v)));
-  // A mais antiga é a primeira do contrato — é a que o cliente precisa pagar
-  // para a contratação começar.
-  return daqui.sort((a, b) => (a.id ?? 0) - (b.id ?? 0))[0] ?? null;
-}
-
-/** O Conexa chama de `paid` a cobrança quitada. Pago em parte não é pago. */
-export function cobrancaPaga(status: string | null | undefined) {
-  return (status ?? "").trim().toLowerCase() === "paid";
-}
 
 /**
  * O documento está assinado?

@@ -14,6 +14,7 @@ import {
   periodoDaAgenda,
 } from "./entrada";
 import { conferirHorario, instanteEmSaoPaulo } from "./agenda";
+import { linksDoContrato } from "./cobranca-do-contrato";
 import { escolherSolicitante, pessoaDaApi } from "./solicitante";
 import {
   cadastroExistente,
@@ -633,7 +634,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_criar_contrato",
       categoria: "Contratos",
       description:
-        "Cria o contrato do cliente num plano. É o passo que efetiva a venda no ERP e começa a cobrança recorrente. Confirme plano, periodicidade e data de início ANTES de chamar. Se o cliente já tiver contrato ativo NESSE plano, não cria outro: devolve o que já existe. Devolve também o link da tela de contratos do cliente, pronto para registrar num comentário — use esse link, não monte um.",
+        "Cria o contrato do cliente num plano. É o passo que efetiva a venda no ERP e começa a cobrança recorrente. Confirme plano, periodicidade e data de início ANTES de chamar. Se o cliente já tiver contrato ativo NESSE plano, não cria outro: devolve o que já existe. Devolve DOIS endereços, e eles não são a mesma coisa: `linkDePagamentoDoCliente` é o que o cliente abre para pagar, e `telaDoContratoNoErp` é painel interno da equipe — nunca mande o segundo ao cliente. Use os links que vierem; não monte endereço.",
       requiresConfirmation: true,
       inputSchema: z.object({
         clienteId: z.number().int().positive(),
@@ -691,7 +692,7 @@ export const conexaIntegration: IntegrationDefinition = {
             jaExistia: true,
             contratoId: jaExiste.id,
             inicio: jaExiste.inicio,
-            link: linkDoClienteNoConexa(config.baseUrl, args.clienteId),
+            ...(await linksDoContrato(cliente, config.baseUrl, args.clienteId, jaExiste.id)),
             observacao:
               "O cliente JÁ tem um contrato ativo neste plano — nenhum contrato novo foi criado, para não gerar cobrança em dobro. Use o contrato acima. Se a contratação for mesmo outra (outro endereço, por exemplo), peça para alguém da equipe criar no Conexa.",
           };
@@ -711,9 +712,7 @@ export const conexaIntegration: IntegrationDefinition = {
         return {
           criado: true,
           contratoId: id,
-          // Montado aqui, e não pelo modelo: é o link que vai para o comentário
-          // da task, e endereço inventado parece certo e não leva a lugar nenhum.
-          link: linkDoClienteNoConexa(config.baseUrl, args.clienteId),
+          ...(await linksDoContrato(cliente, config.baseUrl, args.clienteId, id)),
           proximoPasso:
             "Para o cliente assinar, chame conexa_enviar_contrato_para_assinatura.",
         };
