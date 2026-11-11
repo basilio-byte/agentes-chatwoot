@@ -336,3 +336,33 @@ function dataHora(d: Date) {
     .format(d)
     .replace(",", "");
 }
+
+/**
+ * O turno que acabou de pôr a contratação na fila merece a rodada NA HORA.
+ *
+ * Pedido do Diego em 11/11/2026, no primeiro teste limpo: *"ele não pode gerar
+ * via webhook após as duas etiquetas serem adicionadas? aí evita ele ficar
+ * rodando sempre"*. O relógio continua — é ele que confere pagamento e
+ * assinatura ao longo de dias, e isso não tem como ser evento. O que a espera
+ * de até 10 minutos custava era só o PRIMEIRO envio, e esse dá para adiantar.
+ *
+ * ⚠ **Por que não a automação de "etiqueta adicionada" do ClickUp**, que foi a
+ * ideia dele: o agente aplica as DUAS etiquetas em duas chamadas separadas, e
+ * uma automação por etiqueta dispararia na primeira — com a task ainda pela
+ * metade. Aqui o gatilho é o FIM do turno, quando as duas já entraram.
+ */
+export function poeNaFilaDoAcompanhamento(
+  chamadas: Array<{ nome: string; input: unknown; isError: boolean }>,
+): boolean {
+  return chamadas.some((c) => {
+    if (c.nome !== "clickup_adicionar_tag" || c.isError) return false;
+    const tag = etiquetaDoInput(c.input);
+    return tag === ETIQUETA_PAGAMENTO || tag === ETIQUETA_ASSINATURA;
+  });
+}
+
+function etiquetaDoInput(input: unknown): string | null {
+  if (!input || typeof input !== "object") return null;
+  const tag = (input as { tag?: unknown }).tag;
+  return typeof tag === "string" ? tag.trim().toLowerCase() : null;
+}

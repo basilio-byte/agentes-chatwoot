@@ -138,6 +138,7 @@ export async function acompanharContratos(
             "clickup_comentar_tarefa",
             "clickup_adicionar_tag",
             "zapsign_gerar_contrato",
+            "zapsign_ver_documento",
             "conexa_criar_contrato",
           ],
         },

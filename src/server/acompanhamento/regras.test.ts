@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  poeNaFilaDoAcompanhamento,
   aindaNoCiclo,
   chaveDaEtapa,
   comentarioDaEtapa,
@@ -246,5 +247,55 @@ describe("rastro para a equipe", () => {
 
   it("a reserva é por task e etapa", () => {
     expect(chaveDaEtapa("86adm4t1k", "pagamento")).toBe("pagamento:86adm4t1k");
+  });
+});
+
+/**
+ * Pedido do Diego em 11/11/2026: não esperar o relógio para o primeiro envio.
+ * Ele propôs uma automação de "etiqueta adicionada" no ClickUp; o gatilho aqui
+ * é o FIM do turno, porque as duas etiquetas entram em chamadas separadas e a
+ * automação dispararia na primeira.
+ */
+describe("poeNaFilaDoAcompanhamento", () => {
+  const tag = (t: string, isError = false) => ({
+    nome: "clickup_adicionar_tag",
+    input: { tag: t, tarefaId: "17twvjx2kmm" },
+    isError,
+  });
+
+  it("turno que marcou uma etiqueta do fluxo chama a rodada", () => {
+    expect(poeNaFilaDoAcompanhamento([tag("pagamento pendente")])).toBe(true);
+    expect(poeNaFilaDoAcompanhamento([tag("falta assinatura")])).toBe(true);
+  });
+
+  it("etiqueta de outro assunto não chama", () => {
+    expect(poeNaFilaDoAcompanhamento([tag("venda autonoma")])).toBe(false);
+    expect(poeNaFilaDoAcompanhamento([tag("ganho")])).toBe(false);
+  });
+
+  it("turno sem etiqueta nenhuma não chama", () => {
+    expect(
+      poeNaFilaDoAcompanhamento([
+        { nome: "clickup_comentar_tarefa", input: { texto: "oi" }, isError: false },
+        { nome: "conexa_criar_contrato", input: { clienteId: 6050 }, isError: false },
+      ]),
+    ).toBe(false);
+  });
+
+  it("⚠ etiqueta que FALHOU não chama: não há nada na fila", () => {
+    expect(poeNaFilaDoAcompanhamento([tag("pagamento pendente", true)])).toBe(false);
+  });
+
+  it("caixa e espaço no nome não enganam", () => {
+    expect(poeNaFilaDoAcompanhamento([tag("  Pagamento Pendente  ")])).toBe(true);
+  });
+
+  it("input sem tag não quebra", () => {
+    expect(
+      poeNaFilaDoAcompanhamento([
+        { nome: "clickup_adicionar_tag", input: null, isError: false },
+        { nome: "clickup_adicionar_tag", input: { tag: 7 }, isError: false },
+      ]),
+    ).toBe(false);
   });
 });

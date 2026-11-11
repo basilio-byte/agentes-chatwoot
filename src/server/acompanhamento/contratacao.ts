@@ -117,7 +117,14 @@ export function contratacaoDaTask(chamadas: Chamada[], taskId: string): Contrata
   for (const c of daTask) {
     const saida = obj(c.output);
 
-    if (c.toolName === "zapsign_gerar_contrato") {
+    // ⚠ `zapsign_ver_documento` conta tanto quanto `zapsign_gerar_contrato`, e
+    // os dois devolvem a MESMA forma (`documentoId` + `signatarios`). Quando o
+    // documento já existe — task reprocessada, ou o mesmo cliente voltando —, o
+    // prompt manda não gerar outro, e o agente só CONSULTA. Sem esta linha o
+    // acompanhamento ficava cego justamente aí: em 11/11/2026, no primeiro
+    // teste limpo do Diego, a rodada achou contrato e cobrança e parou em
+    // "aguardando o link de assinatura" com o link já existindo.
+    if (c.toolName === "zapsign_gerar_contrato" || c.toolName === "zapsign_ver_documento") {
       const doc = texto(saida.documentoId);
       if (doc) {
         achado.documentoZapSign = doc;

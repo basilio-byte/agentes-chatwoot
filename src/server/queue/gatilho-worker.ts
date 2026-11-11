@@ -2,6 +2,8 @@ import type { Job } from "bullmq";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { executarAgente } from "@/server/agents/runner";
+import { acompanharContratos } from "@/server/acompanhamento/conferir";
+import { poeNaFilaDoAcompanhamento } from "@/server/acompanhamento/regras";
 import { ehInterrupcao } from "@/server/agents/cancelamento";
 import { ehSemCredito, MOTIVO_SEM_CREDITO } from "@/server/agents/sem-credito";
 import { RunSource } from "@/generated/prisma/enums";
@@ -53,6 +55,18 @@ export async function processarGatilho(job: Job<JobGatilho>) {
       "executado",
       `run ${resultado.runId} · ${resultado.toolCalls.length} tool(s) · ${resultado.iteracoes} iteração(ões)`,
     );
+
+    // O turno acabou de pôr a contratação na fila do acompanhamento: roda a
+    // conferência agora, em vez de o cliente esperar o relógio de 10 minutos
+    // pelo primeiro envio. ⚠ Nunca derruba a entrega, que já está registrada.
+    if (poeNaFilaDoAcompanhamento(resultado.toolCalls)) {
+      try {
+        const rodada = await acompanharContratos({ forcar: true });
+        logger.info({ runId: resultado.runId, rodada }, "acompanhamento chamado pelo turno");
+      } catch (erro) {
+        logger.error({ erro }, "o acompanhamento chamado pelo turno falhou");
+      }
+    }
   } catch (erro) {
     // Parada pedida no painel encerra aqui: relançar faria o BullMQ rodar o
     // turno inteiro de novo, tools e tudo.

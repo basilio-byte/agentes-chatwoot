@@ -203,3 +203,41 @@ describe("o nome do parâmetro é `tarefaId`", () => {
     expect(execucoesDaTask(chamadas, "abc")).toEqual(new Set(["r"]));
   });
 });
+
+/**
+ * Achado no primeiro teste limpo do Diego (11/11/2026): a task foi
+ * reprocessada, o documento da ZapSign JÁ existia, e o agente — obedecendo o
+ * prompt — não gerou outro: só consultou. O acompanhamento achou contrato e
+ * cobrança e parou em "aguardando o link de assinatura", com o link existindo.
+ */
+describe("documento que já existia conta igual", () => {
+  it("⚠ `zapsign_ver_documento` entrega documento e link de assinatura", () => {
+    const chamadas = [
+      chamada({
+        runId: "r",
+        toolName: "clickup_obter_tarefa",
+        input: { tarefaId: "17twvjx2kmm" },
+      }),
+      chamada({
+        runId: "r",
+        toolName: "zapsign_ver_documento",
+        input: { documentoId: "751b0293" },
+        output: {
+          documentoId: "751b0293",
+          status: "pending",
+          signatarios: [
+            {
+              nome: "Tayná",
+              situacao: "nao_abriu",
+              linkParaAssinar: "https://app.zapsign.com.br/verificar/5159d047",
+            },
+          ],
+        },
+      }),
+    ];
+
+    const r = contratacaoDaTask(chamadas, "17twvjx2kmm");
+    expect(r.documentoZapSign).toBe("751b0293");
+    expect(r.linkAssinatura).toBe("https://app.zapsign.com.br/verificar/5159d047");
+  });
+});
