@@ -2083,6 +2083,38 @@ confirmação total move a task para `ongoing`.
   "não há nada na fila" de "a task está arquivada": o caminho é conferir por
   ID as tasks com contratação recente do Agente 2, sem depender do filtro.
 
+#### ✅ Provado em produção em 11/11/2026, e o que isso mediu
+
+Dois testes do Diego, com a contratação inteira:
+
+- **09:33, task `17twvjx2kmm`:** primeira vez que **os dois links chegaram ao
+  cliente**, com o link de pagamento sendo a FATURA. Mas a mensagem saiu às
+  **09:55**, 19 min depois de o agente terminar — o empurrão (`8355eff`) só foi
+  commitado às 09:49 e ainda não estava no ar, então caiu na grade de 10 min.
+- **10:23, task `17twvjx2mdh`:** Agente 2 comentou **10:26:43**, mensagem ao
+  cliente **10:26:57**. **14 segundos.** É a medida do empurrão, e o contraste
+  com os 19 min do teste anterior é a prova de que ele é quem encurta.
+
+⚠ **A etiqueta NÃO sai com a mensagem inicial.** `etiquetasASair` só devolve
+nome para as etapas `pagamento`, `assinatura` e `final`; na `inicial` não sai
+nada, e é isso que mantém a task na fila para as etapas seguintes. Ler uma task
+sem etiquetas depois da mensagem inicial significa que alguém as tirou à mão.
+
+⚠ **`ver_acompanhamento_de_contratos` guarda UMA linha por dia, e a sobrescreve
+a cada rodada.** Dá para saber a última rodada e o que ela fez; as anteriores
+somem. A ferramenta irmã da re-conferência devolve `rodadas` **e** `tarefas`;
+esta não tem o segundo, e é essa a melhoria se alguém for mexer — sem ela, o
+horário de um envio só se recupera pelos COMENTÁRIOS da task.
+
+⏳ **Decisão do usuário em 11/11: o trecho final FICA de 10 em 10 minutos.**
+Perguntado se dava para acelerar a saída das etiquetas e a ida para `ongoing`,
+propus reusar o webhook do Conexa (o mesmo que faz a nota fiscal sair na hora
+do pagamento) e criar um da ZapSign. Recusado, com o argumento que decide:
+essa etapa depende de DOIS eventos externos que **nunca chegam juntos** e cujas
+duas condições precisam ser verdadeiras — então **um webhook só ajuda quando o
+evento dele é o ÚLTIMO dos dois**, e nos outros casos espera-se o relógio
+igual. Se alguém reabrir, a pergunta é qual dos dois costuma ser o último.
+
 ### O primeiro dia do fluxo de contratação, e os três defeitos que ele mostrou
 
 Relato do Diego em 11/11/2026, depois da primeira contratação real de ponta a
@@ -2194,19 +2226,33 @@ enquanto; poucos clientes possuem mais de um contrato ativo assim; melhor
 atender a maioria"*. Fica escrito aqui porque o dia em que acontecer alguém vai
 procurar a causa.
 
-Duas travas assumem **um contrato por plano por cliente**, e as duas erram
-nesse caso:
+Duas travas assumiam **um contrato por plano por cliente**. Uma delas foi
+retirada no mesmo dia (ver logo abaixo); a que sobra é esta:
 
 - ⚠ **`conexa_criar_contrato` recusa o segundo** (`duplicidade.ts` casa cliente
   + plano + ativo) e devolve `jaExistia` com o contrato da PRIMEIRA empresa.
   Consequência: a task da segunda recebe o `linkDePagamentoDoCliente` da
   primeira — fatura errada, não cobrança em dobro (a trava de cobrança
   pendente segura o faturamento).
-- ⚠ **A regra de documento repetido do prompt** ("mesmo e-mail + mesmo modelo +
-  últimas 24 h") bloqueia o segundo documento quando a pessoa contrata vários
-  endereços no mesmo dia. A unidade de contratação é a TASK, e o próprio prompt
-  já tem o critério certo ao lado ("registro anterior na task"); é a regra das
-  24 h que sobra.
+
+##### ✅ A regra das 24 h do prompt saiu (EV v14, 11/11/2026)
+
+Ela dizia que contava como duplicidade "um documento criado nas últimas 24
+horas, para o mesmo e-mail, com o nome do mesmo modelo". **Não era só a
+limitação de vários endereços: ela quebrou o teste real do Diego.** Ele apagou
+o documento da ZapSign para refazer a contratação do zero; na task NOVA o
+agente achou o documento da task anterior, que casava nos três critérios, e o
+reaproveitou em vez de gerar outro — obedecendo o prompt.
+
+⚠ O documento apagado chegou a `zapsign_ver_documento` como `"status":
+"pending"`, e não como `excluido`: a leitura foi feita **antes** de o Diego
+apagar, e o que a travaria seria o critério, não o status.
+
+Hoje, nos dois prompts, **só conta a evidência DESTA task**; documento de outra
+task não conta, nem do mesmo e-mail, do mesmo modelo e de minutos atrás; e
+documento com status `excluido` nunca conta. De quebra o turno ficou mais
+barato: **9 ferramentas em vez de 11**, porque as duas buscas de duplicidade na
+ZapSign deixaram de ser necessárias.
 
 **Não é silencioso**, e é isso que torna a limitação aceitável: desde o EV v13 /
 SeaBox v8 o comentário da task leva UMA linha começando com ⚠ quando o contrato
