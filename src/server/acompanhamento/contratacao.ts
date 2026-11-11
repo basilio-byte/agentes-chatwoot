@@ -67,9 +67,31 @@ function inteiro(v: unknown): number | null {
 export function execucoesDaTask(chamadas: Chamada[], taskId: string): Set<string> {
   const runs = new Set<string>();
   for (const c of chamadas) {
-    if (texto(obj(c.input).taskId) === taskId) runs.add(c.runId);
+    if (idDaTarefa(c.input) === taskId) runs.add(c.runId);
   }
   return runs;
+}
+
+/**
+ * O id da task no input de uma ferramenta do ClickUp.
+ *
+ * ⚠⚠ **O parâmetro chama `tarefaId`, não `taskId`.** As ferramentas do ClickUp
+ * deste projeto são em português — são 76 `tarefaId` contra nenhum `taskId` —, e
+ * esta função procurava o nome errado. O efeito era mudo e total: nenhuma
+ * execução casava com task nenhuma, então o acompanhamento achava a task na
+ * fila, concluía que não havia contrato nem documento gerados, e não mandava
+ * nada. Nunca teria funcionado.
+ *
+ * Pior, os TESTES passavam: as chamadas de mentira deles foram escritas com
+ * `taskId`, então confirmavam a ficção em vez do mundo. Quem desmentiu foi a
+ * execução real de 10/11/2026 (`{"tarefaId": "17twvjx2j2w"}`).
+ *
+ * Os dois nomes são aceitos para o caso de uma ferramenta nova usar o outro —
+ * mas o que existe hoje é `tarefaId`.
+ */
+function idDaTarefa(input: unknown): string | null {
+  const dados = obj(input);
+  return texto(dados.tarefaId) ?? texto(dados.taskId);
 }
 
 /**

@@ -14,7 +14,7 @@ function chamada(extra: Partial<Chamada>): Chamada {
   return {
     runId: "r1",
     toolName: "clickup_obter_tarefa",
-    input: { taskId: TASK },
+    input: { tarefaId: TASK },
     output: {},
     createdAt: new Date("2026-11-10T12:00:00Z"),
     ...extra,
@@ -39,10 +39,10 @@ const SAIDA_CONEXA = {
 };
 
 describe("execucoesDaTask", () => {
-  it("amarra pelo taskId do input, que aparece em qualquer ferramenta do ClickUp", () => {
+  it("amarra pelo tarefaId do input, que aparece em qualquer ferramenta do ClickUp", () => {
     const chamadas = [
       chamada({ runId: "r1" }),
-      chamada({ runId: "r2", input: { taskId: "outra" } }),
+      chamada({ runId: "r2", input: { tarefaId: "outra" } }),
       chamada({ runId: "r3", toolName: "clickup_comentar_tarefa" }),
     ];
     expect([...execucoesDaTask(chamadas, TASK)].sort()).toEqual(["r1", "r3"]);
@@ -113,8 +113,8 @@ describe("contratacaoDaTask", () => {
 
   it("⚠ NÃO usa execução de outra task", () => {
     const chamadas = [
-      chamada({ runId: "r9", input: { taskId: "outra" } }),
-      // A chamada da ZapSign não leva `taskId` no input — quem amarra a
+      chamada({ runId: "r9", input: { tarefaId: "outra" } }),
+      // A chamada da ZapSign não leva `tarefaId` no input — quem amarra a
       // execução à task são as ferramentas do ClickUp do mesmo turno.
       chamada({
         runId: "r9",
@@ -177,5 +177,29 @@ describe("documentoAssinado", () => {
   it("recusado ou expirado não é assinado", () => {
     expect(documentoAssinado({ signatarios: [{ situacao: "recusou" }] })).toBe(false);
     expect(documentoAssinado({ signatarios: [{ situacao: "expirou" }] })).toBe(false);
+  });
+});
+
+/**
+ * ⚠⚠ O defeito que os testes escondiam até 11/11/2026: as chamadas de mentira
+ * usavam `taskId`, e a ferramenta de verdade manda `tarefaId`. Nenhuma execução
+ * casava com task nenhuma em produção, e o acompanhamento nunca teria enviado
+ * nada. Este caso usa o input REAL, copiado da execução de 10/11.
+ */
+describe("o nome do parâmetro é `tarefaId`", () => {
+  it("casa com o input real da ferramenta do ClickUp", () => {
+    const chamadas = [
+      chamada({
+        runId: "real",
+        toolName: "clickup_obter_tarefa",
+        input: { tarefaId: "17twvjx2j2w", incluirComentarios: true },
+      }),
+    ];
+    expect(execucoesDaTask(chamadas, "17twvjx2j2w")).toEqual(new Set(["real"]));
+  });
+
+  it("aceita `taskId` também, para a ferramenta que um dia use o outro nome", () => {
+    const chamadas = [chamada({ runId: "r", input: { taskId: "abc" } })];
+    expect(execucoesDaTask(chamadas, "abc")).toEqual(new Set(["r"]));
   });
 });
