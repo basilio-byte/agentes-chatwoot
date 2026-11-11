@@ -2160,9 +2160,19 @@ era o Felipe, à mão.
   em que as URLs dos hyperlinks **somem**. O array `comment` poderia tê-las em
   `attributes.link`, mas esse campo **não está documentado**.
 - ⚠ **Produto sem seção sai SEM links**, nunca com os de outro. Teste nos dois
-  sentidos. ⏳ Falta o Diego dizer se Litoral, Batial, Abissal e Comércio têm
-  documentação diferente — os nomes parecem níveis de plano do mesmo endereço,
-  e nesse caso cabe uma seção `[Todos]`, ainda não feita.
+  sentidos.
+- ⚠⚠ **"Uma documentação só para todo mundo" NÃO virou um `[Todos]` curinga**
+  (resposta do Diego em 11/11/2026, à pergunta que nomeava Litoral, Batial,
+  Abissal e Endereço de Comércio). Uma seção passou a nomear **vários
+  produtos, separados por vírgula**, e os quatro ficam nela: os links existem
+  uma vez só, sem quatro cópias para alguém esquecer de atualizar. O curinga
+  seria a leitura literal da frase e falha ABERTO — `TIPO DE PRODUTO` tem **37
+  opções** e a Base de clientes é a lista de TODO cliente, então SeaBox Básico,
+  SeaBox Pro, Sala Privativa, Pacote de Horas e **Endereço Fiscal Florânia**
+  (outra cidade) passam pela mesma fila do Agente 3: bastaria uma contratação
+  de sala para o cliente receber o AVCB de Capim Macio como "a documentação do
+  seu endereço". Nomear falha FECHADO. ⚠ O nome tem de ser **igual ao da opção
+  no ClickUp**, e a tela diz isso — nome torto não sai erro, sai silêncio.
 - ⚠ **O WhatsApp não tem link com texto**: não renderiza markdown nem HTML, só
   torna clicável a URL escrita. Por isso a sugestão de pôr os sete arquivos
   numa pasta só — e por isso `blocoDaDocumentacao` colapsa para UM link quando

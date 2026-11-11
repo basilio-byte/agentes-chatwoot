@@ -21,10 +21,20 @@
  * divergem. Por isso eles ficam em CONFIGURAÇÃO e não no código — a equipe
  * corrige sem deploy — e a tela diz que o original é a automação.
  *
- * ⚠ **Por produto.** O texto do ClickBot traz o endereço e a área construída
- * do prédio, e Litoral, Batial, Abissal e Comércio são endereços diferentes.
- * Mandar a documentação do prédio errado é pior do que não mandar nenhuma:
- * produto sem seção configurada sai SEM links, e a mensagem fica como era.
+ * ⚠ **Por produto, e uma seção pode nomear vários.** O Diego respondeu em
+ * 11/11/2026 que é "uma documentação só para todo mundo" — a pergunta nomeava
+ * Litoral, Batial, Abissal e Endereço de Comércio —, então os quatro ficam na
+ * MESMA seção, separados por vírgula, e os links existem uma vez só.
+ *
+ * ⚠⚠ **E por isso NÃO existe um `[Todos]` curinga**, que seria a leitura
+ * literal daquela frase. `TIPO DE PRODUTO` tem **37 opções**, e a Base de
+ * clientes é a lista de TODO cliente: SeaBox Básico, SeaBox Pro, Sala
+ * Privativa, Pacote de Horas e **Endereço Fiscal Florânia** — outra cidade —
+ * passam pela mesma fila do Agente 3. Curinga falha ABERTO: bastaria uma
+ * contratação de sala para o cliente receber "a documentação do endereço, para
+ * a alteração do domicílio" com o AVCB de Capim Macio. Nomear os produtos
+ * falha FECHADO: produto fora da lista sai SEM links e a mensagem fica como
+ * era. Entre o silêncio e a documentação do prédio errado, o silêncio.
  */
 
 export type DocumentoDoEndereco = { nome: string; url: string };
@@ -36,20 +46,26 @@ const MAX_NOME = 60;
  * O formato do campo: seções por produto, um documento por linha.
  *
  * ```
- * [Endereço Fiscal Litoral]
+ * [Endereço Fiscal Litoral, Endereço Fiscal Batial]
  * AVCB: https://drive.google.com/...
  * Habite-se: https://drive.google.com/...
  *
- * [Endereço Fiscal Batial]
+ * [Endereço Fiscal Florânia]
  * AVCB: https://...
  * ```
  *
- * Um campo só, e não um por produto: são seis produtos, e seis caixas de texto
- * numa tela que já é longa é pior de manter do que uma com seções.
+ * ⚠ **A vírgula na seção é o que evita a cópia.** Os mesmos sete links
+ * repetidos em quatro seções seriam quatro lugares para alguém esquecer de
+ * atualizar — e o desencontro só apareceria no WhatsApp de um cliente. Cada
+ * produto nomeado aponta para a MESMA lista.
+ *
+ * Um campo só, e não um por produto: são 37 opções no dropdown, e uma caixa de
+ * texto por produto numa tela que já é longa é pior de manter do que uma com
+ * seções.
  */
 export function lerDocumentos(texto: string | null | undefined): Record<string, DocumentoDoEndereco[]> {
   const porProduto: Record<string, DocumentoDoEndereco[]> = {};
-  let atual: string | null = null;
+  let atuais: string[] = [];
 
   for (const bruta of (texto ?? "").split(/\r?\n/)) {
     const linha = bruta.trim();
@@ -57,11 +73,16 @@ export function lerDocumentos(texto: string | null | undefined): Record<string, 
 
     const secao = /^\[(.+)\]$/.exec(linha);
     if (secao) {
-      atual = secao[1].trim();
-      porProduto[atual] ??= [];
+      // Vários produtos por seção. Nome vazio (`[ , ]`) sai fora: seção sem
+      // produto nenhum deixa as linhas dela sem dono, como antes da seção.
+      atuais = secao[1]
+        .split(",")
+        .map((p) => p.trim().replace(/\s+/g, " "))
+        .filter(Boolean);
+      for (const p of atuais) porProduto[p] ??= [];
       continue;
     }
-    if (!atual) continue;
+    if (atuais.length === 0) continue;
 
     // O nome vai até o PRIMEIRO dois-pontos; o resto é o endereço, que tem
     // dois-pontos dentro (`https:`). Partir pelo último quebraria tudo.
@@ -72,7 +93,7 @@ export function lerDocumentos(texto: string | null | undefined): Record<string, 
     const url = linha.slice(corte + 1).trim();
     if (!nome || !urlValida(url)) continue;
 
-    porProduto[atual].push({ nome, url });
+    for (const p of atuais) porProduto[p].push({ nome, url });
   }
 
   return porProduto;

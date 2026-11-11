@@ -42,6 +42,52 @@ describe("lerDocumentos", () => {
     expect(r.B).toEqual([]);
   });
 
+  /**
+   * O caso real: o Diego respondeu em 11/11/2026 que a documentação é "uma só
+   * para todo mundo", e a pergunta nomeava os quatro endereços. Os quatro
+   * ficam numa seção, e os links existem uma vez só — quatro cópias seriam
+   * quatro lugares para alguém esquecer de atualizar.
+   */
+  it("uma seção nomeia vários produtos, e cada um recebe a mesma lista", () => {
+    const r = lerDocumentos(
+      "[Endereço Fiscal Litoral, Endereço Fiscal Batial,Endereço de Comércio]\n" +
+        "AVCB: https://a.test/avcb\nART: https://a.test/art",
+    );
+    expect(Object.keys(r)).toEqual([
+      "Endereço Fiscal Litoral",
+      "Endereço Fiscal Batial",
+      "Endereço de Comércio",
+    ]);
+    for (const nome of Object.keys(r)) {
+      expect(r[nome]).toEqual([
+        { nome: "AVCB", url: "https://a.test/avcb" },
+        { nome: "ART", url: "https://a.test/art" },
+      ]);
+    }
+  });
+
+  /**
+   * ⚠⚠ O que esta capacidade NÃO pode fazer. `TIPO DE PRODUTO` tem 37 opções
+   * e a Base de clientes é a lista de TODO cliente: SeaBox e Florânia (outra
+   * cidade) passam pela mesma fila. "Todo mundo" é a frase do Diego sobre os
+   * endereços de Natal, não um curinga — quem não está nomeado sai sem links.
+   */
+  it("produto que não foi nomeado não recebe a documentação de ninguém", () => {
+    const config = lerDocumentos(
+      "[Endereço Fiscal Litoral, Endereço Fiscal Batial]\nAVCB: https://a.test/avcb",
+    );
+    expect(documentosDoProduto(config, "SeaBox Pro")).toEqual([]);
+    expect(documentosDoProduto(config, "Endereço Fiscal Florânia")).toEqual([]);
+    expect(documentosDoProduto(config, "Sala Privativa")).toEqual([]);
+    expect(documentosDoProduto(config, "Endereço Fiscal Batial")).toHaveLength(1);
+  });
+
+  it("vírgula sem nome não cria produto vazio nem engole as linhas", () => {
+    const r = lerDocumentos("[A, , B]\nAVCB: https://a.test/1");
+    expect(Object.keys(r)).toEqual(["A", "B"]);
+    expect(r.A).toHaveLength(1);
+  });
+
   it("linha antes de qualquer seção é ignorada: não sei de que prédio é", () => {
     expect(lerDocumentos("AVCB: https://a.test/1")).toEqual({});
   });

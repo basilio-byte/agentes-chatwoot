@@ -65,9 +65,17 @@ export function AcompanhamentoConfigForm({
         </label>
         <p className="text-sm text-muted">
           Estes links vão ao cliente no WhatsApp quando o pagamento e a
-          assinatura são confirmados. Um produto por seção, um documento por
-          linha. Produto sem seção aqui recebe a mensagem <strong>sem</strong>{" "}
-          links — melhor isso do que a documentação do prédio errado.
+          assinatura são confirmados. Uma seção por prédio, um documento por
+          linha. Se o mesmo prédio atende mais de um produto, nomeie todos na
+          mesma seção, separados por vírgula — assim os links existem uma vez
+          só. O nome tem de ser igual ao da opção em{" "}
+          <strong>TIPO DE PRODUTO</strong> no ClickUp.
+        </p>
+        <p className="text-sm text-muted">
+          ⚠ Produto que não estiver nomeado em nenhuma seção recebe a mensagem{" "}
+          <strong>sem</strong> links. É de propósito: esta lista é a mesma de
+          SeaBox, sala privativa e Florânia, e mandar a documentação de Capim
+          Macio a quem contratou outra coisa é pior do que não mandar nenhuma.
         </p>
         <textarea
           id="documentos"
@@ -77,11 +85,11 @@ export function AcompanhamentoConfigForm({
           spellCheck={false}
           disabled={somenteLeitura}
           placeholder={[
-            "[Endereço Fiscal Litoral]",
+            "[Endereço Fiscal Litoral, Endereço Fiscal Batial]",
             "AVCB: https://…",
             "Habite-se: https://…",
             "",
-            "[Endereço Fiscal Batial]",
+            "[Endereço Fiscal Florânia]",
             "AVCB: https://…",
           ].join("\n")}
           className="w-full rounded border border-borda bg-fundo px-3 py-2 font-mono text-xs"
