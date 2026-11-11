@@ -285,7 +285,13 @@ export function mensagemDaEtapa(etapa: Etapa, dados: DadosDaMensagem): string {
     "✅ Pagamento identificado",
     "✅ Assinatura identificada",
     "",
-    "Muito obrigado pela confiança no Seahub! A documentação referente à sua contratação já foi enviada por e-mail, com todas as orientações necessárias.",
+    // ⚠ Esta linha NÃO pode afirmar que a documentação já foi entregue. Até
+    // 11/11/2026 ela dizia "já foi enviada por e-mail, com todas as orientações
+    // necessárias" — e ninguém a envia: o texto com a documentação é o que o
+    // ClickBot escreve em COMENTÁRIO na task, que o cliente não vê. O cliente
+    // procurava no e-mail algo que não existia. Só volte a prometer um canal
+    // quando o sistema for quem entrega por ele.
+    "Em breve você recebe a documentação da sua contratação, com todas as orientações.",
     "",
     "Qualquer dúvida, é só chamar por aqui. Seja bem-vindo(a)! 🙌",
   ].join("\n");
