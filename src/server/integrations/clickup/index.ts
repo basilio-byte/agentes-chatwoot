@@ -51,6 +51,7 @@ import {
   resolverMembro,
 } from "./formatacao";
 import { nomesDisponiveis, prepararCampos, resolverCampo } from "./campos";
+import { devolverAoBacklog, type ResultadoDaDevolucao } from "./devolucao-ao-backlog";
 import { geocodificarEndereco } from "../geocodificacao/nominatim";
 import { resolverLocalizacoes, type AvisoDeLocalizacao } from "./localizacao-dos-campos";
 import { DIAS_SEM_REPETIR, aindaVale, tarefasNaLista, type TarefaAnterior } from "./repeticao";
@@ -500,14 +501,31 @@ export const clickupIntegration: IntegrationDefinition = {
           campos: camposComOsFatos(args.camposPersonalizados ?? [], fatos),
         });
 
+        // Venda de endereço que nasceu sem o que o contrato exige: vai para o
+        // Backlog e o comentário diz o que falta (a automação do ClickUp não a levaria
+        // à Base de clientes, e ninguém saberia por quê). Nunca lança.
+        let devolucao: ResultadoDaDevolucao | null = null;
+        if (pendenciasDoContrato && pendenciasDoContrato.length > 0) {
+          devolucao = await devolverAoBacklog({
+            cliente,
+            tarefaId: tarefa.id,
+            faltam: pendenciasDoContrato,
+          });
+        }
+
         return {
           criada: true,
           camposPreenchidos: custom_fields?.length ?? 0,
           ...formatarTarefa(tarefa),
           // É por ele que a barreira de task em dobro reconhece a lista.
           listaId: tarefa.list?.id ?? listaId,
-          ...(avisosDeLocalizacao.length > 0
-            ? { avisos: avisosDeLocalizacao.map((a) => `${a.campo}: ${a.motivo}`) }
+          ...(avisosDeLocalizacao.length > 0 || (devolucao && devolucao.problemas.length > 0)
+            ? {
+                avisos: [
+                  ...avisosDeLocalizacao.map((a) => `${a.campo}: ${a.motivo}`),
+                  ...(devolucao?.problemas ?? []),
+                ],
+              }
             : {}),
           // Venda de endereço fechada pelo agente: diz se os dados do contrato
           // estão na task. Quem lê é o modelo, que não consegue conferir os
@@ -517,8 +535,14 @@ export const clickupIntegration: IntegrationDefinition = {
             : pendenciasDoContrato.length === 0
               ? { contrato: { dadosCompletos: true } }
               : {
-                  contrato: { dadosCompletos: false, faltam: pendenciasDoContrato },
-                  observacao: avisoDeContratoIncompleto(pendenciasDoContrato),
+                  contrato: {
+                    dadosCompletos: false,
+                    faltam: pendenciasDoContrato,
+                    ...(devolucao
+                      ? { noBacklog: devolucao.noBacklog, motivoComentado: devolucao.comentou }
+                      : {}),
+                  },
+                  observacao: avisoDeContratoIncompleto(pendenciasDoContrato, devolucao),
                 }),
         };
       },

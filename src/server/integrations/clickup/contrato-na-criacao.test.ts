@@ -21,6 +21,7 @@ vi.mock("@/server/contato/espelho", () => ({
 }));
 
 const { clickupIntegration } = await import("./index");
+const { ajustes } = await import("./devolucao-ao-backlog");
 
 const LISTA = "901302419821";
 
@@ -53,28 +54,50 @@ const CAMPOS = [
   { id: "f-caixa", name: "CPF ou CNPJ Preenchidos", type: "checkbox" },
 ];
 
-type Chamada = { url: string; method: string; body?: { custom_fields?: { id: string; value: unknown }[] } };
+type Chamada = {
+  url: string;
+  method: string;
+  body?: { custom_fields?: { id: string; value: unknown }[]; status?: string; comment_text?: string };
+};
 let chamadas: Chamada[] = [];
 let brasilApi: () => Response;
+/** O status que o ClickUp devolve quando o sistema relê a task depois da criação. */
+let statusDaTask: string | undefined;
+/** Rotas que o ClickUp recusa neste teste ("PUT /task/t1"). */
+let recusadas: string[];
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-26T15:20:00Z")); // 12:20 em São Paulo
+  // Sem a espera de 4 s que o sistema faz para as regras do ClickBot rodarem antes.
+  ajustes.esperaDasRegrasMs = 0;
   chamadas = [];
+  statusDaTask = undefined;
+  recusadas = [];
   brasilApi = () =>
     new Response(JSON.stringify({ razao_social: "EXEMPLO SERVICOS LTDA" }), { status: 200 });
 
   vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
     if (String(url).startsWith("https://brasilapi.com.br")) return brasilApi();
     const rota = String(url).replace("https://api.clickup.com/api/v2", "");
+    const metodo = init.method ?? "GET";
     chamadas.push({
       url: rota,
-      method: init.method ?? "GET",
+      method: metodo,
       body: init.body ? JSON.parse(String(init.body)) : undefined,
     });
+    if (recusadas.includes(`${metodo} ${rota}`)) {
+      return new Response(JSON.stringify({ err: "recusado" }), { status: 400 });
+    }
     const corpo = rota.includes("/field")
       ? { fields: CAMPOS }
-      : { id: "t1", name: "CW — Maria", url: "https://app.clickup.com/t/t1", list: { id: LISTA } };
+      : {
+          id: "t1",
+          name: "CW — Maria",
+          url: "https://app.clickup.com/t/t1",
+          list: { id: LISTA },
+          ...(statusDaTask ? { status: { status: statusDaTask } } : {}),
+        };
     return new Response(JSON.stringify(corpo), { status: 200, headers: { "content-type": "application/json" } });
   });
 });
@@ -150,7 +173,7 @@ describe("venda de endereço fechada pelo agente", () => {
     const r = await executar();
 
     // (A lista deste teste não tem o campo "Endereço Sócio": campo que a lista não tem não é cobrado.)
-    expect(r.contrato).toEqual({ dadosCompletos: false, faltam: ["RG / ID / RNE", "CPF"] });
+    expect(r.contrato).toMatchObject({ dadosCompletos: false, faltam: ["RG / ID / RNE", "CPF"] });
     expect(r.observacao).toContain("AINDA NÃO sobe sozinha");
     expect(r.observacao).toContain("a equipe confirma o envio");
   });
@@ -163,6 +186,67 @@ describe("venda de endereço fechada pelo agente", () => {
     ]);
     expect(r.contrato).toEqual({ dadosCompletos: true });
     expect(r.observacao).toBeUndefined();
+    // Venda completa: a automação do ClickUp segue sozinha, o sistema não mexe.
+    expect(chamadas.some((c) => c.method === "PUT")).toBe(false);
+    expect(chamadas.some((c) => c.url.endsWith("/comment"))).toBe(false);
+  });
+
+  it("⚠ venda incompleta: a task vai para o Backlog e o comentário diz o que falta (chamado 10/11)", async () => {
+    const r = await executar();
+
+    const mudanca = chamadas.find((c) => c.method === "PUT" && c.url === "/task/t1");
+    expect(mudanca?.body).toEqual({ status: "backlog" });
+    const comentario = chamadas.find((c) => c.method === "POST" && c.url === "/task/t1/comment");
+    expect(comentario?.body?.comment_text).toContain("Falta preencher: RG / ID / RNE, CPF.");
+    expect(comentario?.body?.comment_text).toContain("A task foi para o Backlog");
+    // Primeiro a criação, depois a releitura, a mudança e o comentário.
+    expect(chamadas.filter((c) => c.method !== "GET" || c.url.startsWith("/task/")).map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST /list/901302419821/task",
+      "GET /task/t1",
+      "PUT /task/t1",
+      "POST /task/t1/comment",
+    ]);
+    expect(r.contrato).toEqual({
+      dadosCompletos: false,
+      faltam: ["RG / ID / RNE", "CPF"],
+      noBacklog: true,
+      motivoComentado: true,
+    });
+    expect(r.observacao).toContain("já moveu a task para o Backlog");
+  });
+
+  it("a task que a regra do ClickBot já deixou no Backlog não é movida de novo, mas o comentário sai", async () => {
+    statusDaTask = "backlog";
+
+    const r = await executar();
+
+    expect(chamadas.some((c) => c.method === "PUT")).toBe(false);
+    expect(chamadas.some((c) => c.method === "POST" && c.url === "/task/t1/comment")).toBe(true);
+    expect(r.contrato).toMatchObject({ noBacklog: true, motivoComentado: true });
+  });
+
+  it("⚠ o ClickUp recusar a mudança de status não derruba a criação: o comentário pede para mover à mão", async () => {
+    recusadas = ["PUT /task/t1"];
+
+    const r = await executar();
+
+    expect(r.criada).toBe(true);
+    expect(r.contrato).toMatchObject({ noBacklog: false, motivoComentado: true });
+    const comentario = chamadas.find((c) => c.method === "POST" && c.url === "/task/t1/comment");
+    expect(comentario?.body?.comment_text).toContain("Não consegui movê-la para o Backlog");
+    // O modelo continua responsável pela nota interna: o sistema não deu conta de tudo.
+    expect(r.observacao).not.toContain("já moveu a task");
+    expect((r as unknown as { avisos: string[] }).avisos).toContain("não consegui mover a task para o Backlog");
+  });
+
+  it("⚠ o ClickUp recusar o comentário também não derruba a criação", async () => {
+    recusadas = ["POST /task/t1/comment"];
+
+    const r = await executar();
+
+    expect(r.criada).toBe(true);
+    expect(r.contrato).toMatchObject({ noBacklog: true, motivoComentado: false });
+    expect(r.observacao).not.toContain("já moveu a task");
   });
 
   it("⚠ consulta de CNPJ fora do ar: a task sai igual, sem a razão social, e o retorno cobra o campo", async () => {

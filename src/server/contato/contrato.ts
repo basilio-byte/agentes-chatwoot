@@ -258,6 +258,16 @@ export function faltamParaOContrato(args: {
 }
 
 /** O aviso que volta ao agente quando a venda ainda não sobe sozinha. */
-export function avisoDeContratoIncompleto(faltam: string[]): string {
-  return `A task foi criada, mas a venda AINDA NÃO sobe sozinha para o contrato: faltam ${faltam.join(", ")}. Sem esses dados a automação do ClickUp não passa a task para a Base de clientes e o contrato não é gerado. Não diga ao cliente que o contrato já vai chegar: diga que a equipe confirma o envio. Registre uma nota interna listando exatamente o que falta. Não repita a criação nem tente "corrigir" a task.`;
+export function avisoDeContratoIncompleto(
+  faltam: string[],
+  devolucao: { noBacklog: boolean; comentou: boolean } | null = null,
+): string {
+  const base = `A task foi criada, mas a venda AINDA NÃO sobe sozinha para o contrato: faltam ${faltam.join(", ")}. Sem esses dados a automação do ClickUp não passa a task para a Base de clientes e o contrato não é gerado. Não diga ao cliente que o contrato já vai chegar: diga que a equipe confirma o envio. Registre uma nota interna listando exatamente o que falta. Não repita a criação nem tente "corrigir" a task.`;
+  // O sistema já levou a task ao Backlog e escreveu o motivo na própria task: o
+  // modelo não deve mexer nem repetir (e, se algum dos dois falhou, a nota interna
+  // dele é o único registro do que falta).
+  if (devolucao?.noBacklog && devolucao.comentou) {
+    return `${base} O sistema já moveu a task para o Backlog e deixou um comentário nela com o que falta: não mude o status nem comente de novo.`;
+  }
+  return base;
 }

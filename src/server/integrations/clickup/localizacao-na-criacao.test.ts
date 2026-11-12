@@ -22,6 +22,7 @@ vi.mock("@/server/contato/espelho", () => ({
 }));
 
 const { clickupIntegration } = await import("./index");
+const { ajustes } = await import("./devolucao-ao-backlog");
 
 const LISTA = "901302419821";
 
@@ -50,6 +51,7 @@ const json = (corpo: unknown, status = 200) =>
 
 beforeEach(() => {
   esquecerGeocodificacoes();
+  ajustes.esperaDasRegrasMs = 0;
   chamadas = [];
   consultasAoMapa = [];
   nominatim = () =>

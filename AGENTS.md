@@ -1815,6 +1815,22 @@ ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
     que engana mais do que o Backlog de antes. Saídas: o Everton coletar RG e
     endereço do sócio, e/ou uma regra no ClickUp "Aguardando pagamento + RG ou
     Endereço Sócio vazio → Backlog". Decisão do Diego.
+  - ✅ **Aconteceu em 10/11/2026 (venda da conversa 14286) e a saída agora é do
+    SISTEMA** (`clickup/devolucao-ao-backlog.ts`, chamado do Formulário Bugs). O
+    Endereço Sócio ficou em branco (geocodificação, ver "Localização"), a task não
+    subiu à Base de clientes e o Diego teve de mapear campo por campo e duplicar a
+    task à mão: ninguém dizia o porquê. Hoje, quando `contrato.faltam` não é vazio,
+    `clickup_criar_tarefa` espera 4 s (as regras do ClickBot rodam ~2 s depois da
+    criação), relê a task, move para **`backlog`** se não estiver lá e deixa um
+    COMENTÁRIO nela com o que falta e o que fazer ("preencha e mova para Aguardando
+    pagamento"). ⚠ Nunca lança: falha ao mover ou ao comentar volta em `avisos`, o
+    comentário diz "não consegui movê-la" e o modelo continua obrigado a deixar a nota
+    interna (o retorno só o dispensa quando AS DUAS coisas deram certo). O retorno traz
+    `contrato.noBacklog` e `contrato.motivoComentado`. Só nesse caso (Auto Venda +
+    endereço, lista CRM Comercial, na criação): reserva de sala e a task que já
+    existia não passam por aqui. ⚠ Não provado em produção: a ordem real das regras do
+    ClickBot nesse momento; se uma regra levar a task a "Aguardando pagamento" DEPOIS
+    dos 4 s, o comentário continua lá mas o status estará errado.
   - **Os campos exigidos** (`EXIGIDOS`) são os 13 da regra "EV SB SP" mais
     VENCIMENTO, CPF e Sede da Empresa (que a regra da Base não confere, mas travam
     adiante: outra regra do ClickBot e o agente de contratos). Nenhum campo da
