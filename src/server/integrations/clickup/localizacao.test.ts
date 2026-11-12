@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { converterValor } from "./campos";
 import {
+  cidadeDoEndereco,
   dentroDoBrasil,
   ehValorDeLocalizacao,
+  enderecoSimplificado,
   extrairCep,
   formatarCep,
   limparEndereco,
@@ -10,6 +12,46 @@ import {
 } from "./localizacao";
 
 const ENDERECO_SOCIO = { id: "f1", name: "📍 Endereço Sócio", type: "location" };
+
+describe("enderecoSimplificado", () => {
+  it("⚠ o endereço da venda 14286: tira o título da rua, a palavra CEP e a barra de Natal/RN", () => {
+    expect(enderecoSimplificado("Rua Dr. Costa Ribeiro, 34, Pitimbu, Natal/RN, CEP 59069-330")).toBe(
+      "Rua Costa Ribeiro, 34, Pitimbu, Natal, RN, 59069-330",
+    );
+  });
+
+  it("tira o título só quando vem logo depois do tipo da via", () => {
+    expect(enderecoSimplificado("Av. Pres. Café Filho, 10, Natal - RN")).toBe("Av. Café Filho, 10, Natal - RN");
+    expect(enderecoSimplificado("Avenida Professora Maria Lima, 5, Natal, RN")).toBe(
+      "Avenida Maria Lima, 5, Natal, RN",
+    );
+    // "Dr" fora da posição do título (nome de bairro, de prédio) fica como está.
+    expect(enderecoSimplificado("Rua das Flores, 10, Edifício Dr Silva, Natal, RN")).toBe(
+      "Rua das Flores, 10, Edifício Dr Silva, Natal, RN",
+    );
+  });
+
+  it("tira o 'nº' do número da casa", () => {
+    expect(enderecoSimplificado("Rua das Flores, nº 100, Natal, RN")).toBe("Rua das Flores, 100, Natal, RN");
+  });
+
+  it("endereço que já está no formato do mapa não muda", () => {
+    const pronto = "Rua Jaguarari, 4985, Candelária, Natal - RN, 59064-500";
+    expect(enderecoSimplificado(pronto)).toBe(pronto);
+  });
+});
+
+describe("cidadeDoEndereco", () => {
+  it("lê a cidade antes da sigla do estado, em qualquer das formas de escrever", () => {
+    expect(cidadeDoEndereco("Rua Costa Ribeiro, 34, Pitimbu, Natal, RN, 59069-330")).toBe("Natal");
+    expect(cidadeDoEndereco("Rua Jaguarari, 4985, Candelária, Natal - RN, 59064-500")).toBe("Natal");
+    expect(cidadeDoEndereco("Rua X, 1, Parnamirim/RN")).toBe("Parnamirim");
+  });
+
+  it("sem sigla de estado, não chuta: null", () => {
+    expect(cidadeDoEndereco("Rua Qualquer, 100, Natal")).toBeNull();
+  });
+});
 
 describe("extrairCep", () => {
   it("acha o CEP com e sem hífen, no meio do endereço", () => {

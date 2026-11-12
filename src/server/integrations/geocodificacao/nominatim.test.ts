@@ -67,6 +67,49 @@ describe("geocodificarEndereco", () => {
     expect(esperas).toEqual([1100]);
   });
 
+  it("⚠ o mapa não tem o título da rua: tenta o endereço simplificado (venda 14286, 'Rua Dr. Costa Ribeiro')", async () => {
+    respostas = [
+      () => json([]),
+      () =>
+        json([
+          {
+            lat: "-5.8472750",
+            lon: "-35.2403767",
+            display_name: "Rua Costa Ribeiro, Pitimbu, Zona Sul, Natal, Rio Grande do Norte, Brasil",
+          },
+        ]),
+    ];
+
+    const r = await geocodificarEndereco("Rua Dr. Costa Ribeiro, 34, Pitimbu, Natal/RN, CEP 59069-330", opcoes());
+
+    expect(r).toEqual({ lat: -5.847275, lng: -35.2403767 });
+    expect(consultas.map((c) => c.q)).toEqual([
+      "Rua Dr. Costa Ribeiro, 34, Pitimbu, Natal/RN, CEP 59069-330",
+      "Rua Costa Ribeiro, 34, Pitimbu, Natal, RN, 59069-330",
+    ]);
+    expect(esperas).toEqual([1100]);
+  });
+
+  it("⚠ a busca simplificada que cita OUTRA cidade é descartada: nunca pino em cidade errada", async () => {
+    respostas = [
+      () => json([]),
+      () => json([{ lat: "-5.19", lon: "-37.34", display_name: "Rua Costa Ribeiro, Centro, Mossoró, Rio Grande do Norte, Brasil" }]),
+      () => json([]),
+    ];
+
+    expect(
+      await geocodificarEndereco("Rua Dr. Costa Ribeiro, 34, Pitimbu, Natal/RN, CEP 59069-330", opcoes()),
+    ).toBeNull();
+    expect(consultas).toHaveLength(3);
+  });
+
+  it("endereço que a simplificação não muda não ganha consulta extra", async () => {
+    respostas = [() => json([])];
+
+    expect(await geocodificarEndereco("Rua Qualquer, 100, Natal", opcoes())).toBeNull();
+    expect(consultas).toHaveLength(1);
+  });
+
   it("⚠ resultado da busca por CEP que cita OUTRO CEP é descartado: pino em outro bairro é dado falso", async () => {
     respostas = [
       () => json([]),

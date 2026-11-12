@@ -1,6 +1,8 @@
 import { logger } from "@/lib/logger";
 import {
+  cidadeDoEndereco,
   dentroDoBrasil,
+  enderecoSimplificado,
   extrairCep,
   formatarCep,
   limparEndereco,
@@ -76,10 +78,16 @@ function coordenadasDe(resultado: Resultado | null): Coordenadas | null {
   return dentroDoBrasil(c) ? c : null;
 }
 
+function semAcento(texto: string): string {
+  return texto.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
 /**
- * Tenta o endereço inteiro; se não achar e houver CEP, tenta só o CEP — e aí só
- * vale se o resultado cita o MESMO CEP, para um CEP parecido não pôr o pino em
- * outro lugar.
+ * Tenta o endereço inteiro; se não achar, tenta o mesmo endereço escrito como o
+ * mapa costuma ter (sem "Dr.", sem "CEP", "Natal/RN" → "Natal, RN") — e aí só vale
+ * se o resultado cita a cidade digitada; se ainda não achar e houver CEP, tenta só
+ * o CEP — e aí só vale se o resultado cita o MESMO CEP, para um CEP parecido não
+ * pôr o pino em outro lugar.
  */
 export async function geocodificarEndereco(
   endereco: string,
@@ -96,6 +104,18 @@ export async function geocodificarEndereco(
   if (guardado && Date.now() - guardado.em < VALIDADE_DO_CACHE_MS) return guardado.coordenadas;
 
   let coordenadas = coordenadasDe(await buscar(texto, fetchImpl));
+
+  if (!coordenadas) {
+    const simplificado = enderecoSimplificado(texto);
+    if (simplificado && simplificado.toLowerCase() !== chave) {
+      await esperar(ESPERA_ENTRE_CONSULTAS_MS);
+      const achado = await buscar(simplificado, fetchImpl);
+      const cidade = cidadeDoEndereco(simplificado);
+      if (achado && (!cidade || semAcento(achado.display_name ?? "").includes(semAcento(cidade)))) {
+        coordenadas = coordenadasDe(achado);
+      }
+    }
+  }
 
   if (!coordenadas) {
     const cep = extrairCep(texto);

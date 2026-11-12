@@ -2989,6 +2989,19 @@ consegue pagar o caminho certo pega o atalho.
     (`geocodificacao/nominatim.ts`). Sem resultado, tenta só o CEP — e só vale se o
     resultado cita o MESMO CEP. Coordenada fora do Brasil é descartada. Cache de
     24 h por endereço, só de sucesso.
+  - ⚠ **A busca também tenta o endereço escrito como o MAPA o escreve** (10/11/2026,
+    venda da conversa 14286, chamado do Formulário Bugs). "Rua Dr. Costa Ribeiro, 34,
+    Pitimbu, Natal/RN, CEP 59069-330" voltou vazio: o campo ficou em branco, a regra do
+    ClickBot não levou a task a "Aguardando pagamento" e ela ficou em "sem contato" até
+    alguém preencher à mão. No OpenStreetMap a rua é "Rua Costa Ribeiro" — três coisas
+    derrubam a busca, medidas contra o Nominatim real: o título da rua ("Dr.", "Prof.",
+    "Pres."…), a palavra "CEP" e a barra de "Natal/RN". `enderecoSimplificado`
+    (`clickup/localizacao.ts`, puro) tira as três, e a ordem passou a ser: endereço
+    inteiro → simplificado → só o CEP. ⚠ O resultado do simplificado só vale se cita a
+    CIDADE digitada (`cidadeDoEndereco`): uma busca mais frouxa não pode pôr o pino em
+    outra cidade. Título só sai logo depois do tipo da via (Rua/Av./Travessa…), nunca de
+    nome de prédio ou bairro. Continua sem resolver nome de rua diferente no mapa
+    (apelido, nome antigo): o campo fica em branco e `contrato.faltam` cobra.
   - **O texto manda, o pino é aproximado**: `formatted_address` é o endereço como o
     cliente o deu (é o que a equipe lê e o contrato usa); as coordenadas só põem o
     ponto no mapa. Nunca se inventa coordenada: sem resposta, o campo fica vazio.
