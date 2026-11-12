@@ -1,4 +1,4 @@
-import { TipoDeLacuna } from "@/generated/prisma/enums";
+import { SituacaoDaLacuna, TipoDeLacuna } from "@/generated/prisma/enums";
 
 /**
  * Regras puras do relatório de lacunas dos agentes (task "Mapeamento de
@@ -63,6 +63,58 @@ export const O_QUE_FORNECER: Record<TipoDeLacuna, string> = {
   [TipoDeLacuna.NAO_ENTENDI]:
     "Conferir a conversa: o pedido estava claro? O prompt precisa de um exemplo desse caso?",
 };
+
+/** Rótulo de cada situação, para a tela, as abas e o MCP. */
+export const ROTULO_DA_SITUACAO: Record<SituacaoDaLacuna, string> = {
+  [SituacaoDaLacuna.ABERTA]: "Abertas",
+  [SituacaoDaLacuna.RESOLVIDA]: "Histórico",
+};
+
+/**
+ * O comentário de quem resolve: uma frase de verdade, e não um relato inteiro.
+ * Quinze caracteres úteis barram "ok", "feito" e "resolvido." (que passariam dos
+ * dez do texto do agente) e aceitam "Prompt atualizado".
+ */
+export const MINIMO_DA_RESOLUCAO = 15;
+export const TETO_DA_RESOLUCAO = 1000;
+
+/**
+ * O que a pessoa escreveu ao resolver, conferido antes de gravar.
+ *
+ * Quem resolve é gente, e a linha vai para o Histórico que a equipe lê depois:
+ * "ok" não diz o que foi feito e não serve a quem for conferir. Mínimo de
+ * caracteres úteis (`MINIMO_DA_RESOLUCAO`) — barra o "ok", o "feito" e o ponto, e
+ * deixa passar qualquer frase de verdade.
+ *
+ * ⚠ Acima do teto RECUSA, em vez de cortar como o texto do agente: aquele corte
+ * é defesa contra um despejo de conversa; este é o que uma pessoa escolheu
+ * escrever, e perder o fim do comentário em silêncio seria pior do que pedir
+ * para resumir. Mantém as quebras de linha (até duas seguidas).
+ */
+export function validarResolucao(
+  texto: string | null | undefined,
+): { ok: true; texto: string } | { ok: false; erro: string } {
+  const limpo = (texto ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (limpo.replace(/\s+/g, " ").length < MINIMO_DA_RESOLUCAO) {
+    return {
+      ok: false,
+      erro: "Escreva o que foi feito para resolver (pelo menos uma frase): o Histórico guarda esse comentário.",
+    };
+  }
+  if (limpo.length > TETO_DA_RESOLUCAO) {
+    return {
+      ok: false,
+      erro: `O comentário tem ${limpo.length} caracteres e o máximo é ${TETO_DA_RESOLUCAO}. Resuma o que foi feito.`,
+    };
+  }
+  return { ok: true, texto: limpo };
+}
 
 /** Teto de cada texto livre guardado. O agente escreve uma frase, não um relato. */
 export const TETO_DO_TEXTO = 600;

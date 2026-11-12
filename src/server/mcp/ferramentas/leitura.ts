@@ -4,6 +4,7 @@ import {
   IntegrationProvider,
   RunSource,
   RunStatus,
+  SituacaoDaLacuna,
   TipoDeLacuna,
   UserRole,
 } from "@/generated/prisma/enums";
@@ -1050,12 +1051,16 @@ const listarLacunasDosAgentes = ferramenta({
   name: "listar_lacunas_dos_agentes",
   title: "Listar lacunas dos agentes",
   description:
-    "O relatório de lacunas: cada vez que um agente passou o atendimento a uma pessoa por NÃO conseguir resolver sozinho — por falta de instrução, de ferramenta ou por não ter entendido o pedido —, com o que o agente diz que faltou. É o insumo para melhorar prompts e ferramentas. Devolve os totais por tipo e por agente e as mais recentes primeiro. Passagens a pedido do cliente ou por regra do negócio não entram. Para a conversa completa, use ver_execucao com a execução da lacuna.",
+    "O relatório de lacunas: cada vez que um agente passou o atendimento a uma pessoa por NÃO conseguir resolver sozinho — por falta de instrução, de ferramenta ou por não ter entendido o pedido —, com o que o agente diz que faltou. É o insumo para melhorar prompts e ferramentas. Devolve os totais por tipo, por agente e por situação. Por padrão traz as ABERTAS (a fila), da mais recente para a mais antiga; `situacao: resolvidas` traz o Histórico — o que foi feito (`resolucao`), quem resolveu e as duas datas —, e `todas` traz as duas. Não existe exclusão: lacuna tratada é resolvida, e resolver e reabrir são do painel. Passagens a pedido do cliente ou por regra do negócio não entram. Para a conversa completa, use ver_execucao com a execução da lacuna.",
   papel: UserRole.VIEWER,
   anotacoes: CONSULTA,
   entrada: z.strictObject({
     agente: campoAgente.optional(),
     tipo: z.enum(TipoDeLacuna).optional(),
+    situacao: z
+      .enum(["abertas", "resolvidas", "todas"])
+      .optional()
+      .describe("Padrão: abertas (a fila). `resolvidas` é o Histórico."),
     periodo: z.enum(PERIODOS_DO_MCP).optional().describe("Padrão: qualquer data."),
     limite: z
       .number()
@@ -1065,7 +1070,7 @@ const listarLacunasDosAgentes = ferramenta({
       .optional()
       .describe("Padrão 30, máximo 100."),
   }),
-  async executar({ agente: termo, tipo, periodo, limite }) {
+  async executar({ agente: termo, tipo, situacao, periodo, limite }) {
     let agentId: string | null = null;
     if (termo) {
       const agente = await acharAgente(termo);
@@ -1074,12 +1079,32 @@ const listarLacunasDosAgentes = ferramenta({
     }
 
     const intervalo = intervaloDoPeriodo(periodo ?? "tudo");
-    const resumo = await lerLacunas({ intervalo, agentId, tipo: tipo ?? null }, limite ?? 30);
+    const quais = situacao ?? "abertas";
+    const resumo = await lerLacunas(
+      {
+        intervalo,
+        agentId,
+        tipo: tipo ?? null,
+        situacao:
+          quais === "todas"
+            ? null
+            : quais === "resolvidas"
+              ? SituacaoDaLacuna.RESOLVIDA
+              : SituacaoDaLacuna.ABERTA,
+      },
+      limite ?? 30,
+    );
 
     return responder({
       periodo: intervalo.rotulo,
+      situacao: quais,
       total: resumo.total,
       mostrando: resumo.itens.length,
+      // Sem o filtro de situação, para saber o tamanho da outra lista sem outra chamada.
+      porSituacao: {
+        abertas: resumo.porSituacao[SituacaoDaLacuna.ABERTA],
+        resolvidas: resumo.porSituacao[SituacaoDaLacuna.RESOLVIDA],
+      },
       porTipo: Object.fromEntries(
         Object.values(TipoDeLacuna).map((t) => [
           t,
@@ -1091,11 +1116,19 @@ const listarLacunasDosAgentes = ferramenta({
         id: l.id,
         agente: l.agente.chave,
         tipo: l.tipo,
-        em: quando(l.criadaEm),
+        situacao: l.situacao === SituacaoDaLacuna.RESOLVIDA ? "resolvida" : "aberta",
+        abertaEm: quando(l.criadaEm),
         oQueFaltou: l.oQueFaltou,
         motivoDaPassagem: l.motivo,
         conversaNoChatwoot: l.chatwootConversationId,
         execucao: l.runId,
+        ...(l.situacao === SituacaoDaLacuna.RESOLVIDA
+          ? {
+              resolvidaEm: l.resolvidaEm ? quando(l.resolvidaEm) : null,
+              resolvidaPor: l.resolvidaPor,
+              resolucao: l.resolucao,
+            }
+          : {}),
       })),
     });
   },

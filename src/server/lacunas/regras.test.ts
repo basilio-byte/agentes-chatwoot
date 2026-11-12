@@ -9,7 +9,41 @@ import {
   limparTexto,
   ocultarDadosPessoais,
   tipoDaCausa,
+  validarResolucao,
 } from "./regras";
+
+describe("validarResolucao", () => {
+  it("aceita uma frase de verdade e devolve o texto limpo", () => {
+    expect(validarResolucao("  Acrescentei o procedimento ao prompt.  ")).toEqual({
+      ok: true,
+      texto: "Acrescentei o procedimento ao prompt.",
+    });
+  });
+
+  it("⚠ 'ok', 'feito' e vazio não dizem o que foi feito: recusa", () => {
+    for (const texto of ["", "   ", "ok", "feito", "resolvido.", null, undefined]) {
+      const r = validarResolucao(texto);
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it("o mínimo conta caracteres úteis, e não espaços ou quebras", () => {
+    expect(validarResolucao("a\n\n\n   b\n   c").ok).toBe(false);
+    expect(validarResolucao("conferi o prompt e o playground").ok).toBe(true);
+  });
+
+  it("mantém as quebras de linha (até duas seguidas) e tira o espaço sobrando", () => {
+    const r = validarResolucao("Passo 1:  ajustei o prompt.\r\n\r\n\r\n\r\nPasso 2: testei.");
+    expect(r).toEqual({ ok: true, texto: "Passo 1: ajustei o prompt.\n\nPasso 2: testei." });
+  });
+
+  it("⚠ acima do teto RECUSA em vez de cortar: perder o fim do comentário em silêncio seria pior", () => {
+    const r = validarResolucao("x".repeat(1001));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.erro).toContain("1001");
+    expect(validarResolucao("x".repeat(1000)).ok).toBe(true);
+  });
+});
 
 describe("tipoDaCausa", () => {
   it("as três incapacidades viram lacuna, cada uma no seu tipo", () => {

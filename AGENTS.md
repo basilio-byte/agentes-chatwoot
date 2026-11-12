@@ -4218,9 +4218,9 @@ como sempre.
 Pedido do Diego (task "Mapeamento de passagem dos agentes", 27/10/2026): *"sempre
 que o agente passar a conversa para algum humano, por falta de alguma informação
 ou entendimento de algo, ele gera no relatório para podermos melhorar a skill"*.
-Tela **`/lacunas`** (menu Atendimento, aberta a quem tem sessão; apagar é
-`ADMIN`) e a ferramenta de consulta **`listar_lacunas_dos_agentes`** no MCP
-(`VIEWER`). Regras puras e testadas em `src/server/lacunas/regras.ts`, gravação
+Tela **`/lacunas`** (menu Atendimento, aberta a quem tem sessão; resolver e
+reabrir são `ADMIN`) e a ferramenta de consulta **`listar_lacunas_dos_agentes`** no
+MCP (`VIEWER`). Regras puras e testadas em `src/server/lacunas/regras.ts`, gravação
 em `registrar.ts`, leitura em `consulta.ts` — a MESMA para a tela e o MCP.
 
 - ⚠ **Só passagem por INCAPACIDADE entra.** `transferir_para_humano` ganhou o
@@ -4254,11 +4254,37 @@ em `registrar.ts`, leitura em `consulta.ts` — a MESMA para a tela e o MCP.
   não pôr dado pessoal, mas o campo vem de um modelo que leu a conversa — e o
   relatório é aberto por TODA a equipe e sai pelo MCP. Nome de pessoa não tem
   formato e não é coberto: quem barra é a instrução do parâmetro.
-- **Sem `deletedAt`, e apagar é de verdade.** É lista de trabalho: a equipe
-  fornece o que faltou e apaga. A ação recebe IDS (os da tela), nunca um filtro —
-  "apagar tudo do agente X" levaria também o que chegou entre o carregamento e o
-  clique. A auditoria (`lacuna.deleted`) guarda quantas e de quais agentes, não o
-  texto. Apagar fica de fora do MCP (`catalogo.test.ts` proíbe `apagar` no nome).
+- ⚠ **NÃO EXISTE MAIS EXCLUSÃO: a lacuna se RESOLVE e vai para o Histórico**
+  (pedido do Diego, 12/11/2026 — *"quero que ele vá resolvendo, deixe um comentário
+  do que fez e mude o status para resolvido, com data da criação e resolução"*;
+  até então a equipe fornecia o que faltou e APAGAVA a linha, que sumia sem
+  rastro). `LacunaDoAgente.situacao` (`ABERTA` | `RESOLVIDA`), `resolvidaEm`,
+  `resolvidaPorId`/`resolvidaPorNome` (o nome no momento, a pessoa pode sair) e
+  `resolucao`. A tela tem duas abas na URL (`?aba=historico`, renderizadas no
+  servidor): **Abertas** (a fila, da mais recente) e **Histórico** (da resolvida há
+  menos tempo), cada uma com o contador da outra. Linhas que já existiam ficaram
+  `ABERTA` (o `@default` do banco).
+  - **Uma por vez, com comentário obrigatório** (`validarResolucao`: 15 caracteres
+    úteis, no máximo 1.000; acima do teto RECUSA em vez de cortar, ao contrário do
+    texto do agente, que é cortado por vir de um modelo). Texto só com "ok" ou
+    "feito" não resolve: o Histórico existe para dizer o que foi feito. Quem
+    resolve é `ADMIN` (o Lucas é), e a recusa mantém o formulário aberto com o
+    texto.
+  - ⚠ **A troca é um `updateMany` condicionado à situação**: duas pessoas
+    clicando juntas não sobrescrevem o comentário uma da outra; quem chega depois
+    lê "Outra pessoa já resolveu" e nada é auditado.
+  - **Reabrir existe porque a exclusão saiu**: resolver por engano não pode ser
+    beco sem saída. Devolve para a fila e LIMPA a resolução da linha — o
+    comentário, o autor e a data anteriores ficam na auditoria
+    (`lacuna.reopened`: `resolucaoAnterior`, `resolvidaPor`, `resolvidaEm`).
+    `lacuna.resolved` guarda só quem e de qual agente, não o texto.
+  - **O MCP** (`listar_lacunas_dos_agentes`) ganhou `situacao` (`abertas` por
+    padrão, `resolvidas`, `todas`) e devolve `porSituacao`, `abertaEm` e, nas
+    resolvidas, `resolvidaEm`, `resolvidaPor` e `resolucao`. Resolver e reabrir
+    ficam fora do MCP, como a exclusão sempre esteve.
+  - `lacuna.deleted` continua na auditoria antiga; `apagarLacunas` e o botão
+    foram removidos, e `actions/lacunas.test.ts` trava que só existam as duas
+    ações.
 - **Sem período por padrão**: a lista é uma fila de pendências, e recortar por
   data esconderia a de ontem que ninguém tratou. Os totais por tipo ignoram o
   filtro de tipo (dá para trocá-lo) e `limite` corta só a lista, não os totais.

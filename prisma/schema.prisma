@@ -260,6 +260,12 @@ enum TipoDeLacuna {
   NAO_ENTENDI
 }
 
+/// Onde a lacuna está: na fila de quem trata, ou já resolvida (Histórico).
+enum SituacaoDaLacuna {
+  ABERTA
+  RESOLVIDA
+}
+
 /// O relatório de lacunas dos agentes (task "Mapeamento de passagem dos
 /// agentes", 27/10/2026): um registro por vez que `transferir_para_humano` é
 /// chamada por incapacidade — e SÓ por incapacidade. Transferir porque o
@@ -284,11 +290,25 @@ model LacunaDoAgente {
   motivo                 String       @db.Text
   createdAt              DateTime     @default(now())
 
+  /// ABERTA é a fila de quem melhora os agentes; RESOLVIDA vai para o Histórico.
+  /// Pedido do Diego (12/11/2026): em vez de APAGAR a linha, quem trata resolve,
+  /// escreve o que fez e a lista guarda as duas datas. Não existe mais exclusão.
+  situacao               SituacaoDaLacuna @default(ABERTA)
+  resolvidaEm            DateTime?
+  /// Quem resolveu: o id da conta (sem relação, a pessoa pode sair) e o nome no
+  /// momento, que é o que o Histórico mostra.
+  resolvidaPorId         String?
+  resolvidaPorNome       String?
+  /// O que foi feito para resolver, escrito por quem resolveu.
+  resolucao              String?      @db.Text
+
   agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
   @@index([agentId, createdAt])
   @@index([tipo, createdAt])
+  @@index([situacao, createdAt])
+  @@index([situacao, resolvidaEm])
   @@index([runId])
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TipoDeLacuna } from "@/generated/prisma/enums";
+import { SituacaoDaLacuna, TipoDeLacuna } from "@/generated/prisma/enums";
 import type { Intervalo } from "@/server/consumo/periodo";
 
 const agoraDoTeste = new Date("2026-10-27T15:00:00Z");
@@ -11,10 +11,14 @@ const db = {
         id: "l1",
         createdAt: agoraDoTeste,
         tipo: TipoDeLacuna.FALTA_FERRAMENTA,
+        situacao: SituacaoDaLacuna.ABERTA,
         oQueFaltou: "consultar a situação de um contrato",
         motivo: "cliente quer saber do contrato",
         chatwootConversationId: 55,
         runId: "run-1",
+        resolvidaEm: null,
+        resolvidaPorNome: null,
+        resolucao: null,
         agent: { id: "a1", key: "contratos", name: "Contratos" },
       },
     ]),
@@ -25,10 +29,15 @@ const db = {
             { tipo: TipoDeLacuna.FALTA_FERRAMENTA, _count: { _all: 4 } },
             { tipo: TipoDeLacuna.NAO_ENTENDI, _count: { _all: 3 } },
           ]
-        : [
-            { agentId: "a1", _count: { _all: 5 } },
-            { agentId: "sumiu", _count: { _all: 2 } },
-          ],
+        : args.by[0] === "situacao"
+          ? [
+              { situacao: SituacaoDaLacuna.ABERTA, _count: { _all: 7 } },
+              { situacao: SituacaoDaLacuna.RESOLVIDA, _count: { _all: 12 } },
+            ]
+          : [
+              { agentId: "a1", _count: { _all: 5 } },
+              { agentId: "sumiu", _count: { _all: 2 } },
+            ],
     ),
   },
   agent: {
@@ -37,9 +46,8 @@ const db = {
 };
 vi.mock("@/lib/db", () => ({ db }));
 
-const { agentesParaFiltro, lerLacunas, montarWhere, normalizarTipo } = await import(
-  "./consulta"
-);
+const { agentesParaFiltro, lerLacunas, montarWhere, normalizarSituacao, normalizarTipo } =
+  await import("./consulta");
 
 const semPeriodo: Intervalo = {
   inicio: null,
@@ -91,6 +99,28 @@ describe("montarWhere", () => {
 
     expect(montarWhere(filtro, { incluirTipo: false })).toEqual({ agentId: "a1" });
   });
+
+  it("a situação entra quando informada, e os totais por situação a ignoram (o contador de cada aba)", () => {
+    const filtro = {
+      intervalo: semPeriodo,
+      agentId: "a1",
+      situacao: SituacaoDaLacuna.RESOLVIDA,
+    };
+
+    expect(montarWhere(filtro)).toEqual({
+      agentId: "a1",
+      situacao: SituacaoDaLacuna.RESOLVIDA,
+    });
+    expect(montarWhere(filtro, { incluirSituacao: false })).toEqual({ agentId: "a1" });
+  });
+});
+
+describe("normalizarSituacao", () => {
+  it("aceita o que o banco conhece e descarta o resto", () => {
+    expect(normalizarSituacao("RESOLVIDA")).toBe(SituacaoDaLacuna.RESOLVIDA);
+    expect(normalizarSituacao("historico")).toBeNull();
+    expect(normalizarSituacao(undefined)).toBeNull();
+  });
 });
 
 describe("lerLacunas", () => {
@@ -103,6 +133,37 @@ describe("lerLacunas", () => {
       [TipoDeLacuna.FALTA_FERRAMENTA]: 4,
       [TipoDeLacuna.NAO_ENTENDI]: 3,
     });
+  });
+
+  it("devolve quantas há em cada situação, sem o filtro de situação", async () => {
+    const resumo = await lerLacunas(
+      { intervalo: semPeriodo, situacao: SituacaoDaLacuna.ABERTA },
+      30,
+    );
+
+    expect(resumo.porSituacao).toEqual({
+      [SituacaoDaLacuna.ABERTA]: 7,
+      [SituacaoDaLacuna.RESOLVIDA]: 12,
+    });
+    // A consulta por situação foi feita SEM o filtro de situação.
+    const chamadaPorSituacao = db.lacunaDoAgente.groupBy.mock.calls.find(
+      ([args]) => (args as { by: string[] }).by[0] === "situacao",
+    );
+    expect((chamadaPorSituacao?.[0] as unknown as { where: object }).where).not.toHaveProperty(
+      "situacao",
+    );
+  });
+
+  it("a fila (abertas) vem da mais recente; o Histórico, da resolvida há menos tempo", async () => {
+    await lerLacunas({ intervalo: semPeriodo, situacao: SituacaoDaLacuna.ABERTA }, 30);
+    expect(db.lacunaDoAgente.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orderBy: { createdAt: "desc" } }),
+    );
+
+    await lerLacunas({ intervalo: semPeriodo, situacao: SituacaoDaLacuna.RESOLVIDA }, 30);
+    expect(db.lacunaDoAgente.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orderBy: { resolvidaEm: "desc" } }),
+    );
   });
 
   it("nomeia os agentes, e avisa quando o agente já foi removido", async () => {
@@ -132,11 +193,15 @@ describe("lerLacunas", () => {
       id: "l1",
       criadaEm: agoraDoTeste,
       tipo: TipoDeLacuna.FALTA_FERRAMENTA,
+      situacao: SituacaoDaLacuna.ABERTA,
       oQueFaltou: "consultar a situação de um contrato",
       motivo: "cliente quer saber do contrato",
       agente: { id: "a1", chave: "contratos", nome: "Contratos" },
       chatwootConversationId: 55,
       runId: "run-1",
+      resolvidaEm: null,
+      resolvidaPor: null,
+      resolucao: null,
     });
   });
 });

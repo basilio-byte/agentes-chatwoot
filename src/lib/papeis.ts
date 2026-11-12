@@ -70,7 +70,7 @@ export const PAPEIS: Record<UserRole, DescricaoDePapel> = {
       "Ligar e desligar o gatilho HTTP de um agente",
       "Configurar o alerta de saldo por WhatsApp — limite e telefones — e mandar a mensagem de teste",
       "Cadastrar quem recebe o aviso à equipe por WhatsApp, que os agentes mandam",
-      "Apagar lacunas dos agentes já tratadas",
+      "Resolver lacunas dos agentes (escrevendo o que foi feito, com a data) e reabrir uma resolvida — não existe mais exclusão",
       // O texto do documento entra no prompt do agente: mexer nele muda o que o
       // agente diz ao cliente, no mesmo nível de mexer no prompt.
       "Criar, editar e apagar documentos de apoio e escolher quais agentes os recebem",
