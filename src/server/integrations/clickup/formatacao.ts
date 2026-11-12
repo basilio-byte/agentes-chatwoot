@@ -1,6 +1,12 @@
-import { diaEmSaoPaulo, inicioDoDiaEmSaoPaulo, somarDias } from "@/lib/tempo";
+import { inicioDoDiaEmSaoPaulo, somarDias } from "@/lib/tempo";
+import { camposDaTarefa } from "./campos-da-tarefa";
+import { deTimestamp } from "./datas";
 import type { ClickUpTarefa, ClickUpUsuario } from "./tipos";
 import { nomeDaPrioridade } from "./tipos";
+
+// Mora em `datas.ts` para quebrar o ciclo com `campos-da-tarefa`; quem
+// importava daqui continua importando daqui.
+export { deTimestamp };
 
 /** Tira acento e caixa, para casar "joao" com "João". */
 export function normalizar(texto: string) {
@@ -116,13 +122,6 @@ export function paraTimestampDoFimDoDia(iso?: string | null): number | undefined
   return paraTimestamp(v);
 }
 
-/** Milissegundos da API para o dia no relógio de São Paulo — o dia que a equipe vê. */
-export function deTimestamp(valor?: string | null): string | null {
-  if (!valor) return null;
-  const ms = Number(valor);
-  if (!Number.isFinite(ms)) return null;
-  return diaEmSaoPaulo(new Date(ms));
-}
 
 /**
  * Resumo de uma tarefa para o modelo ler.
@@ -144,14 +143,30 @@ export function formatarTarefa(t: ClickUpTarefa) {
   };
 }
 
+/**
+ * O detalhe que `clickup_obter_tarefa` devolve.
+ *
+ * ⚠ **`listaId` e `camposPersonalizados` entraram em 12/11/2026, e a falta dos
+ * dois travava o agente validador.** Sem os campos ele não tinha o que
+ * conferir; sem o id da lista não conseguia nem o contorno, porque
+ * `clickup_listar_campos_personalizados` exige o id e aqui só havia o nome
+ * ("Base de clientes" → `400 List ID invalid`, seis vezes seguidas na mesma
+ * task). Ver `campos-da-tarefa.ts`.
+ */
 export function formatarTarefaDetalhada(t: ClickUpTarefa) {
+  const campos = camposDaTarefa(t);
   return {
     ...formatarTarefa(t),
+    // O nome da lista é para a pessoa ler; o id é o que as outras ferramentas
+    // pedem.
+    listaId: t.list?.id ?? null,
     descricao: t.description ?? t.text_content ?? null,
     tags: (t.tags ?? []).map((tag) => tag.name),
     espaco: t.space?.name ?? null,
     pasta: t.folder?.name ?? null,
     criadaEm: deTimestamp(t.date_created),
     atualizadaEm: deTimestamp(t.date_updated),
+    // Só os PREENCHIDOS, pelo nome do campo. Ausente aqui é campo vazio.
+    ...(Object.keys(campos).length > 0 ? { camposPersonalizados: campos } : {}),
   };
 }

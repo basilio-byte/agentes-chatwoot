@@ -80,6 +80,10 @@ export type ClickUpTarefa = {
    */
   custom_fields?: Array<{
     id: string;
+    /** O rótulo do campo na lista. A API o manda junto; sem ele só há o id. */
+    name?: string | null;
+    /** `drop_down`, `date`, `location`, `checkbox`… decide como ler `value`. */
+    type?: string | null;
     value?: unknown;
     type_config?: { options?: Array<Record<string, unknown>> } | null;
   }>;

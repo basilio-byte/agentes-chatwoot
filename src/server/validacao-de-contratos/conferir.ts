@@ -15,6 +15,7 @@ import {
   ehAFila,
   ehTarefaDeCliente,
   LISTA_BASE_DE_CLIENTES,
+  mudancaVeioDoAgente,
   payloadDaReconferencia,
   precisaReconferir,
   STATUS_DA_FILA,
@@ -127,6 +128,34 @@ async function agenteQueCuidaDaTask(taskId: string): Promise<string | null> {
   return null;
 }
 
+/**
+ * Quando o último turno de agente sobre esta task terminou.
+ *
+ * ⚠ É o que distingue "a equipe corrigiu um campo" de "o agente comentou e
+ * isso mexeu na task" — ver `mudancaVeioDoAgente`. Sem essa distinção, a
+ * varredura se realimenta: o comentário muda o `date_updated`, a rodada
+ * seguinte lê como mudança e aciona de novo.
+ *
+ * Lê as mesmas `ToolCall` de `agenteQueCuidaDaTask`, e **vale qualquer agente**:
+ * o que importa é que a mexida foi nossa, não de quem.
+ */
+async function ultimaExecucaoDaTask(taskId: string): Promise<Date | null> {
+  const chamada = await db.toolCall.findFirst({
+    where: {
+      createdAt: { gte: new Date(Date.now() - 2 * 24 * 3_600_000) },
+      toolName: { startsWith: "clickup_" },
+      input: { path: ["tarefaId"], equals: taskId },
+      run: { source: RunSource.TRIGGER },
+    },
+    select: { run: { select: { finishedAt: true, createdAt: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!chamada) return null;
+  // Execução ainda rodando não tem `finishedAt`: vale quando começou, que já
+  // é perto o bastante para a margem.
+  return chamada.run.finishedAt ?? chamada.run.createdAt;
+}
+
 /** Anota o estado da task sem acionar ninguém. */
 async function anotar(taskId: string, mudouEm: string, agentId: string | null) {
   try {
@@ -229,6 +258,16 @@ export async function conferirValidacaoDeContratos(
           await anotar(tarefa.id, mudouEm, await agenteQueCuidaDaTask(tarefa.id));
           anotadas++;
         }
+        continue;
+      }
+
+      // ⚠ A task mudou — mas foi o comentário do PRÓPRIO agente? Se foi,
+      // anota a data nova e não aciona: acionar aqui é o laço que gastou
+      // cinco turnos na task da FORSHIP em 11/11/2026.
+      if (mudancaVeioDoAgente(mudouEm, await ultimaExecucaoDaTask(tarefa.id))) {
+        await anotar(tarefa.id, mudouEm, null);
+        anotadas++;
+        desfechos.push(`${tarefa.id}: a mudança foi o comentário do próprio agente`);
         continue;
       }
 

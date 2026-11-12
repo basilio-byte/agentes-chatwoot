@@ -4,6 +4,7 @@ import {
   chaveDaReconferencia,
   ehAFila,
   ehTarefaDeCliente,
+  mudancaVeioDoAgente,
   payloadDaReconferencia,
   precisaReconferir,
   STATUS_DA_FILA,
@@ -120,5 +121,41 @@ describe("ehTarefaDeCliente", () => {
 
   it("sem etiqueta nenhuma, passa", () => {
     expect(ehTarefaDeCliente({ parent: null, tags: undefined })).toBe(true);
+  });
+});
+
+describe("mudancaVeioDoAgente", () => {
+  /**
+   * ⚠ O caso REAL: task FORSHIP (`17twvjx2r7h`), 11/11/2026. O agente foi
+   * acionado, comentou, e o comentário mudou o `date_updated` da task — a
+   * rodada seguinte leu isso como "a equipe corrigiu" e acionou de novo.
+   * Cinco turnos pagos e quatro comentários quase iguais na task do cliente.
+   */
+  it("mudança no mesmo instante do fim do turno é o próprio agente", () => {
+    const terminou = new Date("2026-11-11T19:41:10.000Z");
+    const mudouEm = String(terminou.getTime() + 2_000);
+    expect(mudancaVeioDoAgente(mudouEm, terminou)).toBe(true);
+  });
+
+  it("mudança muito depois do turno é alguém mexendo na task", () => {
+    const terminou = new Date("2026-11-11T19:41:10.000Z");
+    const mudouEm = String(terminou.getTime() + 20 * 60_000);
+    expect(mudancaVeioDoAgente(mudouEm, terminou)).toBe(false);
+  });
+
+  it("mudança ANTES do turno também conta, dentro da margem", () => {
+    // O ClickUp carimba o `date_updated` do comentário, que é alguns segundos
+    // antes de a execução ser fechada no nosso banco.
+    const terminou = new Date("2026-11-11T19:41:10.000Z");
+    expect(mudancaVeioDoAgente(String(terminou.getTime() - 30_000), terminou)).toBe(true);
+  });
+
+  /** Na dúvida, NÃO: perder a correção da equipe é pior que reconferir à toa. */
+  it("sem execução conhecida, ou com data ilegível, responde não", () => {
+    expect(mudancaVeioDoAgente("1794000000000", null)).toBe(false);
+    expect(mudancaVeioDoAgente("1794000000000", undefined)).toBe(false);
+    expect(mudancaVeioDoAgente("", new Date())).toBe(false);
+    expect(mudancaVeioDoAgente("não é número", new Date())).toBe(false);
+    expect(mudancaVeioDoAgente("0", new Date())).toBe(false);
   });
 });

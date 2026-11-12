@@ -74,6 +74,47 @@ export type EstadoConhecido = {
 };
 
 /**
+ * Margem para reconhecer que a mudança da task foi o COMENTÁRIO DO PRÓPRIO
+ * AGENTE — e não alguém corrigindo um campo.
+ *
+ * ⚠⚠ **Sem isto a varredura vira um laço, e virou.** O agente é acionado,
+ * comenta na task, e comentar muda o `date_updated`; dez minutos depois a
+ * rodada vê a data diferente, conclui "a task mudou" e aciona de novo. Medido
+ * na task `17twvjx2r7h` (FORSHIP) em 11/11/2026: acionamentos às 16:09, 16:20,
+ * 16:30, 16:40 e 16:51 — cinco turnos pagos e quatro comentários quase
+ * idênticos na task de um cliente. Só parou quando o agente finalmente não
+ * comentou.
+ *
+ * ⚠ **A trava de "não repetir aviso" do prompt não pega esse caso**: os
+ * comentários de falha levavam a HORA dentro do texto, então nunca eram
+ * "exatamente o mesmo aviso" do anterior.
+ *
+ * Cinco minutos: o turno do validador leva de 40 s a 2 min, e o comentário é a
+ * última coisa que ele faz.
+ */
+export const MARGEM_DO_PROPRIO_COMENTARIO_MS = 5 * 60_000;
+
+/**
+ * A mudança que acabou de aparecer na task foi o nosso próprio turno?
+ *
+ * Compara o `date_updated` de agora com o instante em que a última execução
+ * daquela task terminou. Perto demais = foi ela.
+ *
+ * ⚠ **Na dúvida, responde NÃO** (ausência de execução, data ilegível): o pior
+ * caso de errar para "não" é uma reconferência a mais; o de errar para "sim" é
+ * a correção da equipe ser engolida e a task ficar parada para sempre.
+ */
+export function mudancaVeioDoAgente(
+  mudouEm: string,
+  ultimaExecucaoTerminouEm: Date | null | undefined,
+): boolean {
+  if (!ultimaExecucaoTerminouEm) return false;
+  const ms = Number((mudouEm ?? "").trim());
+  if (!Number.isFinite(ms) || ms <= 0) return false;
+  return Math.abs(ms - ultimaExecucaoTerminouEm.getTime()) <= MARGEM_DO_PROPRIO_COMENTARIO_MS;
+}
+
+/**
  * Aciona o agente de novo?
  *
  * Só quando a task mudou desde a última conferência. Sem estado anterior, a
