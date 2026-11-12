@@ -2291,6 +2291,27 @@ minutos e em horário comercial:
 - ⚠ **O status da fila tem EMOJI** (`📝 contrato`). O filtro da API vai literal;
   `ehAFila` compara por "contém contrato" como segunda peneira, e nenhum outro
   status da lista contém essa palavra (`distrato` não contém).
+- ⚠⚠ **A re-conferência expôs que `clickup_obter_tarefa` não devolvia campo
+  personalizado nenhum** (achado em 12/11/2026). Acionado pela automação do
+  ClickUp, o agente recebe a task INTEIRA no payload, com os campos dentro —
+  então nunca precisou lê-los. Aqui o payload é mínimo (`id`, `name`,
+  `status`), e ele ficou sem saída: a task `17twvjx2r7h` (FORSHIP) foi
+  processada **seis vezes** entre 11 e 12/11 sem conferir campo nenhum. Tentou
+  contornar com `clickup_listar_campos_personalizados`, que exige o **id** da
+  lista, e o retorno da task só trazia o nome: `400 List ID invalid`, seis
+  vezes. Hoje `formatarTarefaDetalhada` devolve `listaId` e
+  `camposPersonalizados` — ver `clickup/campos-da-tarefa.ts`.
+- ⚠⚠ **O comentário do próprio agente realimentava a varredura.** Comentar muda
+  o `date_updated`, e dez minutos depois a rodada lê isso como "a equipe
+  corrigiu" e aciona de novo: cinco turnos pagos e quatro comentários quase
+  idênticos na task de um cliente (16:09, 16:20, 16:30, 16:40 e 16:51 de
+  11/11). Só parou quando o agente enfim não comentou. `mudancaVeioDoAgente`
+  compara a mudança com o instante em que o último turno daquela task terminou
+  (margem de 5 min): perto demais, anota a data nova e **não aciona**. ⚠ Na
+  dúvida responde NÃO — perder a correção da equipe é pior que reconferir à
+  toa. ⚠ **E a trava de "não repetir aviso" do prompt não pegava o caso**,
+  porque os comentários de falha levavam a HORA no texto e nunca eram iguais ao
+  anterior; o prompt (v5) passou a proibir data e hora ali.
 
 #### ⏳ Cliente com mais de um endereço NO MESMO PLANO: limitação aceita
 
@@ -2936,6 +2957,15 @@ consegue pagar o caminho certo pega o atalho.
 - **Campo errado aborta o lote inteiro**, e a resposta devolve os nomes que
   existem. Tarefa criada com metade dos dados é pior do que pedir correção.
 - **Escrever em `formula`/`rollup` é recusado aqui**, não na API.
+- ⚠⚠ **LER o campo é outra história, e faltava.** `clickup_obter_tarefa` não
+  devolvia campo personalizado nenhum até 12/11/2026 — a ferramenta de ler uma
+  task não devolvia justamente o que um agente de cadastro precisa conferir.
+  `camposDaTarefa` (`clickup/campos-da-tarefa.ts`) devolve **só os
+  preenchidos**, pelo NOME do campo: ausente ali é campo vazio. Campo de LISTA
+  é traduzido pela `type_config` que a própria task traz (ler `value` cru
+  devolve o id da opção), data vira o dia de São Paulo, checkbox vira booleano
+  e localização devolve o `formatted_address`. ⚠ `false` e `0` são valores, não
+  ausência; campo sem `name` fica de fora, porque id cru não diz nada a quem lê.
 - ⚠ **Localização (`location`) quer coordenadas, e quem converte é o SISTEMA**
   (06/11/2026, "📍 Endereço Sócio", exigido pela regra "EV SB SP" do ClickBot).
   Provado numa task de teste contra a API real: `POST /task/{id}/field/{campo}`
