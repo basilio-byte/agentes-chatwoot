@@ -1183,7 +1183,11 @@ const verLevaDeRenovacao = ferramenta({
         : null,
       statusNoClickUp: l.tarefa?.status ?? null,
       tarefa: l.tarefa?.id ?? null,
+      // Tarefas do cliente que não ficaram com este contrato nem com outro da
+      // leva (cada tarefa é o contrato de um produto, e o casamento é por
+      // valor e data de reajuste).
       outrasTarefasDoMesmoCliente: l.outrasTarefas || undefined,
+      semTarefaPorque: l.motivoSemTarefa ?? undefined,
     });
 
     return responder({

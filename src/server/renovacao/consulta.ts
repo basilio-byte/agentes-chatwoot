@@ -7,6 +7,7 @@ import {
   cruzarComAsTarefas,
   lerTarefasDoFluxo,
   tarefasOrfas,
+  type ContratoParaCruzar,
   type TarefaDoFluxo,
 } from "./clickup";
 import {
@@ -49,7 +50,15 @@ export type LinhaDaRenovacao = {
   reajustePct: number | null;
   reajusteIndice: string | null;
   tarefa: TarefaDoFluxo | null;
+  /** Tarefas do mesmo cliente que não ficaram com este contrato nem com outro da leva. */
   outrasTarefas: number;
+  /**
+   * Por que o contrato não tem tarefa, quando o cliente TEM tarefas no fluxo:
+   * nenhuma tem o valor e a data deste contrato, ou mais de uma serve sem como
+   * distinguir. Nulo quando casou, ou quando o cliente não tem tarefa nenhuma
+   * (aí o buraco é o "fora do fluxo" de sempre).
+   */
+  motivoSemTarefa: string | null;
 };
 
 export type LevaDaTela = {
@@ -137,7 +146,7 @@ export async function lerLeva(mes: string): Promise<LevaDaTela> {
 
   const montar = (linhas: LinhaGravada[]) =>
     cruzarComAsTarefas(linhas.map(comoContrato), tarefas.tarefas).map((l, i) =>
-      montarLinha(linhas[i], l.tarefa, l.outrasTarefas.length),
+      montarLinha(linhas[i], l.tarefa, l.outrasTarefas.length, l.motivo),
     );
 
   const cruzamento = cruzarComAsTarefas(daVez.map(comoContrato), tarefas.tarefas);
@@ -154,9 +163,13 @@ export async function lerLeva(mes: string): Promise<LevaDaTela> {
   };
 }
 
-/** A linha gravada no formato que `cruzarComAsTarefas` espera. */
-function comoContrato(l: LinhaGravada): ContratoDaLeva {
-  return {
+/**
+ * A linha gravada no formato que `cruzarComAsTarefas` espera. O valor de antes
+ * do lote vai junto: é uma das duas pistas que ligam o contrato à tarefa dele
+ * quando o cliente tem mais de uma (a outra é a data de reajuste).
+ */
+function comoContrato(l: LinhaGravada): ContratoParaCruzar {
+  const contrato: ContratoDaLeva = {
     id: l.contratoId,
     clienteId: l.clienteId,
     fidelidade: l.fidelidade,
@@ -170,12 +183,18 @@ function comoContrato(l: LinhaGravada): ContratoDaLeva {
     reajusteIndice: l.reajusteIndice,
     resumo: l.plano,
   };
+  const anterior = valorAnterior(contrato, {
+    valor: l.valorCentavos / 100,
+    reajusteEm: l.reajusteDoRetrato,
+  });
+  return { ...contrato, antes: anterior?.valor ?? null };
 }
 
 function montarLinha(
   l: LinhaGravada,
   tarefa: TarefaDoFluxo | null,
   outrasTarefas: number,
+  motivoSemTarefa: string | null,
 ): LinhaDaRenovacao {
   const contrato = comoContrato(l);
   const anterior = valorAnterior(contrato, {
@@ -202,6 +221,7 @@ function montarLinha(
     reajusteIndice: l.reajusteIndice,
     tarefa,
     outrasTarefas,
+    motivoSemTarefa,
   };
 }
 

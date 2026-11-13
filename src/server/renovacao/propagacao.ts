@@ -88,6 +88,11 @@ export type RetratoParaPropagar = {
   contratoId: number;
   clienteId: number;
   leva: string;
+  /**
+   * A fidelidade do contrato (`AAAA-MM-DD`). Serve para casar o contrato com a
+   * tarefa dele quando o cliente tem mais de um — ver `casamento.ts`.
+   */
+  fidelidade?: string | null;
   /** Congelado: o valor da véspera do lote, em centavos. */
   valorCentavos: number;
   /** O valor de agora, em centavos. */

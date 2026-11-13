@@ -5,6 +5,7 @@ import {
   cruzarComAsTarefas,
   idDoClienteNaTarefa,
   lerTarefasDoFluxo,
+  tarefaDoFluxo,
   tarefasOrfas,
   type TarefaDoFluxo,
 } from "./clickup";
@@ -42,6 +43,35 @@ describe("idDoClienteNaTarefa", () => {
 
   it("link sem idCliente cai para o nome", () => {
     expect(idDoClienteNaTarefa("(5077) X", "https://seahubcoworking.conexa.app/")).toBe(5077);
+  });
+});
+
+describe("tarefaDoFluxo", () => {
+  it("lê VALOR CONTRATO e DATA DE REAJUSTE da própria listagem", () => {
+    const t = tarefaDoFluxo({
+      id: "86adjmaqg",
+      name: "(5051) PAULO HENRIQUE",
+      status: { status: "notificação renovação" },
+      custom_fields: [
+        { id: "0dad1007-feb0-437a-9051-87bbac539d4c", value: "99.9" },
+        // 27/11/2026, a meia-noite em São Paulo (07:00 UTC no ClickUp).
+        { id: "0231d769-5063-439d-8b03-ad660c6bada5", value: "1795762800000" },
+      ],
+    });
+
+    expect(t.valor).toBe(99.9);
+    expect(t.dataDeReajuste).toBe("2026-11-27");
+  });
+
+  it("campo ausente ou vazio é nulo, não zero", () => {
+    const t = tarefaDoFluxo({
+      id: "x",
+      name: "(1) X",
+      custom_fields: [{ id: "0dad1007-feb0-437a-9051-87bbac539d4c", value: "" }],
+    });
+
+    expect(t.valor).toBeNull();
+    expect(t.dataDeReajuste).toBeNull();
   });
 });
 
@@ -125,13 +155,42 @@ describe("cruzarComAsTarefas", () => {
     expect(linhas[0].tarefa).toBeNull();
   });
 
-  it("⚠ cliente com mais de uma tarefa mostra as outras, em vez de escolher uma", () => {
+  it("⚠ cliente com várias tarefas SEM como distinguir: não escolhe a primeira, mostra as outras e diz por quê", () => {
     const linhas = cruzarComAsTarefas(
       [contrato(1, 5051)],
       [t("a", 5051), t("b", 5051), t("c", 5051)],
     );
-    expect(linhas[0].tarefa?.id).toBe("a");
-    expect(linhas[0].outrasTarefas.map((x) => x.id)).toEqual(["b", "c"]);
+    expect(linhas[0].tarefa).toBeNull();
+    expect(linhas[0].outrasTarefas.map((x) => x.id)).toEqual(["a", "b", "c"]);
+    expect(linhas[0].motivo).toContain("nenhuma tarefa do cliente");
+  });
+
+  it("⚠ (5051) quatro contratos e quatro tarefas iguais: cada contrato fica com a sua, sem sobra", () => {
+    const iguais = (id: string) => ({ ...t(id, 5051, "notificação renovação"), valor: 99.9, dataDeReajuste: "2026-12-04" });
+    const linhas = cruzarComAsTarefas(
+      [1, 2, 3, 4].map((id) => ({ ...contrato(id, 5051), valor: 104.48, antes: 99.9 })),
+      ["a", "b", "c", "d"].map(iguais),
+    );
+
+    expect(linhas.map((l) => l.tarefa?.id).sort()).toEqual(["a", "b", "c", "d"]);
+    expect(linhas.every((l) => l.outrasTarefas.length === 0 && l.motivo === null)).toBe(true);
+  });
+
+  it("⚠ (1858) produtos diferentes do mesmo cliente: o valor liga cada contrato à tarefa certa", () => {
+    const ev = { ...contrato(10441, 1858), valor: 93.08, antes: 89, fidelidade: "2026-11-06" };
+    const sp = { ...contrato(10378, 1858), valor: 6065.64, antes: 5800, fidelidade: "2026-11-04" };
+    const linhas = cruzarComAsTarefas(
+      [sp, ev],
+      [
+        { ...t("tarefa-ev", 1858), valor: 89, dataDeReajuste: "2026-11-06" },
+        { ...t("tarefa-sp", 1858), valor: 5800, dataDeReajuste: "2026-11-04" },
+      ],
+    );
+
+    expect(linhas.map((l) => [l.contrato.id, l.tarefa?.id])).toEqual([
+      [10378, "tarefa-sp"],
+      [10441, "tarefa-ev"],
+    ]);
   });
 
   it("tarefa sem id de cliente não casa com ninguém", () => {

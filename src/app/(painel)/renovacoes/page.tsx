@@ -79,16 +79,21 @@ function Linha({ linha, hoje }: { linha: LinhaDaRenovacao; hoje: string }) {
         </div>
         <div className="text-xs text-muted">
           {linha.plano ?? "—"}
-          {linha.outrasTarefas > 0 && (
+          {linha.outrasTarefas > 0 && !linha.motivoSemTarefa && (
             <>
               {" · "}
               <span className="text-warning">
                 +{linha.outrasTarefas} tarefa{linha.outrasTarefas > 1 ? "s" : ""} do mesmo
-                cliente
+                cliente sem contrato nesta leva
               </span>
             </>
           )}
         </div>
+        {linha.motivoSemTarefa && (
+          <div className="mt-0.5 text-xs text-warning">
+            Sem tarefa casada: {linha.motivoSemTarefa}.
+          </div>
+        )}
       </td>
 
       <td className="py-3 pr-4 whitespace-nowrap">

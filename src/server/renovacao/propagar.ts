@@ -5,6 +5,7 @@ import { dentroDoHorario } from "@/server/cobranca/regras";
 import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 import type { ClickUpClient } from "@/server/integrations/clickup/client";
 
+import { casarContratosComTarefas } from "./casamento";
 import { lerTarefasDoFluxo, type TarefaDoFluxo } from "./clickup";
 import {
   CAMPO_REAJUSTE,
@@ -90,6 +91,7 @@ export async function candidatosDaPropagacao(hoje: string) {
       contratoId: true,
       clienteId: true,
       leva: true,
+      fidelidade: true,
       valorCentavos: true,
       valorAtualCentavos: true,
       reajusteDoRetrato: true,
@@ -104,7 +106,7 @@ export async function candidatosDaPropagacao(hoje: string) {
   const comLote = linhas.filter(
     (l) => loteChegou(l as RetratoParaPropagar) && dentroDaJanela(l, hoje),
   ) as RetratoParaPropagar[];
-  if (!comLote.length) return [];
+  if (!comLote.length) return { candidatos: [], tomadas: new Map<number, Set<string>>() };
 
   // O que já foi propagado sai da fila pela reserva, não por campo novo.
   const jaFeitos = await db.webhookEvent.findMany({
@@ -112,11 +114,25 @@ export async function candidatosDaPropagacao(hoje: string) {
       provider: PROVIDER_RENOVACAO,
       externalId: { in: comLote.map(chaveDaPropagacao) },
     },
-    select: { externalId: true },
+    select: { externalId: true, detalhe: true },
   });
-  const feitos = new Set(jaFeitos.map((e) => e.externalId));
+  const feitos = new Map(jaFeitos.map((e) => [e.externalId, e.detalhe ?? null]));
 
-  return comLote.filter((r) => !feitos.has(chaveDaPropagacao(r)));
+  // ⚠ As tarefas que um contrato JÁ levou. Cliente com contratos iguais e
+  // tarefas iguais (quatro e quatro) pode ter só parte do lote propagada numa
+  // rodada; sem isto, a rodada seguinte casaria o contrato que falta com uma
+  // tarefa que já foi escrita — e a que ficou para trás nunca seria atualizada.
+  const tomadas = new Map<number, Set<string>>();
+  for (const r of comLote) {
+    const detalhe = feitos.get(chaveDaPropagacao(r));
+    const tarefaId = detalhe ? /"tarefaId":"([^"]+)"/.exec(detalhe)?.[1] : undefined;
+    if (!tarefaId) continue;
+    const doCliente = tomadas.get(r.clienteId) ?? new Set<string>();
+    doCliente.add(tarefaId);
+    tomadas.set(r.clienteId, doCliente);
+  }
+
+  return { candidatos: comLote.filter((r) => !feitos.has(chaveDaPropagacao(r))), tomadas };
 }
 
 /** O valor de um campo personalizado na tarefa, como número. */
@@ -149,7 +165,7 @@ export async function propagarReajustes(
 
   try {
     const hoje = diaEmSaoPaulo(agora);
-    const candidatos = await candidatosDaPropagacao(hoje);
+    const { candidatos, tomadas } = await candidatosDaPropagacao(hoje);
     if (!candidatos.length) return { acao: "nada a propagar" };
 
     const clickup = await abrirClickUp("propagação da renovação");
@@ -172,32 +188,75 @@ export async function propagarReajustes(
     // leitura ao vivo, e é a conta de chamadas que o teto protege.
     let olhados = 0;
 
-    for (const retrato of candidatos) {
+    // ⚠ O cliente é a unidade de trabalho, não o contrato: quem tem quatro
+    // contratos e quatro tarefas precisa que as quatro sejam casadas JUNTAS, ou
+    // o pareamento de uma rodada desfaria o da seguinte.
+    const contratosPorCliente = new Map<number, RetratoParaPropagar[]>();
+    for (const r of candidatos) {
+      const lista = contratosPorCliente.get(r.clienteId) ?? [];
+      lista.push(r);
+      contratosPorCliente.set(r.clienteId, lista);
+    }
+
+    for (const [clienteId, doCliente] of contratosPorCliente) {
       if (olhados >= PROPAGACOES_POR_RODADA) break;
 
-      const doCliente = porCliente.get(retrato.clienteId) ?? [];
-      if (!doCliente.length) {
-        pendentes.push(`${retrato.clienteId}: sem tarefa nos status de renovação`);
-        continue;
-      }
-      // ⚠ Cliente com mais de uma tarefa no fluxo é problema de cadastro — vi
-      // quatro no mesmo status. Escolher uma seria escrever o reajuste em
-      // metade das tarefas e deixar a outra metade velha, em silêncio.
-      if (doCliente.length > 1) {
-        pendentes.push(
-          `${retrato.clienteId}: ${doCliente.length} tarefas nos status de renovação — a equipe precisa resolver a duplicata`,
-        );
-        continue;
+      // Tarefa que um contrato deste lote já levou não volta ao páreo.
+      const jaTomadas = tomadas.get(clienteId);
+      const tarefasDoCliente = (porCliente.get(clienteId) ?? []).filter(
+        (t) => !jaTomadas?.has(t.id),
+      );
+
+      // ⚠ Cada tarefa é o contrato de UM produto (Duda, 13/11/2026): cliente com
+      // várias tarefas tem vários contratos, cada um com a sua data de
+      // reajuste, e TODOS precisam ser reajustados. O que liga um contrato à
+      // tarefa é o valor e a data de reajuste (ver `casamento.ts`); o que não
+      // casa com segurança fica pendente com o motivo, nunca vai para a
+      // primeira da lista.
+      const casamento = casarContratosComTarefas(
+        doCliente.map((retrato) => ({
+          id: retrato.contratoId,
+          fidelidade: retrato.fidelidade ?? null,
+          antes: retrato.valorCentavos / 100,
+          atual: retrato.valorAtualCentavos / 100,
+          assinatura: [
+            retrato.valorCentavos,
+            retrato.valorAtualCentavos,
+            retrato.fidelidade,
+            retrato.reajusteEm,
+            retrato.reajustePct,
+            retrato.reajusteIndice,
+            retrato.periodicidade,
+          ].join("|"),
+          retrato,
+        })),
+        tarefasDoCliente.map((t) => ({
+          id: t.id,
+          valor: t.valor ?? null,
+          dataDeReajuste: t.dataDeReajuste ?? null,
+          status: t.status,
+          tarefa: t,
+        })),
+      );
+
+      for (const { contrato, motivo } of [...casamento.semTarefa, ...casamento.ambiguos]) {
+        pendentes.push(`${clienteId}: contrato ${contrato.id}: ${motivo}`);
       }
 
-      olhados++;
-      try {
-        desfechos.push(await propagarUm(clickup.cliente, retrato, doCliente[0]));
-      } catch (erro) {
-        pendentes.push(`${retrato.clienteId}: ${(erro as Error).message}`);
-      }
+      // Cliente inteiro ou nada: se não cabe na rodada, fica para a seguinte
+      // (a menos que seja o primeiro, que nunca ficaria).
+      if (olhados > 0 && olhados + casamento.pares.length > PROPAGACOES_POR_RODADA) break;
 
-      await new Promise((r) => setTimeout(r, PAUSA_ENTRE_TAREFAS_MS));
+      for (const par of casamento.pares) {
+        olhados++;
+        try {
+          desfechos.push(await propagarUm(clickup.cliente, par.contrato.retrato, par.tarefa.tarefa));
+        } catch (erro) {
+          pendentes.push(`${clienteId}: contrato ${par.contrato.id}: ${(erro as Error).message}`);
+        }
+
+        await new Promise((r) => setTimeout(r, PAUSA_ENTRE_TAREFAS_MS));
+      }
     }
 
     const propagados = desfechos.filter(

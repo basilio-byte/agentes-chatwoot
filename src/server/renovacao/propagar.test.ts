@@ -246,7 +246,7 @@ describe("propagarReajustes: quando não escreve", () => {
     );
   });
 
-  it("⚠ cliente com DUAS tarefas no fluxo: nada é escrito e a duplicata fica registrada", async () => {
+  it("⚠ UM contrato e DUAS tarefas iguais: não há como saber qual é a dele — nada é escrito e o motivo fica registrado", async () => {
     const a = tarefa({ id: "t1" });
     const b = tarefa({ id: "t2" });
     tarefasDaLista = [a, b];
@@ -256,7 +256,8 @@ describe("propagarReajustes: quando não escreve", () => {
 
     expect(escritas).toEqual([]);
     expect(rodada.pendentes?.[0]).toContain("2 tarefas");
-    // Sem reserva: quando a equipe resolver a duplicata, a rodada tenta de novo.
+    expect(rodada.pendentes?.[0]).toContain("não há como saber");
+    // Sem reserva: quando a equipe indicar qual é, a rodada tenta de novo.
     expect(eventos.some((e) => e.externalId.startsWith("reajuste:"))).toBe(false);
   });
 
@@ -293,6 +294,162 @@ describe("propagarReajustes: quando não escreve", () => {
 
     expect(rodada.desfechos?.[0].problemas.length).toBeGreaterThan(0);
     expect(eventos.some((e) => e.externalId === "reajuste:10601:2026-10-23")).toBe(false);
+  });
+});
+
+/**
+ * Cada tarefa é o contrato de UM produto (Duda, 13/11/2026): cliente com
+ * várias tarefas tem vários contratos, e TODOS são reajustados — cada um na
+ * tarefa que é a dele. Os números são os reais do (5051) e do (1858).
+ */
+describe("propagarReajustes: um cliente com vários contratos", () => {
+  const LINK_5051 = "https://seahubcoworking.conexa.app/index.php?r=x&idCliente=5051";
+
+  /** Contrato do 5051 depois do lote: R$ 99,90 → R$ 104,48 (IPCA 4,58%). */
+  const contrato5051 = (contratoId: number, extra: Record<string, unknown> = {}) =>
+    retrato({
+      contratoId,
+      clienteId: 5051,
+      valorCentavos: 9990,
+      valorAtualCentavos: 10448,
+      reajustePct: 4.58,
+      fidelidade: "2026-11-27",
+      ...extra,
+    });
+
+  const tarefa5051 = (id: string, extra: { status?: string; valor?: string } = {}) =>
+    tarefa({
+      id,
+      nome: "(5051) PAULO HENRIQUE MACIEL BARROSO",
+      status: extra.status,
+      campos: [
+        { id: CAMPO_VALOR, value: extra.valor ?? "99.9" },
+        { id: CAMPO_LINK, value: LINK_5051 },
+        // 27/11/2026, como o ClickUp devolve a data.
+        { id: "0231d769-5063-439d-8b03-ad660c6bada5", value: "1795762800000" },
+      ],
+    });
+
+  function com(lista: Array<ReturnType<typeof tarefa>>) {
+    tarefasDaLista = lista;
+    tarefas = Object.fromEntries(lista.map((t) => [t.id, t]));
+  }
+
+  it("⚠ (5051) quatro contratos iguais e quatro tarefas iguais: as QUATRO são escritas, uma em cada tarefa", async () => {
+    retratos = [10574, 10576, 10578, 10580].map((id) => contrato5051(id));
+    com(["t1", "t2", "t3", "t4"].map((id) => tarefa5051(id)));
+
+    const rodada = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(rodada.propagados).toBe(4);
+    expect(rodada.pendentes).toEqual([]);
+    for (const id of ["t1", "t2", "t3", "t4"]) {
+      expect(escritas).toContain(`${id}/${CAMPO_VALOR}=104.48`);
+      expect(escritas).toContain(`${id}/status=pg pendente - renovação`);
+    }
+    // Uma reserva por contrato, e cada tarefa recebeu UM comentário.
+    expect(eventos.filter((e) => e.externalId.startsWith("reajuste:"))).toHaveLength(4);
+    expect(comentarios).toHaveLength(4);
+  });
+
+  it("⚠ rodar de novo depois do lote inteiro não escreve de novo", async () => {
+    retratos = [10574, 10576].map((id) => contrato5051(id));
+    com(["t1", "t2"].map((id) => tarefa5051(id)));
+    await propagarReajustes({ forcar: true }, AGORA);
+    escritas = [];
+    comentarios = [];
+
+    const segunda = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(segunda.acao).toBe("nada a propagar");
+    expect(escritas).toEqual([]);
+  });
+
+  it("⚠ lote propagado em PARTE: o contrato que falta casa com a tarefa que falta, não com uma já escrita", async () => {
+    // Os contratos 1 e 2 já foram propagados (nas tarefas t1 e t2, hoje com o
+    // valor novo). Faltam os contratos 3 e 4, e as tarefas t3 e t4.
+    retratos = [1, 2, 3, 4].map((id) => contrato5051(id));
+    const feito = (contratoId: number, tarefaId: string): Linha => ({
+      id: `p${contratoId}`,
+      provider: "RENOVACAO",
+      externalId: `reajuste:${contratoId}:2026-10-23`,
+      resultado: "propagado",
+      detalhe: JSON.stringify({ contratoId, clienteId: 5051, tarefaId, problemas: [] }),
+    });
+    eventos = [feito(1, "t1"), feito(2, "t2")];
+    com([
+      tarefa5051("t1", { status: "pg pendente - renovação", valor: "104.48" }),
+      tarefa5051("t2", { status: "pg pendente - renovação", valor: "104.48" }),
+      tarefa5051("t3"),
+      tarefa5051("t4"),
+    ]);
+
+    const rodada = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(rodada.propagados).toBe(2);
+    expect(escritas.some((e) => e.startsWith("t1/") || e.startsWith("t2/"))).toBe(false);
+    expect(escritas).toContain(`t3/${CAMPO_VALOR}=104.48`);
+    expect(escritas).toContain(`t4/${CAMPO_VALOR}=104.48`);
+  });
+
+  it("⚠ (1858) produtos diferentes do mesmo cliente: cada contrato vai para a tarefa do SEU valor", async () => {
+    const link = "https://seahubcoworking.conexa.app/index.php?r=x&idCliente=1858";
+    retratos = [
+      retrato({
+        contratoId: 10441,
+        clienteId: 1858,
+        valorCentavos: 8900,
+        valorAtualCentavos: 9308,
+        reajustePct: 4.58,
+        fidelidade: "2026-11-06",
+      }),
+      retrato({
+        contratoId: 10378,
+        clienteId: 1858,
+        valorCentavos: 580000,
+        valorAtualCentavos: 606564,
+        reajustePct: 4.58,
+        fidelidade: "2026-11-04",
+      }),
+    ];
+    const emTarefa = (id: string, valor: string, data: string) =>
+      tarefa({
+        id,
+        nome: "(1858) WENDRILL CASSOL SOCIEDADE INDIVIDUAL DE ADVOCACIA",
+        campos: [
+          { id: CAMPO_VALOR, value: valor },
+          { id: CAMPO_LINK, value: link },
+          { id: "0231d769-5063-439d-8b03-ad660c6bada5", value: data },
+        ],
+      });
+    // 06/11/2026 e 04/11/2026.
+    com([emTarefa("ev", "89", "1793948400000"), emTarefa("sp", "5800", "1793775600000")]);
+
+    const rodada = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(rodada.pendentes).toEqual([]);
+    expect(escritas).toContain(`ev/${CAMPO_VALOR}=93.08`);
+    expect(escritas).toContain(`sp/${CAMPO_VALOR}=6065.64`);
+    // E o EV nunca recebe o valor da sala privativa, nem o contrário.
+    expect(escritas).not.toContain(`ev/${CAMPO_VALOR}=6065.64`);
+    expect(escritas).not.toContain(`sp/${CAMPO_VALOR}=93.08`);
+  });
+
+  it("⚠ contrato SEM tarefa que o case e outro com tarefa: só o segundo é escrito, e o primeiro fica pendente com o motivo", async () => {
+    retratos = [
+      contrato5051(1),
+      contrato5051(2, { valorCentavos: 580000, valorAtualCentavos: 606564 }),
+    ];
+    // Só existe a tarefa do contrato de R$ 99,90.
+    com([tarefa5051("t1")]);
+
+    const rodada = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(rodada.propagados).toBe(1);
+    expect(escritas).toContain(`t1/${CAMPO_VALOR}=104.48`);
+    expect(rodada.pendentes?.[0]).toContain("contrato 2");
+    // O pendente não vira reserva: quando a tarefa aparecer, a rodada tenta de novo.
+    expect(eventos.some((e) => e.externalId === "reajuste:2:2026-10-23")).toBe(false);
   });
 });
 

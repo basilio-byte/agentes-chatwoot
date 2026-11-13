@@ -1984,10 +1984,44 @@ escrita desta capacidade em sistema de terceiro** — até aqui a renovação s�
   o seu `try` (lição do cadastro completo): um campo que o ClickUp recusa não
   custa os outros nem o comentário. Nada a fazer fecha a reserva como "já
   estava em dia", senão o contrato voltaria à fila de meia em meia hora.
-- ⚠ **Cliente com mais de uma tarefa no fluxo não é escrito.** Medido: `(5051)
-  PAULO HENRIQUE` tem quatro em `notificação renovação` e `(1858) WENDRILL
-  CASSOL`, duas. Escolher uma deixaria metade das tarefas com o valor velho, em
-  silêncio. Fica pendente, sem reserva, e volta quando a equipe resolver.
+- ⚠⚠ **CADA TAREFA É O CONTRATO DE UM PRODUTO** (Duda, 13/11/2026 — corrige a regra
+  anterior, que tratava cliente com várias tarefas como erro de cadastro e NÃO
+  escrevia nenhuma). Quem tem duas ou quatro tarefas tem dois ou quatro contratos,
+  cada um com a sua data de reajuste, e todos precisam ser reajustados. Medido:
+  `(5051) PAULO HENRIQUE` tem quatro tarefas idênticas (R$ 99,90, mesma data, só o
+  BOX muda; a tarefa diz "SERÃO 4 CONTRATOS PARA O MESMO CLIENTE") e quatro
+  contratos iguais no Conexa (plano 169, R$ 104,48 depois do IPCA 4,58%);
+  `(1858) WENDRILL CASSOL` tem uma tarefa de EV (R$ 89) e uma de sala privativa
+  (R$ 5.800), com datas a dois dias uma da outra. Regras puras e testadas em
+  `renovacao/casamento.ts`:
+  - **Não existe id de contrato na tarefa** (o `CONEXA LINK` aponta para o
+    CLIENTE). O que liga os dois são o **`VALOR CONTRATO`** (o de antes OU o de
+    agora do contrato: +4) e a **`DATA DE REAJUSTE`** (a até 3 dias da fidelidade:
+    +2 exata, +1 próxima; mais longe é OUTRO ciclo e só o valor ainda explica a
+    tarefa). Os dois vêm da própria listagem do ClickUp, sem leitura a mais.
+  - **Equivalente não é ambíguo.** Quatro contratos iguais e quatro tarefas iguais
+    escrevem exatamente o mesmo em cada tarefa, qualquer pareamento serve e o
+    módulo escolhe um (é o caso do `(5051)`). **Ambíguo é quando dois
+    pareamentos de mesma pontuação mudam o que vai para uma tarefa** (um contrato
+    e duas tarefas iguais; dois contratos com percentual diferente): nada é
+    escrito, o contrato fica pendente com o motivo, e a equipe indica qual é.
+  - **Sem evidência, não casa.** Num cliente com vários contratos ou tarefas, um
+    par sem valor nem data em comum não conta. A exceção é o caso comum, um
+    contrato e uma tarefa, que casa sem exigir evidência (tarefa antiga não tem
+    valor nem data) — mas **a única tarefa de OUTRO contrato** (data longe e valor
+    diferente) também não recebe o reajuste.
+  - **O cliente é a unidade da rodada**, não o contrato: os contratos dele são
+    casados JUNTOS. E as tarefas que um contrato do mesmo lote já levou
+    (`tarefaId` gravado no `detalhe` da reserva) saem do páreo na rodada seguinte
+    — sem isso, num lote propagado em parte, o contrato que falta casaria com uma
+    tarefa já escrita e a que ficou para trás nunca seria atualizada.
+  - Passa de 6 contratos ou 8 tarefas num cliente: pendente, olho humano (a busca é
+    exaustiva). A tela `/renovacoes` e o MCP usam o MESMO casamento e dizem o
+    motivo quando um contrato não tem tarefa (`motivoSemTarefa`/`semTarefaPorque`).
+  - ⚠ **O que NÃO muda:** `(5051)` e os demais da leva de NOVEMBRO não são
+    candidatos — o lote deles (23/10) caiu ANTES de o retrato existir, então o
+    valor guardado já é o novo (`loteChegou`). O casamento vale para a leva de
+    dezembro em diante, cujo lote (~20–23/11) cai depois do retrato.
 - ⚠ **O cruzamento leva com tarefa é pelo NOME** (`(5060) RAZÃO SOCIAL`), e nome
   é editável. `confereOCliente` usa o `CONEXA LINK` como segunda testemunha e
   barra a contradição; link ausente não barra, porque tarefa antiga não o tem.
