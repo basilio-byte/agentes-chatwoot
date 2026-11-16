@@ -30,6 +30,8 @@ import { lerLeva, levaPadrao } from "@/server/renovacao/consulta";
 import { diaDeEntrarEmRenovacao } from "@/server/renovacao/regras";
 import { ultimasRodadas } from "@/server/renovacao/retrato";
 import { CHAVE_DA_RODADA, ultimasPropagacoes } from "@/server/renovacao/propagar";
+import { configDaRenovacao } from "@/server/renovacao/config";
+import { ultimasRodadasDa } from "@/server/renovacao/rodadas";
 import { ultimasRodadasDoAcompanhamento } from "@/server/acompanhamento/conferir";
 import {
   CHAVE_DA_RODADA as CHAVE_DA_RODADA_DA_RECONFERENCIA,
@@ -1138,7 +1140,7 @@ const verLevaDeRenovacao = ferramenta({
   name: "ver_leva_de_renovacao",
   title: "Ver a leva de renovação do mês",
   description:
-    "Os contratos cuja FIDELIDADE no Conexa vence no mês pedido — a leva que a equipe renova —, com valor anterior, valor de agora, diferença por mês, último reajuste (índice e percentual) e o status da tarefa no ClickUp. Traz também os que já venceram e continuam ativos, e as tarefas que estão num status de renovação sem contrato correspondente. Os contratos vêm da leitura diária gravada no banco, não do Conexa ao vivo: `lidoEm` diz de quando é o retrato. É a mesma leitura da tela /renovacoes. `rodadas` é o desfecho da leitura do Conexa e `propagacoes`, o da escrita no ClickUp depois do lote de reajuste (com o que foi olhado e não escrito, e por quê).",
+    "Os contratos cuja FIDELIDADE no Conexa vence no mês pedido — a leva que a equipe renova —, com valor anterior, valor de agora, diferença por mês, último reajuste (índice e percentual) e o status da tarefa no ClickUp. Traz também os que já venceram e continuam ativos, e as tarefas que estão num status de renovação sem contrato correspondente. Os contratos vêm da leitura diária gravada no banco, não do Conexa ao vivo: `lidoEm` diz de quando é o retrato. É a mesma leitura da tela /renovacoes. `rodadas` é o desfecho da leitura do Conexa e `propagacoes`, o da escrita no ClickUp depois do lote de reajuste (com o que foi olhado e não escrito, e por quê). `automacao` diz o que da renovação automática está ligado (mover para notificação, fechar no pagamento, avançar datas) e `notificacoes`, `avancosDeStatus`, `pagamentos` e `datas` trazem o desfecho de cada parte.",
   papel: UserRole.VIEWER,
   anotacoes: CONSULTA,
   entrada: z.strictObject({
@@ -1156,11 +1158,28 @@ const verLevaDeRenovacao = ferramenta({
       .describe("Quantas linhas de cada bloco devolver. Padrão 50."),
   }),
   async executar({ mes, limite }) {
-    const [leva, rodadas, propagacoes] = await Promise.all([
-      lerLeva(mes ?? levaPadrao()),
-      ultimasRodadas(3),
-      ultimasPropagacoes(3),
-    ]);
+    const [leva, rodadas, propagacoes, automacao, notificacoes, avancos, pagamentos, datas] =
+      await Promise.all([
+        lerLeva(mes ?? levaPadrao()),
+        ultimasRodadas(3),
+        ultimasPropagacoes(3),
+        configDaRenovacao(),
+        ultimasRodadasDa("notificacao"),
+        ultimasRodadasDa("avanco"),
+        ultimasRodadasDa("pagamento"),
+        ultimasRodadasDa("datas"),
+      ]);
+    const rodadaDe = (r: {
+      externalId: string;
+      resultado: string | null;
+      detalhe: string | null;
+      processedAt: Date | null;
+    }) => ({
+      dia: r.externalId.slice(r.externalId.indexOf(":") + 1),
+      resultado: r.resultado,
+      detalhe: r.detalhe,
+      em: r.processedAt ? quando(r.processedAt) : null,
+    });
     const teto = limite ?? 50;
     const hojeEmSP = diaEmSaoPaulo(new Date());
 
@@ -1229,6 +1248,18 @@ const verLevaDeRenovacao = ferramenta({
         detalhe: p.detalhe,
         em: p.processedAt ? quando(p.processedAt) : null,
       })),
+      // A renovação automática (chaves em Integrações → Renovação): o que está
+      // ligado e o desfecho de cada parte. `pendentes` de cada rodada é o que ela
+      // olhou, quis mexer e NÃO mexeu, com o motivo.
+      automacao: {
+        moverParaNotificacao: automacao.moverParaNotificacao,
+        fecharNoPagamento: automacao.fecharNoPagamento,
+        avancarDatas: automacao.avancarDatas,
+      },
+      notificacoes: notificacoes.map(rodadaDe),
+      avancosDeStatus: avancos.map(rodadaDe),
+      pagamentos: pagamentos.map(rodadaDe),
+      datas: datas.map(rodadaDe),
       contratos: leva.linhas.slice(0, teto).map(linha),
       fidelidadeVencida: leva.atrasados.slice(0, teto).map(linha),
       tarefasSemContratoNaLeva: leva.orfas

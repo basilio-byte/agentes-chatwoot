@@ -2032,6 +2032,105 @@ escrita desta capacidade em sistema de terceiro** — até aqui a renovação s�
 - **O desfecho da rodada fica em `WebhookEvent` (`propagacao:<dia>`)** e sai no
   MCP, ao lado do da leitura, com os `pendentes`.
 
+#### Fases 2b, 3 e 4: o que o sistema faz sozinho depois do reajuste (16/11/2026)
+
+Pedido do usuário ("pode seguir em ordem até o fim"), depois de a Duda corrigir a
+regra das várias tarefas. Tudo em `src/server/renovacao/`, chaves em **Integrações
+→ Renovação** (`Integration` provider `RENOVACAO`, `enabled` + `config`;
+`config.ts`), desfecho de cada parte em `ver_leva_de_renovacao` (`automacao`,
+`notificacoes`, `avancosDeStatus`, `pagamentos`, `datas`).
+
+⚠⚠ **Tudo nasce DESLIGADO, parte por parte.** Mover para `notificação` e para
+`ongoing` faz as automações do ClickUp mandarem e-mail AO CLIENTE; avançar a
+fidelidade escreve no Conexa. Duas camadas: o interruptor geral (`enabled`) e uma
+chave por parte (`moverParaNotificacao`, `fecharNoPagamento`, `avancarDatas` =
+desligado | sombra | ligado). ADMIN liga; só OWNER gera o endereço das datas;
+a auditoria guarda quem ligou o quê. A propagação do reajuste (fase 2) NÃO tem
+chave: já estava no ar e não escreve nada que chegue ao cliente.
+
+- ⭐ **A premissa "a API do ClickUp não expõe quanto tempo a tarefa está no
+  status" estava errada.** A Atividade continua ilegível, mas o ClickApp "Total
+  time in Status" (ligado no workspace) devolve, em `GET
+  /task/bulk_time_in_status/task_ids` (até 100), o instante em que a tarefa
+  ENTROU no status de agora (`integrations/clickup/tempo-no-status.ts`). É a
+  contagem dos 2 dias, sem relógio nosso.
+- **2b — `notificar.ts` / `notificacao.ts`.** De `renovação` para `notificação
+  renovação` depois de 2 dias, de 30 em 30 min em horário comercial, teto de 10
+  por rodada. Guardas: **sala privativa fica de fora** (a automação 3 não manda
+  e-mail para ela e a 7 aplica o checklist de conversa humana); sem `DATA DE
+  REAJUSTE`, ou com ela já vencida, não move (e-mail de reajuste de renovação
+  passada é pior que esperar); lê a tarefa ao vivo antes de trocar; reserva
+  `notificar:<tarefa>:<instante de entrada>` antes de escrever, desfeita se a
+  troca falhar (a mesma ENTRADA no status nunca notifica duas vezes; voltar e
+  ficar mais 2 dias é outra). ⚠ Não provado em produção: que a automação do
+  ClickUp dispare numa troca de status feita por API (a API não mostra
+  automação) — o primeiro movimento real prova.
+- **`avancar.ts` — o status que ficou para trás.** Contrato que vence do dia 20
+  em diante entra em `renovação` DEPOIS do lote; a propagação escreve valor e
+  percentual, não avança o status (pularia o e-mail) e fecha a reserva — e,
+  passados os 2 dias, ninguém levaria a tarefa de `notificação` a `pg pendente`.
+  A regra é de ESTADO: tarefa que uma reserva de propagação nomeou e que está em
+  `notificação renovação` vai para `pg pendente`. Sem chave (a transição não acorda
+  automação) e só abre o ClickUp se houver tarefa nomeada.
+- **4 — `fechar.ts` / `fechamento.ts`.** `pg pendente` → `ongoing` quando o
+  cliente pagou o ciclo novo. "Pagou" = cobrança **paga depois do reajuste**, que
+  **inclui uma venda DESTE contrato** (cobrança → venda → contrato) e cujo **valor
+  pago cobre o valor do contrato de agora** (a pergunta "é referente ao valor do
+  contrato?" da Duda; juros e multa pagam mais e valem, desconto na quitação ou
+  parcial não). Quatro contratos numa fatura só (o `(5051)`) fecham os quatro.
+  Destino: sala privativa → `ongoing - sala privativa`; **ONE fica com a equipe**
+  (renova para `one`, que o pagamento não deduz). Só abre o Conexa para
+  tarefa nomeada por reserva de propagação e parada em `pg pendente`, no máximo 5
+  clientes por rodada, em rodízio (quem foi conferido há menos de 3 h espera) e
+  com pausa entre as idas: o Conexa limita a 60/min e os agentes dividem o limite.
+  ⚠ **Confere se o status FICOU** (relê após ~5 s): uma trava da lista pode
+  devolver a tarefa — foi o "Contrato Assinado" vazio em 11/11 — e aí a reserva
+  fecha como `devolvida`, o comentário avisa e não tenta de novo. Reserva
+  `fechamento:<contrato>:<reajuste>` (prefixo diferente do `pagamento:<dia>` do
+  resumo da rodada, para a listagem não misturar as duas).
+- **3 — `datas.ts` / `datas-processar.ts` + rota `/api/webhooks/renovacao/<token>`.**
+  Substitui o fluxo do n8n "Atualizar datas do processo de renovação" (lido em
+  16/11/2026). O n8n: `DATA DE ENCERRAMENTO` e `DATA DE REAJUSTE` da tarefa = o
+  valor da URL **+365 dias**; e `PATCH /contract/<id> { fidelityDate }` = fidelidade
+  **+365**, só do **primeiro** contrato do cliente (`data[0]`) cujo plano contém o
+  `TIPO DE PRODUTO` (o que também deixa de fora sala privativa, que não contém), com
+  um LLM só para tirar o `idCliente` da URL. Aqui: **+1 ano de calendário**; o
+  contrato é o **DA TAREFA** (casamento por valor e data, e a fidelidade tem de
+  estar a até 3 dias da data de partida — o contrato que só o valor explicaria pode
+  já ter sido avançado); **lê o contrato de volta** depois do PATCH; reserva
+  `datas:<tarefa>:<data de partida>` mais um freio de 20 h por tarefa (a entrega
+  repetida sem a data na URL partiria da data já avançada). Só avança quando o
+  status é de continuidade (`ongoing`, `ongoing - sala privativa`, `seaway`, `one`).
+  A URL só precisa do `taskid`; as duas datas valem como "o valor de ANTES" e são
+  lidas em `MMM DD YYYY` (o formato que o n8n esperava), ISO, `dd/mm/aaaa` e ms.
+  ⚠⚠ **A `DATA DE ENCERRAMENTO` continua escrita por DOIS caminhos** (a automação 9
+  do ClickUp grava "hoje + 365"; o n8n gravava "valor antigo + 365" e, chegando por
+  último, vencia). O comportamento do n8n foi mantido — valor antigo + 1 ano — porque
+  qual conta vale é decisão da equipe, e mudar o resultado escondido numa migração
+  seria pior que migrar igual.
+  - **Três modos.** `sombra` lê, planeja e registra o plano em `datas-sombra:…` SEM
+    escrever nada: serve para pôr o endereço como SEGUNDA ação da automação, ao lado
+    do n8n, e conferir o plano contra o que o n8n fez. A reserva da sombra não
+    trava o modo ligado depois.
+  - ⚠⚠ **A virada é atômica ou duplica**: ligar `ligado` e tirar a ação do n8n da
+    automação têm de ser o MESMO movimento. Com os dois rodando, o contrato é
+    avançado duas vezes (o n8n soma 365 a `data[0]` sem olhar se já avançou) — daqui
+    não há como proteger o n8n. Depois, despublicar `sYtrdHFcVPwCo8nF` (e o
+    `hFj2JLcE3FqWYcrq`, que o print das automações mostrou morto).
+  - **A rota responde 200 na hora e trabalha depois** (`after`); só 401 e 404 são
+    erro de protocolo. O corpo não é fonte confiável: status, cliente e contratos
+    vêm do ClickUp e do Conexa AO VIVO.
+  - Não provado contra o Conexa real (sem sandbox): o PATCH de `fidelityDate` é o
+    mesmo que o n8n faz e o Conexa aceita, e o sistema lê de volta; a primeira
+    entrega em sombra e a primeira ligada são quem prova.
+- ⚠ **O segredo do n8n NÃO foi reaproveitado.** O fluxo traz um token do Conexa em
+  texto puro no nó HTTP; foi lido ao inspecionar o fluxo (MCP do n8n) e não é usado
+  nem copiado — o sistema usa a credencial cifrada da integração do Conexa. Fica
+  como mais um motivo para rotacioná-lo quando o fluxo for despublicado.
+- **O casamento contrato↔tarefa ganhou desempate previsível**: entre combinações
+  equivalentes, a tarefa vai para o contrato de menor id (a busca tenta casar antes
+  de deixar sem tarefa). Quem chama ordena os contratos por id.
+
 ### Acompanhamento de contratos: a exceção que fala por cima do vendedor
 
 Integração `ACOMPANHAMENTO`, fora do registry como o NPS e a cobrança: sem

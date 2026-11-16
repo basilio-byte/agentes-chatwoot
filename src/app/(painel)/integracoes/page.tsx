@@ -71,6 +71,9 @@ import { lerConfigAniversario } from "@/server/aniversario/regras";
 import { formatarTelefone } from "@/server/alerta-de-saldo/regras";
 import { lerConfigCobranca, PROVIDER_DA_COBRANCA } from "@/server/cobranca/regras";
 import { PROVIDER_ACOMPANHAMENTO } from "@/server/acompanhamento/regras";
+import { EnderecoDasDatas, RenovacaoConfigForm } from "@/components/renovacao-config";
+import { lerConfigRenovacao } from "@/server/renovacao/config";
+import { PROVIDER_RENOVACAO } from "@/server/renovacao/regras";
 import { AcompanhamentoConfigForm } from "@/components/acompanhamento-config";
 import { configMateriaisSchema } from "@/server/integrations/materiais";
 import { GoogleConfigForm } from "@/components/google-config";
@@ -106,6 +109,7 @@ import {
   FileText,
   Handshake,
   Hourglass,
+  RefreshCcw,
   IdCard,
   Images,
   ListChecks,
@@ -217,6 +221,16 @@ export default async function IntegracoesPage({
   const acompanhamento = registros.find(
     (i) => i.provider === IntegrationProvider.ACOMPANHAMENTO,
   );
+  const renovacao = registros.find((i) => i.provider === IntegrationProvider.RENOVACAO);
+  const configRenovacao = lerConfigRenovacao(renovacao?.config, renovacao?.enabled ?? false);
+  // O desfecho de cada rodada da renovação automática (uma linha por dia e por
+  // parte): é o que mostra se ela está rodando e o que decidiu NÃO fazer.
+  const rodadasDaRenovacao = await db.webhookEvent.findMany({
+    where: { provider: PROVIDER_RENOVACAO, eventType: { endsWith: "-rodada" } },
+    orderBy: { processedAt: "desc" },
+    take: 12,
+    select: { id: true, externalId: true, resultado: true, detalhe: true, processedAt: true },
+  });
   const configCobranca = lerConfigCobranca(cobranca?.config);
   const notasFiscais = registros.find((i) => i.provider === IntegrationProvider.NOTAS_FISCAIS);
   const configNotas = lerConfigNotasFiscais(notasFiscais?.config);
@@ -1706,6 +1720,104 @@ export default async function IntegracoesPage({
                           <td className="text-xs text-muted">{e.detalhe ?? "—"}</td>
                           <td className="whitespace-nowrap tabular-nums">
                             {formatarData(e.createdAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            id: "renovacao",
+            rotulo: "Renovação",
+            icone: <RefreshCcw size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Renovação de contratos</h2>
+                    {renovacao?.enabled &&
+                    (configRenovacao.moverParaNotificacao ||
+                      configRenovacao.fecharNoPagamento) ? (
+                      <Badge tone="success">ligada</Badge>
+                    ) : (
+                      <Badge>desligada</Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    O que o sistema faz <strong>sozinho</strong> depois que a equipe
+                    aplica o reajuste no Conexa. A leitura da leva e a propagação do
+                    reajuste para a tarefa (valor, percentual e o status até “pg
+                    pendente”) <strong>já rodam sem chave</strong> — não escrevem
+                    nada que chegue ao cliente. As partes abaixo chegam, por isso
+                    nascem desligadas e cada uma se liga separada.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+                    <li>
+                      A contagem dos 2 dias vem do próprio ClickUp (desde quando a
+                      tarefa entrou no status), não de um relógio nosso.
+                    </li>
+                    <li>
+                      Sala privativa <strong>não</strong> é movida sozinha: a equipe
+                      conversa com o cliente durante a renovação.
+                    </li>
+                    <li>
+                      Tarefa sem data de reajuste, ou com a data já vencida, fica
+                      parada e aparece abaixo com o motivo — nenhum e-mail sai por ela.
+                    </li>
+                    <li>
+                      Roda de 30 em 30 minutos, em horário comercial, com teto de 10
+                      tarefas por conferência.
+                    </li>
+                  </ul>
+
+                  <RenovacaoConfigForm
+                    geral={renovacao?.enabled ?? false}
+                    moverParaNotificacao={configRenovacao.moverParaNotificacao}
+                    fecharNoPagamento={configRenovacao.fecharNoPagamento}
+                    avancarDatas={configRenovacao.avancarDatas}
+                    temEndereco={!!configRenovacao.tokenHash}
+                    somenteLeitura={!editavel}
+                  />
+
+                  <EnderecoDasDatas
+                    urlBase={`${origem}/api/webhooks/renovacao`}
+                    geradoEm={configRenovacao.tokenGeradoEm}
+                    podeGerar={sessao.user.role === UserRole.OWNER}
+                  />
+                </Card>
+
+                <Card className="space-y-3">
+                  <h3 className="font-medium">Últimas conferências</h3>
+                  {rodadasDaRenovacao.length === 0 ? (
+                    <p className="text-sm text-muted">
+                      Nada ainda. Com uma parte ligada, cada conferência aparece aqui —
+                      inclusive o que o sistema decidiu NÃO fazer, e por quê.
+                    </p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>O quê</th>
+                          <th>Resultado</th>
+                          <th>Detalhe</th>
+                          <th>Quando</th>
+                        </>
+                      }
+                    >
+                      {rodadasDaRenovacao.map((e) => (
+                        <tr key={e.id}>
+                          <td className="whitespace-nowrap">{e.externalId}</td>
+                          <td className="whitespace-nowrap">
+                            <Badge tone="neutral">{e.resultado ?? "—"}</Badge>
+                          </td>
+                          <td className="text-xs text-muted">{e.detalhe ?? "—"}</td>
+                          <td className="whitespace-nowrap tabular-nums">
+                            {e.processedAt ? formatarData(e.processedAt) : "—"}
                           </td>
                         </tr>
                       ))}

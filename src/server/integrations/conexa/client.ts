@@ -229,6 +229,17 @@ export class ConexaClient {
   }
 
   /**
+   * ⚠ **Só a renovação escreve aqui, e só a `fidelityDate`** (`AAAA-MM-DD`): é o
+   * que o fluxo do n8n já fazia com este mesmo `PATCH /contract/:id`. O
+   * `amount` NÃO se escreve por aqui — o reajuste de valor é aplicado pela
+   * equipe na tela do Conexa, em lote. Sem sandbox: quem chama lê o contrato de
+   * volta para provar que a data ficou.
+   */
+  atualizarFidelidadeDoContrato(id: number, fidelityDate: string) {
+    return this.patch<Record<string, unknown>>(`/contract/${id}`, { fidelityDate });
+  }
+
+  /**
    * ⚠ **Não existe filtro por data de fidelidade.** A leva do mês da renovação
    * é recortada no nosso código (`renovacao/regras.ts`), percorrendo as páginas
    * dos ativos — por isso `offset` existe aqui.

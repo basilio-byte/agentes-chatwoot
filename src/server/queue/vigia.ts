@@ -17,6 +17,9 @@ import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
 import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { propagarReajustes } from "@/server/renovacao/propagar";
+import { avancarTarefasDoLote } from "@/server/renovacao/avancar";
+import { moverParaNotificacao } from "@/server/renovacao/notificar";
+import { fecharCiclosPagos } from "@/server/renovacao/fechar";
 import { acompanharContratos } from "@/server/acompanhamento/conferir";
 import { conferirValidacaoDeContratos } from "@/server/validacao-de-contratos/conferir";
 import { pedirAquecimentoDoPainel } from "@/server/painel/aquecer";
@@ -312,6 +315,43 @@ export function iniciarVigia(): NodeJS.Timeout {
       if (rodada.acao === "propagado") logger.info(rodada, "renovação: reajuste propagado");
     } catch (erro) {
       logger.error({ erro }, "renovação: a propagação do reajuste falhou");
+    }
+
+    // A tarefa cujo reajuste já estava lançado e que só agora chegou a
+    // `notificação renovação` vai para `pg pendente`. Só abre o ClickUp quando
+    // uma reserva de propagação nomeou tarefa que ficou para trás.
+    try {
+      const rodada = await avancarTarefasDoLote();
+      if (rodada.acao === "conferido" && rodada.avancadas?.length) {
+        logger.info(rodada, "renovação: status avançado");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "renovação: o avanço de status falhou");
+    }
+
+    // Fase 2b: de `renovação` para `notificação renovação` depois de dois dias.
+    // ⚠ Nasce DESLIGADA — a troca dispara o e-mail de aviso AO CLIENTE pela
+    // automação do ClickUp. Desligada, a rodada é a leitura de uma configuração.
+    try {
+      const rodada = await moverParaNotificacao();
+      if (rodada.acao === "conferido" && rodada.movidas?.length) {
+        logger.info(rodada, "renovação: tarefas movidas para notificação");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "renovação: a notificação falhou");
+    }
+
+    // Fase 4: o cliente pagou o valor reajustado, a tarefa vai para `ongoing`.
+    // ⚠ Nasce DESLIGADA — `ongoing` faz o ClickUp mandar o e-mail de cliente
+    // renovado e chamar o webhook de datas. Só abre o Conexa com tarefa nomeada
+    // por uma reserva de propagação e parada em `pg pendente`.
+    try {
+      const rodada = await fecharCiclosPagos();
+      if (rodada.acao === "conferido" && rodada.fechadas?.length) {
+        logger.info(rodada, "renovação: ciclos fechados pelo pagamento");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "renovação: o fechamento pelo pagamento falhou");
     }
 
     // Acompanhamento de contratos: de dez em dez minutos, confere pagamento e

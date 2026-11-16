@@ -38,6 +38,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.NOTAS_FISCAIS]: "Notas fiscais (Spedy)",
   [IntegrationProvider.BOAS_VINDAS]: "Template de boas-vindas (WhatsApp oficial)",
   [IntegrationProvider.ACOMPANHAMENTO]: "Acompanhamento de contratos",
+  [IntegrationProvider.RENOVACAO]: "Renovação de contratos",
 };
 
 async function main() {

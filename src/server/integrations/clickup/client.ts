@@ -11,6 +11,7 @@ import type {
   ClickUpWorkspace,
 } from "./tipos";
 import { hostDeAnexoPermitido } from "./fotos";
+import { lerTempoNoStatus } from "./tempo-no-status";
 
 const BASE = "https://api.clickup.com/api/v2";
 
@@ -167,6 +168,18 @@ export class ClickUpClient {
 
   obterTarefa(taskId: string) {
     return this.requisitar<ClickUpTarefa>(`/task/${taskId}`);
+  }
+
+  /**
+   * Desde quando cada tarefa está no status de agora — até 100 por chamada. Ver
+   * `tempo-no-status.ts`. Exige o ClickApp "Total time in Status" ligado.
+   */
+  async tempoNoStatus(taskIds: string[]) {
+    if (!taskIds.length) return {};
+    const q = new URLSearchParams();
+    taskIds.slice(0, 100).forEach((id) => q.append("task_ids", id));
+    const bruto = await this.requisitar<unknown>(`/task/bulk_time_in_status/task_ids?${q}`);
+    return lerTempoNoStatus(bruto);
   }
 
   listarTarefasDaLista(listId: string, opcoes: OpcoesBusca = {}) {

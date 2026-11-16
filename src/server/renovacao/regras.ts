@@ -38,10 +38,11 @@ export const DIAS_DE_ANTECEDENCIA = 30;
  * `notificação renovação` (pedido da equipe em 10/11/2026 — hoje é o Felipe
  * quem faz esse passo à mão).
  *
- * ⚠ **A API do ClickUp não expõe a Atividade**, então não dá para perguntar há
- * quanto tempo a tarefa está no status. Quem marca a entrada é a nossa rodada,
- * na primeira vez que vê a tarefa ali — por isso `vistaEmRenovacaoEm` é
- * parâmetro, e não algo lido do ClickUp.
+ * ⚠ **A Atividade do ClickUp continua ilegível pela API, mas o ClickApp "Total
+ * time in Status" (ligado no workspace) devolve o instante em que a tarefa
+ * ENTROU no status de agora** — ver `integrations/clickup/tempo-no-status.ts`.
+ * É dele que a rodada da 2b (`notificar.ts`) tira `vistaEmRenovacaoEm`, em vez de
+ * marcar a entrada por conta própria (a premissa original deste comentário).
  */
 export const DIAS_EM_RENOVACAO = 2;
 

@@ -167,8 +167,10 @@ function melhoresAtribuicoes(tabela: Array<Array<number | null>>, minimo: number
       }
       return;
     }
-    atual[i] = null;
-    ir(i + 1, total);
+    // ⚠ Casar vem ANTES de "ficar sem tarefa": entre combinações equivalentes, a
+    // primeira achada é a que dá a tarefa ao contrato de ordem mais baixa, e o
+    // chamador ordena os contratos (por id) justamente para o resultado ser
+    // previsível — o contrato de menor id é o que leva a tarefa.
     for (let j = 0; j < m; j++) {
       const p = tabela[i][j];
       if (usada[j] || p == null || p < minimo) continue;
@@ -179,6 +181,8 @@ function melhoresAtribuicoes(tabela: Array<Array<number | null>>, minimo: number
       atual[i] = null;
       usada[j] = false;
     }
+    atual[i] = null;
+    ir(i + 1, total);
   }
 
   ir(0, 0);

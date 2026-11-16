@@ -665,6 +665,15 @@ enum IntegrationProvider {
   /// aqui ele fala numa conversa que está com o vendedor (pedido do Diego em
   /// 10/11/2026). Nasce desligada.
   ACOMPANHAMENTO
+  /// Renovação de contratos automática: o que o sistema faz sozinho depois do
+  /// reajuste — mover a tarefa para `notificação renovação` após 2 dias, fechar
+  /// o ciclo quando o cliente paga e avançar as datas no lugar do n8n. Função do
+  /// sistema, sem modelo, FORA do registry. A config guarda uma chave por parte
+  /// (`moverParaNotificacao`, `fecharNoPagamento`, `avancarDatas`), todas
+  /// desligadas: mover para `notificação` e para `ongoing` dispara e-mail AO
+  /// CLIENTE pelas automações do ClickUp, e avançar a fidelidade escreve no
+  /// Conexa. Pedido do usuário em 16/11/2026.
+  RENOVACAO
 }
 
 enum IntegrationStatus {
