@@ -1140,7 +1140,7 @@ const verLevaDeRenovacao = ferramenta({
   name: "ver_leva_de_renovacao",
   title: "Ver a leva de renovação do mês",
   description:
-    "Os contratos cuja FIDELIDADE no Conexa vence no mês pedido — a leva que a equipe renova —, com valor anterior, valor de agora, diferença por mês, último reajuste (índice e percentual) e o status da tarefa no ClickUp. Traz também os que já venceram e continuam ativos, e as tarefas que estão num status de renovação sem contrato correspondente. Os contratos vêm da leitura diária gravada no banco, não do Conexa ao vivo: `lidoEm` diz de quando é o retrato. É a mesma leitura da tela /renovacoes. `rodadas` é o desfecho da leitura do Conexa e `propagacoes`, o da escrita no ClickUp depois do lote de reajuste (com o que foi olhado e não escrito, e por quê). `automacao` diz o que da renovação automática está ligado (mover para notificação, fechar no pagamento, avançar datas) e `notificacoes`, `avancosDeStatus`, `pagamentos` e `datas` trazem o desfecho de cada parte.",
+    "Os contratos cuja FIDELIDADE no Conexa vence no mês pedido — a leva que a equipe renova —, com valor anterior, valor de agora, diferença por mês, último reajuste (índice e percentual) e o status da tarefa no ClickUp. Traz também os que já venceram e continuam ativos, e as tarefas que estão num status de renovação sem contrato correspondente. Os contratos vêm da leitura diária gravada no banco, não do Conexa ao vivo: `lidoEm` diz de quando é o retrato. É a mesma leitura da tela /renovacoes. `rodadas` é o desfecho da leitura do Conexa e `propagacoes`, o da escrita no ClickUp depois do lote de reajuste (com o que foi olhado e não escrito, e por quê). `automacao` diz o que da renovação automática está ligado (mover para notificação, fechar no pagamento, avançar datas, WhatsApp ao cliente ONE) e `notificacoes`, `avancosDeStatus`, `pagamentos`, `datas` e `whatsappAoClienteOne` trazem o desfecho de cada parte.",
   papel: UserRole.VIEWER,
   anotacoes: CONSULTA,
   entrada: z.strictObject({
@@ -1158,7 +1158,7 @@ const verLevaDeRenovacao = ferramenta({
       .describe("Quantas linhas de cada bloco devolver. Padrão 50."),
   }),
   async executar({ mes, limite }) {
-    const [leva, rodadas, propagacoes, automacao, notificacoes, avancos, pagamentos, datas] =
+    const [leva, rodadas, propagacoes, automacao, notificacoes, avancos, pagamentos, datas, mensagens] =
       await Promise.all([
         lerLeva(mes ?? levaPadrao()),
         ultimasRodadas(3),
@@ -1168,6 +1168,7 @@ const verLevaDeRenovacao = ferramenta({
         ultimasRodadasDa("avanco"),
         ultimasRodadasDa("pagamento"),
         ultimasRodadasDa("datas"),
+        ultimasRodadasDa("mensagens"),
       ]);
     const rodadaDe = (r: {
       externalId: string;
@@ -1255,11 +1256,19 @@ const verLevaDeRenovacao = ferramenta({
         moverParaNotificacao: automacao.moverParaNotificacao,
         fecharNoPagamento: automacao.fecharNoPagamento,
         avancarDatas: automacao.avancarDatas,
+        // O WhatsApp ao cliente ONE. O texto fica de fora (é longo e é do cliente).
+        avisarPorWhatsapp: automacao.avisarPorWhatsapp,
+        whatsappAtribuirA: automacao.whatsappAtribuirA,
+        whatsappComTextoProprio: automacao.whatsappTexto !== null,
       },
       notificacoes: notificacoes.map(rodadaDe),
       avancosDeStatus: avancos.map(rodadaDe),
       pagamentos: pagamentos.map(rodadaDe),
       datas: datas.map(rodadaDe),
+      // O desfecho do dia: quem recebeu (enviadas), para quem iria no modo sombra
+      // (planejadas), o que pode ter saído e não se sabe (incertas) e o que ficou
+      // de fora com o motivo (pendentes). Telefone nunca aparece.
+      whatsappAoClienteOne: mensagens.map(rodadaDe),
       contratos: leva.linhas.slice(0, teto).map(linha),
       fidelidadeVencida: leva.atrasados.slice(0, teto).map(linha),
       tarefasSemContratoNaLeva: leva.orfas

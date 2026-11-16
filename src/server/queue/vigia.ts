@@ -19,6 +19,7 @@ import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { propagarReajustes } from "@/server/renovacao/propagar";
 import { avancarTarefasDoLote } from "@/server/renovacao/avancar";
 import { moverParaNotificacao } from "@/server/renovacao/notificar";
+import { avisarPorWhatsapp } from "@/server/renovacao/avisar";
 import { fecharCiclosPagos } from "@/server/renovacao/fechar";
 import { acompanharContratos } from "@/server/acompanhamento/conferir";
 import { conferirValidacaoDeContratos } from "@/server/validacao-de-contratos/conferir";
@@ -352,6 +353,16 @@ export function iniciarVigia(): NodeJS.Timeout {
       }
     } catch (erro) {
       logger.error({ erro }, "renovação: o fechamento pelo pagamento falhou");
+    }
+
+    // WhatsApp da renovação para o cliente ONE, no lugar do fluxo do n8n. Só
+    // INICIA a rodada, sem esperar (30 s entre envios). ⚠ Nasce DESLIGADA, e
+    // ligar fala com o CLIENTE; o modo sombra só registra para quem iria.
+    try {
+      const rodada = await avisarPorWhatsapp();
+      if (rodada.acao === "iniciada") logger.info("renovação: conferência do WhatsApp iniciada");
+    } catch (erro) {
+      logger.error({ erro }, "renovação: o WhatsApp ao cliente falhou ao iniciar");
     }
 
     // Acompanhamento de contratos: de dez em dez minutos, confere pagamento e

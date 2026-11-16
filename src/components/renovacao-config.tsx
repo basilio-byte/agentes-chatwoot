@@ -8,9 +8,9 @@ import {
   salvarConfigRenovacao,
   type EstadoRenovacao,
 } from "@/server/actions/renovacao";
-import { Aviso, Button, Input } from "@/components/ui";
+import { Aviso, Button, Field, Input, Textarea } from "@/components/ui";
 import { formatarData } from "@/lib/utils";
-import type { ModoDasDatas } from "@/server/renovacao/config";
+import type { ModoDasDatas, ModoDeParte } from "@/server/renovacao/config";
 
 /**
  * As chaves da renovação automática.
@@ -24,6 +24,10 @@ export function RenovacaoConfigForm({
   moverParaNotificacao,
   fecharNoPagamento,
   avancarDatas,
+  avisarPorWhatsapp,
+  whatsappAtribuirA,
+  whatsappTexto,
+  textoPadrao,
   temEndereco,
   somenteLeitura,
 }: {
@@ -31,6 +35,13 @@ export function RenovacaoConfigForm({
   moverParaNotificacao: boolean;
   fecharNoPagamento: boolean;
   avancarDatas: ModoDasDatas;
+  /** O WhatsApp de renovação ao cliente ONE: desligado, sombra ou ligado. */
+  avisarPorWhatsapp: ModoDeParte;
+  whatsappAtribuirA: string;
+  /** O texto gravado, ou `null` quando vale o padrão. */
+  whatsappTexto: string | null;
+  /** O texto do fluxo do n8n, para a tela mostrar o que vale quando não há outro. */
+  textoPadrao: string;
   /** O endereço das datas já foi gerado? Sem ele o modo não tem o que ligar. */
   temEndereco: boolean;
   somenteLeitura: boolean;
@@ -44,6 +55,9 @@ export function RenovacaoConfigForm({
   const [mover, setMover] = useState(moverParaNotificacao);
   const [fechar, setFechar] = useState(fecharNoPagamento);
   const [modo, setModo] = useState<ModoDasDatas>(avancarDatas);
+  const [whats, setWhats] = useState<ModoDeParte>(avisarPorWhatsapp);
+  const [atribuirA, setAtribuirA] = useState(whatsappAtribuirA);
+  const [texto, setTexto] = useState(whatsappTexto ?? textoPadrao);
 
   const enviar = (evento: React.FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
@@ -54,6 +68,7 @@ export function RenovacaoConfigForm({
   const ligandoMover = ligadoGeral && mover && !(geral && moverParaNotificacao);
   const ligandoFechar = ligadoGeral && fechar && !(geral && fecharNoPagamento);
   const ligandoDatas = ligadoGeral && modo === "ligado" && !(geral && avancarDatas === "ligado");
+  const ligandoWhats = ligadoGeral && whats === "ligado" && !(geral && avisarPorWhatsapp === "ligado");
 
   return (
     <form onSubmit={enviar} className="space-y-4">
@@ -129,6 +144,65 @@ export function RenovacaoConfigForm({
               : "Gere o endereço abaixo primeiro."}
           </span>
         </label>
+
+        <div className="space-y-3">
+          <label className="block space-y-1 text-sm">
+            <span>
+              <strong>WhatsApp de renovação ao cliente ONE</strong> no lugar do fluxo do n8n
+            </span>
+            <select
+              name="avisarPorWhatsapp"
+              value={whats}
+              onChange={(e) => setWhats(e.target.value as ModoDeParte)}
+              disabled={somenteLeitura}
+              className="block rounded border border-line bg-surface px-2 py-1 text-sm"
+            >
+              <option value="desligado">Desligado</option>
+              <option value="sombra">Sombra — registra para quem iria e não manda nada</option>
+              <option value="ligado">Ligado — manda ao cliente pelo WhatsApp</option>
+            </select>
+            <span className="block text-muted">
+              Quando a tarefa de um cliente de categoria ONE entra em “notificação
+              renovação”, manda a mensagem abaixo pelo número da caixa 31 e passa a
+              conversa para quem cuida da renovação (só se ninguém estiver com ela).
+              Vale para quem entrou nesse status nos últimos 4 dias, uma mensagem por
+              entrada.
+            </span>
+          </label>
+
+          <Field
+            label="Atribuir a conversa a"
+            hint="Nome como está no Chatwoot. Com a pessoa ausente (Integrações → Chatwoot), vai para o substituto."
+          >
+            <Input
+              name="whatsappAtribuirA"
+              value={atribuirA}
+              onChange={(e) => setAtribuirA(e.target.value)}
+              disabled={somenteLeitura}
+              className="w-auto sm:w-72"
+            />
+          </Field>
+
+          <Field
+            label="Texto da mensagem"
+            hint={
+              <>
+                {"O marcador {responsavel} vira o nome do responsável da tarefa. "}
+                O texto padrão é o do fluxo do n8n, que fala em IGP-M. Confira se é o
+                índice do contrato ONE antes de ligar.
+                {whatsappTexto === null ? " (Hoje vale o padrão.)" : null}
+              </>
+            }
+          >
+            <Textarea
+              name="whatsappTexto"
+              rows={12}
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              disabled={somenteLeitura}
+            />
+          </Field>
+        </div>
       </div>
 
       {ligandoMover ? (
@@ -142,6 +216,14 @@ export function RenovacaoConfigForm({
         <Aviso tone="warning">
           Ao salvar, a tarefa cujo cliente já pagou o valor reajustado vai para “ongoing”,
           e as automações do ClickUp e do n8n rodam em seguida.
+        </Aviso>
+      ) : null}
+
+      {ligandoWhats ? (
+        <Aviso tone="warning">
+          Ao salvar, o sistema passa a <strong>mandar WhatsApp ao cliente ONE</strong> cuja
+          tarefa entrou em “notificação renovação” nos últimos 4 dias. Rode antes em{" "}
+          <strong>Sombra</strong> e confira para quem iria.
         </Aviso>
       ) : null}
 

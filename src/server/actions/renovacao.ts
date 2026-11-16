@@ -7,7 +7,8 @@ import { db } from "@/lib/db";
 import { exigirPapel } from "@/server/auth-guard";
 import { hashDoToken } from "@/server/boas-vindas/regras";
 import { gerarToken } from "@/server/gatilho/token";
-import { lerConfigRenovacao, type ModoDasDatas } from "@/server/renovacao/config";
+import { lerConfigRenovacao, type ModoDasDatas, type ModoDeParte } from "@/server/renovacao/config";
+import { dadosDoFormulario } from "@/server/renovacao/whatsapp";
 
 export type EstadoRenovacao = { ok?: string; erro?: string };
 
@@ -85,14 +86,39 @@ export async function salvarConfigRenovacao(
 
   // O modo das datas pode nem vir no formulário (a parte só aparece depois que o
   // endereço existe): ausente, fica como estava.
+  const lida = lerConfigRenovacao(gravada, true);
   const enviado = formData.get("avancarDatas");
   const avancarDatas =
     typeof enviado === "string" && MODOS.includes(enviado as ModoDasDatas)
       ? (enviado as ModoDasDatas)
-      : lerConfigRenovacao(gravada, true).avancarDatas;
+      : lida.avancarDatas;
+
+  // O WhatsApp ao cliente ONE tem modo (desligado | sombra | ligado), quem recebe
+  // a conversa e o texto. Ausente do formulário, fica como estava.
+  const modoEnviado = formData.get("avisarPorWhatsapp");
+  const avisarPorWhatsapp =
+    typeof modoEnviado === "string" && MODOS.includes(modoEnviado as ModoDeParte)
+      ? (modoEnviado as ModoDeParte)
+      : lida.avisarPorWhatsapp;
+  const textos = dadosDoFormulario(
+    (campo) => {
+      const v = formData.get(campo);
+      return typeof v === "string" ? v : null;
+    },
+    { whatsappAtribuirA: lida.whatsappAtribuirA, whatsappTexto: lida.whatsappTexto },
+  );
+  if ("erro" in textos) return { erro: textos.erro };
 
   // `tokenHash` e qualquer outra chave gravada ficam: o formulário não as conhece.
-  const config = { ...gravada, moverParaNotificacao, fecharNoPagamento, avancarDatas };
+  const config = {
+    ...gravada,
+    moverParaNotificacao,
+    fecharNoPagamento,
+    avancarDatas,
+    avisarPorWhatsapp,
+    whatsappAtribuirA: textos.atribuirA,
+    whatsappTexto: textos.texto,
+  };
 
   await db.integration.upsert({
     where: { provider: IntegrationProvider.RENOVACAO },
@@ -111,7 +137,17 @@ export async function salvarConfigRenovacao(
       action: "integration.renovacao.updated",
       entity: "Integration",
       entityId: IntegrationProvider.RENOVACAO,
-      diff: { enabled: geral, moverParaNotificacao, fecharNoPagamento, avancarDatas },
+      // O texto da mensagem fica de fora: quem o editou é visível pelo `updatedAt`,
+      // e o conteúdo é do cliente, não da auditoria.
+      diff: {
+        enabled: geral,
+        moverParaNotificacao,
+        fecharNoPagamento,
+        avancarDatas,
+        avisarPorWhatsapp,
+        whatsappAtribuirA: textos.atribuirA,
+        whatsappTextoPersonalizado: textos.texto !== null,
+      },
     },
   });
 
@@ -121,6 +157,7 @@ export async function salvarConfigRenovacao(
     moverParaNotificacao && "mover para notificação",
     fecharNoPagamento && "fechar o ciclo no pagamento",
     avancarDatas !== "desligado" && `datas (${avancarDatas})`,
+    avisarPorWhatsapp !== "desligado" && `WhatsApp ao cliente ONE (${avisarPorWhatsapp})`,
   ].filter(Boolean);
 
   if (!geral) {

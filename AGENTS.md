@@ -2131,6 +2131,71 @@ chave: já estava no ar e não escreve nada que chegue ao cliente.
   equivalentes, a tarefa vai para o contrato de menor id (a busca tenta casar antes
   de deixar sem tarefa). Quem chama ordena os contratos por id.
 
+#### Fase 5, a parte que já existia: o WhatsApp de renovação ao cliente ONE (16/11/2026)
+
+Pedido do usuário ao ver o que faltava para tirar a renovação do n8n: *"temos que
+migrar esse"* — o fluxo `jZZEZ7yEpz14O4hQ` (`Mensagem de renovação Clickup <>
+Chatwoot`, desligado). Regras puras em `renovacao/whatsapp.ts`, a rodada em
+`renovacao/avisar.ts` (vigia, de 30 em 30 min, em horário comercial), chave
+`avisarPorWhatsapp` (desligado | sombra | ligado) em Integrações → Renovação.
+**Nasce DESLIGADA**, e ligar fala com o cliente.
+
+- ⚠ **Só a categoria ONE foi portada, e é de propósito.** O fluxo tem 3 webhooks e
+  4 textos (Seahub, endereço com a oferta de contrato bianual, ONE com o IGP-M e
+  "cliente renovado", que também RESOLVE a conversa). A única automação ligada que
+  o chama é a 5 do ClickUp (status para `notificação renovação` + CATEGORIA = ONE).
+  Os outros três não têm automação: esses clientes recebem só o e-mail do ClickUp,
+  e portá-los acrescentaria mensagens que hoje não existem. Na versão de
+  09/11/2026 os nós de envio estão DESCONECTADOS do resto, e as expressões
+  apontam para nós "AI Agent" que já não existem — mesmo ligado, o fluxo antigo
+  não mandaria nada. Se a equipe quiser os outros textos, é acrescentar texto e
+  categoria; os originais estão no arquivo de memória do projeto.
+- **O gatilho é o ESTADO, não o evento.** A rodada olha as tarefas que estão em
+  `notificação renovação`, CATEGORIA = ONE, e entraram há até 96 h (o instante vem
+  do "Total time in Status" do ClickUp, o mesmo da 2b). Não depende de a automação
+  do ClickUp disparar quando é o SISTEMA que troca o status pela API (não provado),
+  e a automação 5 pode ficar onde está: ela chama um fluxo desligado. As 96 h
+  cobrem um fim de semana com feriado; sem elas, o primeiro dia ligado mandaria
+  "está se aproximando o período de renovação" a quem está no status há semanas.
+- **Uma mensagem por ENTRADA no status** (`whatsapp:<tarefa>:<instante>`, reserva
+  antes de enviar). Voltar a `renovação` e entrar de novo é outra entrada.
+  ⚠ As reservas NÃO usam o prefixo do resumo diário (`mensagens:<dia>`): a
+  colisão que `pagamento:` já teve.
+- **Sai pela caixa 31 com o token de Integrações → Chatwoot** (`conversaParaAviso`),
+  o caminho provado da cobrança e do alerta de saldo; aparece em nome da pessoa dona
+  do token. O n8n mandava pela Evolution API (`evolution2.seahealth.io`, servidor
+  antigo, apikey em texto puro no fluxo): NÃO usada, e a chave é mais uma a rotacionar
+  quando o fluxo for despublicado.
+- ⚠ **Recusa libera; INCERTO segura** (a doutrina da boas-vindas). O Chatwoot
+  recusando (4xx, menos 408/429) é "nada saiu": a reserva se desfaz, a tarefa ganha
+  UM comentário e o mesmo número não é tentado de novo — a chave da falha leva o
+  hash do número, então corrigir o CELULAR libera. Falha antes de pedir o envio
+  (achar ou abrir a conversa) também desfaz a reserva e tenta na rodada seguinte.
+  Falha de rede/prazo/5xx DEPOIS de pedir o envio PODE ter saído: a reserva fica
+  `incerto`, a tarefa ganha o aviso e **nada é reenviado**. Repetir às cegas é o
+  defeito de origem do fluxo do n8n.
+- **Depois do envio**: a conversa vai para quem cuida (`whatsappAtribuirA`, padrão
+  "Felipe", como o fluxo; com ausência vale o substituto) — mas só se ninguém
+  estiver com ela, e a resolvida que a caixa 31 devolve é reaberta ANTES de
+  atribuir (mesma lição do aviso de cobrança). Nota interna e comentário na tarefa
+  dizem o que ficou; falha de acabamento nunca reenvia.
+- **Modo sombra**: lê, decide e grava `whatsapp-sombra:<tarefa>:<instante>` com o
+  nome da tarefa e os 4 últimos dígitos, sem tocar no Chatwoot nem no ClickUp. É o
+  degrau para ver para quem iria ANTES de ligar, e não bloqueia o envio depois.
+- **Freios**: 10 por rodada, 30 s entre envios, 20 por hora (a caixa 31 é conexão
+  não oficial), horário comercial. A rodada não prende o vigia (devolve "iniciada").
+- **O resumo do dia SOMA as rodadas** (`mensagens:<dia>`): a das 10h manda e a das
+  10h30 não acha nada, e sobrescrever apagaria a única prova. ⚠ A 2b
+  (`notificar.ts`) ainda sobrescreve.
+- ⚠ **O texto padrão é o do n8n, letra por letra, e fala em IGP-M**; o Conexa
+  aplica IPCA. Pode ser certo para lojistas (ONE), mas é a primeira coisa a conferir
+  antes de ligar. Editável na tela, com `{responsavel}` como único marcador (marcador
+  desconhecido é recusado, senão sairia literal ao cliente). O nome vem do campo
+  RESPONSÁVEL (do cliente); sem ele, "Prezado(a),".
+- ⚠ **Não provado**: nada foi enviado ainda. A primeira rodada em sombra e o primeiro
+  envio de verdade (com o `criarContato`/`vincularContatoACaixa` que só rodaram em
+  teste, se o contato não existir) são quem prova.
+
 ### Acompanhamento de contratos: a exceção que fala por cima do vendedor
 
 Integração `ACOMPANHAMENTO`, fora do registry como o NPS e a cobrança: sem

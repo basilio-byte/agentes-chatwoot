@@ -74,6 +74,7 @@ import { PROVIDER_ACOMPANHAMENTO } from "@/server/acompanhamento/regras";
 import { EnderecoDasDatas, RenovacaoConfigForm } from "@/components/renovacao-config";
 import { lerConfigRenovacao } from "@/server/renovacao/config";
 import { PROVIDER_RENOVACAO } from "@/server/renovacao/regras";
+import { TEXTO_PADRAO_ONE } from "@/server/renovacao/whatsapp";
 import { AcompanhamentoConfigForm } from "@/components/acompanhamento-config";
 import { configMateriaisSchema } from "@/server/integrations/materiais";
 import { GoogleConfigForm } from "@/components/google-config";
@@ -1740,7 +1741,9 @@ export default async function IntegracoesPage({
                     <h2 className="font-medium">Renovação de contratos</h2>
                     {renovacao?.enabled &&
                     (configRenovacao.moverParaNotificacao ||
-                      configRenovacao.fecharNoPagamento) ? (
+                      configRenovacao.fecharNoPagamento ||
+                      configRenovacao.avancarDatas === "ligado" ||
+                      configRenovacao.avisarPorWhatsapp === "ligado") ? (
                       <Badge tone="success">ligada</Badge>
                     ) : (
                       <Badge>desligada</Badge>
@@ -1780,6 +1783,10 @@ export default async function IntegracoesPage({
                     moverParaNotificacao={configRenovacao.moverParaNotificacao}
                     fecharNoPagamento={configRenovacao.fecharNoPagamento}
                     avancarDatas={configRenovacao.avancarDatas}
+                    avisarPorWhatsapp={configRenovacao.avisarPorWhatsapp}
+                    whatsappAtribuirA={configRenovacao.whatsappAtribuirA}
+                    whatsappTexto={configRenovacao.whatsappTexto}
+                    textoPadrao={TEXTO_PADRAO_ONE}
                     temEndereco={!!configRenovacao.tokenHash}
                     somenteLeitura={!editavel}
                   />

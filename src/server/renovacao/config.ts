@@ -1,6 +1,8 @@
 import { IntegrationProvider } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
 
+import { ATRIBUIR_A_PADRAO, recusaDoTexto } from "./whatsapp";
+
 /**
  * As chaves da renovação automática — o que o sistema faz SOZINHO depois do
  * reajuste. Moram na linha `RENOVACAO` de `Integration` (`enabled` + `config`),
@@ -16,8 +18,13 @@ import { db } from "@/lib/db";
  * `notificação` para `pg pendente`) não dispara e-mail nenhum.
  */
 
-/** Como o endereço das datas se comporta. `sombra` lê e registra, mas não escreve. */
-export type ModoDasDatas = "desligado" | "sombra" | "ligado";
+/**
+ * Como uma parte com ensaio se comporta. `sombra` lê, decide e REGISTRA o que
+ * faria, mas não escreve nem fala com ninguém.
+ */
+export type ModoDeParte = "desligado" | "sombra" | "ligado";
+/** O nome de quando só as datas tinham modo. */
+export type ModoDasDatas = ModoDeParte;
 
 export type ConfigDaRenovacao = {
   /** Fase 2b: de `renovação` para `notificação renovação` depois de 2 dias. */
@@ -26,6 +33,15 @@ export type ConfigDaRenovacao = {
   fecharNoPagamento: boolean;
   /** Fase 3: o endereço que a automação 8 do ClickUp chama no lugar do n8n. */
   avancarDatas: ModoDasDatas;
+  /**
+   * Fase 5, a parte que já existia no n8n: o WhatsApp de renovação para o cliente
+   * ONE quando a tarefa entra em `notificação renovação` (`whatsapp.ts`).
+   */
+  avisarPorWhatsapp: ModoDeParte;
+  /** Quem recebe a conversa depois do envio, para a resposta chegar direto. */
+  whatsappAtribuirA: string;
+  /** O texto editado na tela. `null` segue o padrão (o do fluxo do n8n). */
+  whatsappTexto: string | null;
   /** sha256 do token do endereço das datas. O endereço inteiro aparece UMA vez. */
   tokenHash: string | null;
   /** Quando o endereço foi gerado (ISO), para a tela dizer há quanto tempo. */
@@ -36,11 +52,14 @@ export const CONFIG_PADRAO: ConfigDaRenovacao = {
   moverParaNotificacao: false,
   fecharNoPagamento: false,
   avancarDatas: "desligado",
+  avisarPorWhatsapp: "desligado",
+  whatsappAtribuirA: ATRIBUIR_A_PADRAO,
+  whatsappTexto: null,
   tokenHash: null,
   tokenGeradoEm: null,
 };
 
-const MODOS: readonly ModoDasDatas[] = ["desligado", "sombra", "ligado"];
+const MODOS: readonly ModoDeParte[] = ["desligado", "sombra", "ligado"];
 
 /**
  * Lê a configuração gravada. Qualquer coisa que não seja exatamente o esperado
@@ -50,16 +69,34 @@ export function lerConfigRenovacao(
   config: unknown,
   geralLigado: boolean,
 ): ConfigDaRenovacao {
-  if (!geralLigado) return { ...CONFIG_PADRAO, ...enderecoDe(config) };
+  if (!geralLigado) return { ...CONFIG_PADRAO, ...enderecoDe(config), ...whatsappDe(config) };
 
   const c = (config && typeof config === "object" ? config : {}) as Record<string, unknown>;
   const modo = MODOS.find((m) => m === c.avancarDatas) ?? "desligado";
+  const modoDoWhatsapp = MODOS.find((m) => m === c.avisarPorWhatsapp) ?? "desligado";
 
   return {
     moverParaNotificacao: c.moverParaNotificacao === true,
     fecharNoPagamento: c.fecharNoPagamento === true,
     avancarDatas: modo,
+    avisarPorWhatsapp: modoDoWhatsapp,
+    ...whatsappDe(config),
     ...enderecoDe(config),
+  };
+}
+
+/**
+ * Quem recebe a conversa e o texto são DADO editado na tela, não chave de ligar:
+ * valem mesmo com o interruptor geral desligado, para a tela mostrar o que está
+ * gravado. Valor torto volta ao padrão.
+ */
+function whatsappDe(config: unknown) {
+  const c = (config ?? {}) as { whatsappAtribuirA?: unknown; whatsappTexto?: unknown };
+  const atribuirA = typeof c.whatsappAtribuirA === "string" ? c.whatsappAtribuirA.trim() : "";
+  const texto = typeof c.whatsappTexto === "string" ? c.whatsappTexto.trim() : "";
+  return {
+    whatsappAtribuirA: atribuirA && atribuirA.length <= 80 ? atribuirA : ATRIBUIR_A_PADRAO,
+    whatsappTexto: texto && !recusaDoTexto(texto) ? texto : null,
   };
 }
 
