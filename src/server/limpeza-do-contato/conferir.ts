@@ -27,8 +27,9 @@ import {
  *   feita por pessoa, pela pesquisa de satisfação ou pelo prazo do agente.
  * - **No vigia**, `limparContatosResolvidos` pega as pendentes com mais de 15 min,
  *   confere ao vivo e limpa. "Limpar" é remover a chave do `custom_attributes`
- *   (`definirAtributosDoContato` com `null`), lendo e mesclando: o resto do
- *   contato fica intacto.
+ *   pelo endpoint próprio (`removerAtributosDoContato`: o `PUT` do contato faz
+ *   merge e não apaga), e o contato é lido DE VOLTA antes de registrar "limpa".
+ *   O resto do contato fica intacto.
  *
  * O rastro mostra QUAIS campos saíram, nunca os valores.
  */
@@ -212,10 +213,22 @@ async function rodar(agora: Date): Promise<RodadaDaLimpeza> {
         continue;
       }
 
-      await chatwoot.cliente.definirAtributosDoContato(
-        aoVivo.contactId!,
-        Object.fromEntries(campos.map((c) => [c, null])),
-      );
+      await chatwoot.cliente.removerAtributosDoContato(aoVivo.contactId!, campos);
+
+      // ⚠ Lê de volta, e só então diz "limpa". Chamada sem erro não prova campo
+      // apagado: a primeira limpeza real (conversa 14665, 17/11/2026) registrou
+      // "limpa" com os valores ainda no contato, porque o `PUT` do Chatwoot faz
+      // merge e nunca apaga. O que o Chatwoot responde não vale; o contato vale.
+      const depois = await chatwoot.cliente.obterContato(aoVivo.contactId!);
+      const restam = camposParaLimpar(depois.atributos, campos);
+      if (restam.length) {
+        await fechar(
+          "falhou",
+          `o Chatwoot aceitou a remoção, mas estes campos continuam no contato: ${restam.join(", ")}`,
+        );
+        rodada.falhas! += 1;
+        continue;
+      }
       await fechar("limpa", `campos limpos: ${campos.join(", ")}`);
       rodada.limpas! += 1;
     } catch (erro) {

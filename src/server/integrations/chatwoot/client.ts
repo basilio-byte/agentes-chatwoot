@@ -616,15 +616,42 @@ export class ChatwootClient {
   }
 
   /**
+   * Remove atributos personalizados do contato, pelo endpoint que existe para
+   * isso: `POST /contacts/:id/destroy_custom_attributes` com a lista de chaves.
+   *
+   * ⚠ **`PUT /contacts` NÃO apaga.** O Chatwoot faz MERGE do `custom_attributes`
+   * que chega com o que já existe (`contact_custom_attributes`, no controller de
+   * contatos — conferido no código da instância 4.16.2 em 17/11/2026): chave que
+   * simplesmente some do corpo continua no contato. A primeira limpeza real
+   * (conversa 14665, 17/11/2026) registrou "limpa" e os dois valores continuavam
+   * lá, porque este método não existia e a remoção era um `delete` local seguido
+   * de um `PUT`.
+   *
+   * Grava com o token de USUÁRIO, como o resto do contato.
+   */
+  async removerAtributosDoContato(contactId: number, chaves: string[]) {
+    if (!chaves.length) return;
+    await this.requisitar(
+      `/contacts/${contactId}/destroy_custom_attributes`,
+      {
+        method: "POST",
+        body: JSON.stringify({ custom_attributes: chaves }),
+      },
+      true,
+    );
+  }
+
+  /**
    * Grava atributos personalizados no contato, **preservando os existentes**.
    *
-   * ⚠ O `custom_attributes` desta API **substitui o objeto inteiro** — mandar
-   * um atributo apagaria todos os outros. É a mesma armadilha dos labels, e a
-   * solução é a mesma: ler, mesclar, escrever. Vale o custo do GET, porque o
-   * que se perderia são dados que outra equipe pode ter cadastrado.
+   * O `PUT /contacts` faz merge, então mandar só o que mudou bastaria; o objeto
+   * inteiro continua indo (ler, mesclar, escrever) porque também é seguro numa
+   * versão que substituísse — e vale o custo do GET, porque o que se perderia
+   * são dados que outra equipe pode ter cadastrado.
    *
-   * Chave que chega com valor `null` é **removida** — é como se apaga um
-   * atributo sem apagar o resto.
+   * Chave que chega com valor `null` é **removida**, e só o endpoint de remoção
+   * (`removerAtributosDoContato`) remove de verdade: omitir a chave do `PUT` não
+   * apaga nada.
    */
   async definirAtributosDoContato(
     contactId: number,
@@ -632,10 +659,13 @@ export class ChatwootClient {
   ) {
     const atual = await this.obterContato(contactId);
     const mesclado: Record<string, unknown> = { ...atual.atributos };
+    const aRemover: string[] = [];
 
     for (const [chave, valor] of Object.entries(atributos)) {
-      if (valor === null) delete mesclado[chave];
-      else mesclado[chave] = valor;
+      if (valor === null) {
+        delete mesclado[chave];
+        aRemover.push(chave);
+      } else mesclado[chave] = valor;
     }
 
     // ⚠ Grava com o token de USUÁRIO, como lê. O Agent Bot só age dentro das
@@ -651,6 +681,7 @@ export class ChatwootClient {
       },
       true,
     );
+    await this.removerAtributosDoContato(contactId, aRemover);
 
     return mesclado;
   }

@@ -31,8 +31,20 @@ beforeEach(() => {
       );
     }
 
+    // ⚠ O Chatwoot de verdade (4.16.2, `ContactsController`): o PUT faz MERGE do
+    // `custom_attributes` com o que já existe — chave que some do corpo continua no
+    // contato — e só `destroy_custom_attributes` apaga. Esta fixture já simulou o
+    // contrário (PUT substitui), e foi por isso que a limpeza dos campos do contato
+    // chegou à produção sem apagar nada (conversa 14665, 17/11/2026).
     if (method === "PUT") {
-      atributos = (body as { custom_attributes: Record<string, unknown> }).custom_attributes;
+      atributos = {
+        ...atributos,
+        ...(body as { custom_attributes: Record<string, unknown> }).custom_attributes,
+      };
+    }
+    if (method === "POST" && String(url).endsWith("/destroy_custom_attributes")) {
+      const chaves = (body as { custom_attributes: string[] }).custom_attributes;
+      atributos = Object.fromEntries(Object.entries(atributos).filter(([k]) => !chaves.includes(k)));
     }
     return Response.json({ id: 7, custom_attributes: atributos });
   });
@@ -63,6 +75,30 @@ describe("definirAtributosDoContato", () => {
     });
 
     expect(gravados).toEqual({ origem: "site", plano: "Litoral" });
+    // E o contato do Chatwoot, de fato: `cnh_status` saiu, o resto ficou.
+    expect(atributos).toEqual({ origem: "site", plano: "Litoral" });
+  });
+
+  it("⚠ apagar usa o endpoint de remoção, com o token de usuário — omitir a chave do PUT não apaga", async () => {
+    const cliente = new ChatwootClient(config, "token-do-bot", "token-de-usuario");
+
+    await cliente.definirAtributosDoContato(7, { cnh_status: null });
+
+    const remocao = chamadas.find((c) => c.url.endsWith("/contacts/7/destroy_custom_attributes"));
+    expect(remocao).toMatchObject({
+      method: "POST",
+      token: "token-de-usuario",
+      body: { custom_attributes: ["cnh_status"] },
+    });
+    expect(atributos).toEqual({ origem: "site" });
+  });
+
+  it("sem nada a remover, não chama o endpoint de remoção", async () => {
+    const cliente = new ChatwootClient(config, "token-do-bot", "token-de-usuario");
+
+    await cliente.definirAtributosDoContato(7, { plano: "Litoral" });
+
+    expect(chamadas.some((c) => c.url.includes("destroy_custom_attributes"))).toBe(false);
   });
 
   it("leitura recusada ao robô continua dizendo que falta o token de leitura", async () => {
@@ -98,5 +134,24 @@ describe("definirAtributosDoContato", () => {
     const mensagem = String((erro as Error).message);
     expect(mensagem).not.toMatch(/leitura/);
     expect(mensagem).toMatch(/POST em \/conversations\/5\/custom_attributes/);
+  });
+});
+
+describe("removerAtributosDoContato", () => {
+  it("tira só as chaves pedidas e deixa as outras", async () => {
+    const cliente = new ChatwootClient(config, "token-do-bot", "token-de-usuario");
+
+    await cliente.removerAtributosDoContato(7, ["origem"]);
+
+    expect(atributos).toEqual({ cnh_status: "conferida" });
+    expect(chamadas.map((c) => [c.method, c.token])).toEqual([["POST", "token-de-usuario"]]);
+  });
+
+  it("lista vazia não faz chamada nenhuma", async () => {
+    const cliente = new ChatwootClient(config, "token-do-bot", "token-de-usuario");
+
+    await cliente.removerAtributosDoContato(7, []);
+
+    expect(chamadas).toEqual([]);
   });
 });

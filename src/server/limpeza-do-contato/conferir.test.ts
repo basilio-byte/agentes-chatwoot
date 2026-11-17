@@ -24,7 +24,9 @@ let linhas: Linha[];
 let aoVivo: { status: string; contactId: number | null };
 let outras: { id: number; status: string }[];
 let atributos: Record<string, unknown>;
-let gravados: Record<string, unknown>[];
+let removidos: string[][];
+/** O Chatwoot aceita a remoção mas o valor continua (o defeito de 17/11/2026). */
+let remocaoSemEfeito: boolean;
 let falha: Error | null;
 
 const casa = (l: Linha, where: Record<string, unknown>) =>
@@ -78,8 +80,10 @@ vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
       },
       conversasDoContato: async () => outras,
       obterContato: async () => ({ atributos }),
-      definirAtributosDoContato: async (_id: number, novos: Record<string, unknown>) => {
-        gravados.push(novos);
+      removerAtributosDoContato: async (_id: number, chaves: string[]) => {
+        removidos.push(chaves);
+        // O Chatwoot de verdade: `destroy_custom_attributes` tira as chaves.
+        if (!remocaoSemEfeito) for (const c of chaves) delete atributos[c];
       },
     },
   }),
@@ -125,7 +129,8 @@ beforeEach(() => {
     cpf: "12345678909",
     ramo_de_atividade: "Tecnologia",
   };
-  gravados = [];
+  removidos = [];
+  remocaoSemEfeito = false;
   falha = null;
 });
 
@@ -164,7 +169,9 @@ describe("15 minutos depois", () => {
     const r = await rodar();
 
     expect(r.limpas).toBe(1);
-    expect(gravados).toEqual([{ canal: null, campanha: null, observaes: null }]);
+    expect(removidos).toEqual([["canal", "campanha", "observaes"]]);
+    // E o contato, lido depois, de fato perdeu os três — e só eles.
+    expect(Object.keys(atributos).sort()).toEqual(["cpf", "email", "ramo_de_atividade"]);
     expect(linhas[0]).toMatchObject({
       resultado: "limpa",
       detalhe: "campos limpos: canal, campanha, observaes",
@@ -174,7 +181,7 @@ describe("15 minutos depois", () => {
   it("antes dos 15 minutos não mexe", async () => {
     pendente(10);
     await rodar();
-    expect(gravados).toEqual([]);
+    expect(removidos).toEqual([]);
     expect(linhas[0].resultado).toBe("pendente");
   });
 
@@ -182,7 +189,7 @@ describe("15 minutos depois", () => {
     pendente(16);
     aoVivo = { status: "open", contactId: 77 };
     await rodar();
-    expect(gravados).toEqual([]);
+    expect(removidos).toEqual([]);
     expect(linhas[0]).toMatchObject({ resultado: "pulada" });
   });
 
@@ -190,7 +197,7 @@ describe("15 minutos depois", () => {
     pendente(16);
     outras = [...outras, { id: 15100, status: "open" }];
     await rodar();
-    expect(gravados).toEqual([]);
+    expect(removidos).toEqual([]);
     expect(linhas[0].detalhe).toMatch(/#15100/);
   });
 
@@ -198,7 +205,7 @@ describe("15 minutos depois", () => {
     pendente(16);
     atributos = { email: "cliente@exemplo.com" };
     await rodar();
-    expect(gravados).toEqual([]);
+    expect(removidos).toEqual([]);
     expect(linhas[0].resultado).toBe("nada a limpar");
   });
 
@@ -208,7 +215,7 @@ describe("15 minutos depois", () => {
     await rodar();
     expect(linhas.find((l) => l.id === "antiga")).toMatchObject({ resultado: "pulada" });
     expect(linhas.find((l) => l.id === "nova")).toMatchObject({ resultado: "limpa" });
-    expect(gravados).toHaveLength(1);
+    expect(removidos).toHaveLength(1);
   });
 
   it("desligada: as pendentes ficam onde estão", async () => {
@@ -223,7 +230,21 @@ describe("15 minutos depois", () => {
     const r = await rodar();
     expect(r.expiradas).toBe(1);
     expect(linhas[0].resultado).toBe("expirada");
-    expect(gravados).toEqual([]);
+    expect(removidos).toEqual([]);
+  });
+
+  it("⚠ o Chatwoot aceita a remoção mas o campo continua: NÃO registra 'limpa', registra falha", async () => {
+    // Foi o que aconteceu na primeira limpeza real (conversa 14665, 17/11/2026): o
+    // `PUT` do contato faz merge, a chamada não deu erro, e o registro disse "limpa"
+    // com os dois valores ainda no contato. Quem manda é o contato lido de volta.
+    pendente(16);
+    remocaoSemEfeito = true;
+    const r = await rodar();
+
+    expect(r.limpas).toBe(0);
+    expect(r.falhas).toBe(1);
+    expect(linhas[0].resultado).toBe("falhou");
+    expect(linhas[0].detalhe).toMatch(/continuam no contato: canal, campanha, observaes/);
   });
 
   it("Chatwoot fora do ar: volta para a fila", async () => {

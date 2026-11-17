@@ -1922,9 +1922,23 @@ Integrações; a leitura no MCP em `ver_limpeza_ao_resolver`.
   mesmo contato com outra conversa aberta (o WhatsApp da caixa 29 e o Instagram,
   por exemplo), os campos podem ser dela. Resolvida DE NOVO depois, a limpeza vai
   com a resolução mais nova.
-- **Limpar é REMOVER a chave** (`definirAtributosDoContato` com `null`), lendo e
-  mesclando: `custom_attributes` do contato substitui o objeto inteiro, e o resto
-  fica intacto. Grava com o token de USUÁRIO (o do bot não escreve em contato).
+- **Limpar é REMOVER a chave pelo endpoint próprio** (`removerAtributosDoContato`:
+  `POST /contacts/:id/destroy_custom_attributes` com a lista de chaves). Grava com
+  o token de USUÁRIO (o do bot não escreve em contato).
+- ⚠⚠ **O `PUT /contacts` NÃO apaga: ele faz MERGE** do `custom_attributes` que
+  chega com o que já existe (`contact_custom_attributes`, conferido no código da
+  instância 4.16.2 em 17/11/2026). A primeira versão desta limpeza assumia que o
+  `PUT` SUBSTITUI o objeto — premissa copiada do aviso sobre labels e conversa
+  (linha acima, na seção da conferência de documento: vale para elas, não para o
+  contato) — e removia a chave com um `delete` local seguido de `PUT`. Na primeira
+  limpeza real (conversa 14665, 17/11/2026) o registro disse "limpa" e os dois
+  valores continuavam no contato; **a fixture do teste do cliente também simulava
+  "PUT substitui"**, então nenhum teste podia pegar. Hoje a fixture imita o
+  Chatwoot de verdade (merge no PUT, remoção só no endpoint) e a rodada **lê o
+  contato de volta** antes de registrar "limpa": campo que continua lá vira
+  `falhou`, com os campos no detalhe. Ler, mesclar e escrever continua sendo o
+  caminho de `definirAtributosDoContato` — seguro nas duas semânticas —, mas apagar
+  nunca é omitir a chave.
 - **Falha não vira silêncio nem laço**: Chatwoot fora do ar volta a pendente (a
   validade de 48 h, `VALIDADE_MS`, segura o fim: limpar dois dias depois apagaria
   o que o atendimento seguinte já preencheu); recusa 4xx fecha como `falhou`. O
