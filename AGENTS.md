@@ -2332,7 +2332,8 @@ Chatwoot`, desligado). Regras puras em `renovacao/whatsapp.ts`, a rodada em
   `incerto`, a tarefa ganha o aviso e **nada é reenviado**. Repetir às cegas é o
   defeito de origem do fluxo do n8n.
 - **Depois do envio**: a conversa vai para quem cuida (`whatsappAtribuirA`, padrão
-  "Felipe", como o fluxo; com ausência vale o substituto) — mas só se ninguém
+  "Lucas Xavier" desde 17/11/2026, quando o Felipe — o destino do fluxo do n8n —
+  se desligou; com ausência vale o substituto) — mas só se ninguém
   estiver com ela, e a resolvida que a caixa 31 devolve é reaberta ANTES de
   atribuir (mesma lição do aviso de cobrança). Nota interna e comentário na tarefa
   dizem o que ficou; falha de acabamento nunca reenvia.
@@ -2559,6 +2560,36 @@ era o Felipe, à mão.
   e-mail EXISTE. Mas ele sai quando a task entra em `ongoing`, que é DEPOIS
   dessa mensagem, e desde o anexo pode não sair. Hoje ela anuncia o e-mail como
   algo que **vem**, nunca como algo que foi.
+
+#### Sala Privativa (17/11/2026): o mesmo acompanhamento, com duas diferenças
+
+O Lucas montou o agente de contratos de Sala Privativa
+(`agente-de-contratos-clickup-salas-privativas`) e perguntou se era preciso
+"linkar" o acompanhamento a ele. **Não existe vínculo por agente**: a rodada olha
+toda task em `🏃‍♂️onboarding` com as etiquetas `pagamento pendente` /
+`falta assinatura` e lê o documento e o contrato das `ToolCall` (por `tarefaId`),
+de qualquer agente que as tenha gerado — e já enxergou a task de teste de Sala
+Privativa na rodada de 16/11. O que muda por produto, e só isso:
+
+- **Status final** (`statusFinalDoProduto`): Sala Privativa termina em
+  `ongoing - sala privativa` (status próprio da lista, sem emoji); o resto segue
+  para `ongoing`. ⚠ O produto é lido pelo NOME da opção, que é "Sala Privativa "
+  (COM espaço no fim) — o validador a chama de "Salas Privativas": os dois entram
+  (`ehSalaPrivativa`, sem acento nem caixa), e qualquer outro nome cai em
+  `ongoing`, o que o acompanhamento sempre fez. ⏳ **Não confirmado**: se a trava
+  "Contrato Assinado" do ClickBot vale para esse status e se alguma automação
+  manda e-mail quando a task entra nele (pergunta 5 do estudo de Sala Privativa).
+- **As frases** (`DadosDaMensagem.semDocumentacao`): a documentação do endereço
+  (AVCB, Habite-se…) não existe para Sala Privativa, então as quatro mensagens
+  deixam de prometer "documentação" e a final deixa de prometer e-mail — não se
+  sabe se ele sai desse status. ⏳ **Texto provisório**: o que o cliente de Sala
+  Privativa recebe depois de pagar e assinar é decisão do Lucas e do Diego.
+- ⚠ **Continua valendo: só manda com os DOIS links.** O agente de Sala Privativa
+  só cria o contrato no Conexa se o cliente já estiver cadastrado lá; sem contrato
+  não há cobrança, e a rodada registra "aguardando a cobrança do contrato no
+  Conexa" sem mandar nada. Foi o que aconteceu nos testes de 16 e 17/11 (o CPF de
+  teste não existe no Conexa). O Conexa não tem sandbox: teste de ponta a ponta
+  cria contrato e cobrança de verdade.
 
 ### O primeiro dia do fluxo de contratação, e os três defeitos que ele mostrou
 

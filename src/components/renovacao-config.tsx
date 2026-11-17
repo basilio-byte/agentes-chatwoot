@@ -98,7 +98,7 @@ export function RenovacaoConfigForm({
             <strong>Mover para “notificação renovação”</strong> depois de 2 dias em
             “renovação”
             <span className="block text-muted">
-              É o passo que o Felipe faz à mão. ⚠ É nessa passagem que o ClickUp manda o
+              É o passo que a equipe faz à mão. ⚠ É nessa passagem que o ClickUp manda o
               e-mail de aviso do reajuste ao cliente.
             </span>
           </span>

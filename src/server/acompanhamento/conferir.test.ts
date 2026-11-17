@@ -199,6 +199,10 @@ function tarefa(etiquetas: string[] = ["pagamento pendente", "falta assinatura"]
 beforeEach(() => {
   ligada = true;
   eventos = [];
+  // ⚠ O produto volta ao padrão ANTES de a task ser montada: a task lê `produtoDaTask`
+  // ao nascer, e o reset que ficava depois deixava o produto do teste anterior vazar
+  // para o seguinte.
+  produtoDaTask = "Endereço Fiscal Litoral";
   tarefas = [tarefa()];
   chamadas = [
     { runId: "r1", toolName: "clickup_obter_tarefa", input: { taskId: TASK }, output: {}, createdAt: AGORA },
@@ -370,6 +374,44 @@ describe("o caminho que funciona", () => {
 
     expect(enviadas[0].texto).toContain("confirmamos tudo!");
     expect(enviadas[0].texto).not.toContain("http");
+  });
+
+  /**
+   * ⚠ 17/11/2026 — o Lucas ligou o agente de contratos de Sala Privativa ao
+   * acompanhamento: a task de Sala Privativa termina em `ongoing - sala
+   * privativa`, e a mensagem não promete a documentação do endereço.
+   */
+  it("Sala Privativa: move para `ongoing - sala privativa` e a final não promete documentação nem e-mail", async () => {
+    produtoDaTask = "Sala Privativa ";
+    tarefas = [tarefa()];
+    eventos.push({ id: "e0", provider: "ACOMPANHAMENTO", externalId: `inicial:${TASK}`, resultado: "enviado" });
+    cobrancas[0].status = "paid";
+    documento = { status: "signed", signatarios: [{ situacao: "assinou" }] };
+    // Mesmo com documentação configurada para outro produto, nada vaza para SP.
+    documentosConfig =
+      "[Endereço Fiscal Litoral]\nAVCB: https://drive.google.com/file/d/litoral-avcb/view";
+
+    await acompanharContratos({ forcar: true }, AGORA);
+
+    expect(enviadas[0].texto).toContain("confirmamos tudo!");
+    expect(enviadas[0].texto).not.toContain("http");
+    expect(enviadas[0].texto).not.toMatch(/documenta[cç][aã]o/i);
+    expect(enviadas[0].texto).not.toContain("e-mail");
+    expect(noClickUp).toContain("upload:contrato");
+    expect(noClickUp).toContain("status:ongoing - sala privativa");
+    expect(noClickUp).not.toContain("status:ongoing");
+  });
+
+  it("Sala Privativa: a mensagem inicial só avisa 'por aqui', com os dois links", async () => {
+    produtoDaTask = "Sala Privativa ";
+    tarefas = [tarefa()];
+
+    await acompanharContratos({ forcar: true }, AGORA);
+
+    expect(enviadas[0].texto).toContain("Link de pagamento");
+    expect(enviadas[0].texto).toContain("Link de assinatura");
+    expect(enviadas[0].texto).toContain("te avisamos por aqui");
+    expect(enviadas[0].texto).not.toMatch(/documenta[cç][aã]o/i);
   });
 
   /** O que a equipe já anexou à mão não é substituído, e não trava o status. */

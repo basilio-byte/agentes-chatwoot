@@ -15,6 +15,8 @@ import {
   STATUS_ALVO,
   type Etapa,
   type LinksDaContratacao,
+  ehSalaPrivativa,
+  statusFinalDoProduto,
 } from "./regras";
 
 const LINKS: LinksDaContratacao = {
@@ -297,5 +299,48 @@ describe("poeNaFilaDoAcompanhamento", () => {
         { nome: "clickup_adicionar_tag", input: { tag: 7 }, isError: false },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("Sala Privativa (17/11/2026)", () => {
+  it("reconhece o nome da opção do dropdown, com o espaço no fim, e a grafia do validador", () => {
+    for (const nome of ["Sala Privativa ", "Sala Privativa", "Salas Privativas", "  sala privativa  ", "SALAS PRIVATIVAS"]) {
+      expect(ehSalaPrivativa(nome), nome).toBe(true);
+    }
+  });
+
+  it("não confunde com outro produto, nem com nome vazio", () => {
+    for (const nome of ["Endereço Fiscal Litoral", "SeaBox Pro", "Sala Privativa Premium", "Sala de Reunião", "", null, undefined]) {
+      expect(ehSalaPrivativa(nome as string | null | undefined), String(nome)).toBe(false);
+    }
+  });
+
+  it("o status final: Sala Privativa tem o seu; todo o resto segue para ongoing", () => {
+    expect(statusFinalDoProduto("Sala Privativa ")).toBe("ongoing - sala privativa");
+    expect(statusFinalDoProduto("Endereço Fiscal Litoral")).toBe("ongoing");
+    expect(statusFinalDoProduto("SeaBox Básico")).toBe("ongoing");
+    // Sem nome lido, o acompanhamento faz o que sempre fez.
+    expect(statusFinalDoProduto(null)).toBe("ongoing");
+  });
+
+  it("sem documentação, nenhuma mensagem promete documentação nem e-mail", () => {
+    const dados = { nome: "Carla Adriana de Lima", linkPagamento: "P", linkAssinatura: "A", semDocumentacao: true };
+    for (const etapa of ["inicial", "pagamento", "assinatura", "final"] as Etapa[]) {
+      const t = mensagemDaEtapa(etapa, dados);
+      expect(t, etapa).not.toMatch(/documenta[cç][aã]o/i);
+      expect(t, etapa).not.toContain("e-mail");
+    }
+    // Os links e o fecho continuam.
+    expect(mensagemDaEtapa("inicial", dados)).toContain("💳 Link de pagamento: P");
+    expect(mensagemDaEtapa("final", dados)).toContain("Carla, confirmamos tudo!");
+    expect(mensagemDaEtapa("final", dados)).toContain("Seja bem-vindo(a)!");
+  });
+
+  it("com documentação (o padrão), as frases de sempre ficam como estavam", () => {
+    const dados = { nome: "Carla", linkPagamento: "P", linkAssinatura: "A" };
+    expect(mensagemDaEtapa("inicial", dados)).toContain("enviaremos toda a documentação referente à sua contratação");
+    expect(mensagemDaEtapa("pagamento", dados)).toContain("liberamos a documentação");
+    expect(mensagemDaEtapa("assinatura", dados)).toContain("liberamos a documentação");
+    expect(mensagemDaEtapa("final", dados)).toContain("por e-mail");
   });
 });

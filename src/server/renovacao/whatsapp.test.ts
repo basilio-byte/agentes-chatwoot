@@ -284,6 +284,6 @@ describe("dadosDoFormulario", () => {
   it("quem recebe a conversa não pode ficar em branco nem passar de 80 caracteres", () => {
     expect("erro" in dadosDoFormulario(form({ whatsappAtribuirA: "  " }), atual)).toBe(true);
     expect("erro" in dadosDoFormulario(form({ whatsappAtribuirA: "x".repeat(81) }), atual)).toBe(true);
-    expect(ATRIBUIR_A_PADRAO).toBe("Felipe");
+    expect(ATRIBUIR_A_PADRAO).toBe("Lucas Xavier");
   });
 });

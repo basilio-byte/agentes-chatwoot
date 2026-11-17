@@ -63,9 +63,9 @@ describe("lerConfigRenovacao", () => {
     expect(c.whatsappTexto?.startsWith("Olá {responsavel}")).toBe(true);
   });
 
-  it("sem nada gravado, quem recebe é o Felipe e o texto segue o padrão", () => {
+  it("sem nada gravado, quem recebe é o Lucas Xavier e o texto segue o padrão", () => {
     const c = lerConfigRenovacao({}, true);
-    expect(c.whatsappAtribuirA).toBe("Felipe");
+    expect(c.whatsappAtribuirA).toBe("Lucas Xavier");
     expect(c.whatsappTexto).toBeNull();
   });
 
@@ -73,7 +73,7 @@ describe("lerConfigRenovacao", () => {
     expect(lerConfigRenovacao({ whatsappTexto: "Olá {nome}, tudo bem? ".padEnd(60, "x") }, true).whatsappTexto).toBeNull();
     expect(lerConfigRenovacao({ whatsappTexto: "curto" }, true).whatsappTexto).toBeNull();
     expect(lerConfigRenovacao({ whatsappTexto: 42 }, true).whatsappTexto).toBeNull();
-    expect(lerConfigRenovacao({ whatsappAtribuirA: "x".repeat(81) }, true).whatsappAtribuirA).toBe("Felipe");
+    expect(lerConfigRenovacao({ whatsappAtribuirA: "x".repeat(81) }, true).whatsappAtribuirA).toBe("Lucas Xavier");
   });
 
   it("o token do endereço das datas sobrevive ao interruptor desligado", () => {

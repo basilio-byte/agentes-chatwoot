@@ -33,6 +33,40 @@ export const LISTA_BASE_DE_CLIENTES = "900701122530";
  */
 export const STATUS_ALVO = "🏃‍♂️onboarding";
 export const STATUS_FINAL = "ongoing";
+/**
+ * Onde a Sala Privativa termina (`GET /list/900701122530`, 17/11/2026): é um
+ * status PRÓPRIO da lista, sem emoji, ao lado de `ongoing`. Era o `ongoing` fixo
+ * que o Lucas estranhou ao ligar o agente de contratos de Sala Privativa ao
+ * acompanhamento.
+ */
+export const STATUS_FINAL_SALA_PRIVATIVA = "ongoing - sala privativa";
+
+/** Tira acento e caixa; "Sala Privativa " (com o espaço no fim) vira "sala privativa". */
+function normalizado(texto: string) {
+  return texto
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * O produto é Sala Privativa? A opção do dropdown `TIPO DE PRODUTO` é "Sala
+ * Privativa " (COM um espaço no fim), e o prompt do validador a chama de "Salas
+ * Privativas": os dois entram, para nenhum nome torto virar `ongoing` por engano.
+ */
+export function ehSalaPrivativa(produto: string | null | undefined): boolean {
+  return /^salas? privativas?$/.test(normalizado(produto ?? ""));
+}
+
+/**
+ * O status em que a task termina, pelo produto. Só a Sala Privativa tem o seu;
+ * qualquer outro produto — inclusive sem nome lido — segue para `ongoing`, que é
+ * o que o acompanhamento sempre fez.
+ */
+export function statusFinalDoProduto(produto: string | null | undefined): string {
+  return ehSalaPrivativa(produto) ? STATUS_FINAL_SALA_PRIVATIVA : STATUS_FINAL;
+}
 
 /**
  * O mesmo status para COMPARAR, sem depender do emoji.
@@ -230,6 +264,14 @@ export type DadosDaMensagem = {
    * import nenhum. Vazio = a mensagem sai como saía antes.
    */
   linhasDaDocumentacao?: string[];
+  /**
+   * O produto não tem o pacote de documentação do endereço (AVCB, Habite-se…) —
+   * hoje, a Sala Privativa. A mensagem deixa de prometer "documentação" e o
+   * e-mail dela: prometer o que o cliente não recebe é pior que não prometer.
+   * ⏳ Texto provisório: o que o cliente de Sala Privativa recebe depois de
+   * pagar e assinar é decisão da equipe (Lucas/Diego).
+   */
+  semDocumentacao?: boolean;
 };
 
 /**
@@ -255,7 +297,9 @@ export function mensagemDaEtapa(etapa: Etapa, dados: DadosDaMensagem): string {
       `💳 Link de pagamento: ${dados.linkPagamento}`,
       `✍️ Link de assinatura: ${dados.linkAssinatura}`,
       "",
-      "Assim que identificarmos o pagamento e a assinatura, enviaremos toda a documentação referente à sua contratação.",
+      dados.semDocumentacao
+        ? "Assim que identificarmos o pagamento e a assinatura, te avisamos por aqui."
+        : "Assim que identificarmos o pagamento e a assinatura, enviaremos toda a documentação referente à sua contratação.",
       "",
       "Qualquer dúvida, estamos à disposição!",
     ].join("\n");
@@ -269,7 +313,9 @@ export function mensagemDaEtapa(etapa: Etapa, dados: DadosDaMensagem): string {
       "",
       `✍️ ${dados.linkAssinatura}`,
       "",
-      "Assim que assinar, te avisamos e liberamos a documentação. Obrigado! 🙏",
+      dados.semDocumentacao
+        ? "Assim que assinar, te avisamos por aqui. Obrigado! 🙏"
+        : "Assim que assinar, te avisamos e liberamos a documentação. Obrigado! 🙏",
     ].join("\n");
   }
 
@@ -281,7 +327,9 @@ export function mensagemDaEtapa(etapa: Etapa, dados: DadosDaMensagem): string {
       "",
       `💳 ${dados.linkPagamento}`,
       "",
-      "Assim que o pagamento for identificado, te avisamos e liberamos a documentação. Obrigado! 🙏",
+      dados.semDocumentacao
+        ? "Assim que o pagamento for identificado, te avisamos por aqui. Obrigado! 🙏"
+        : "Assim que o pagamento for identificado, te avisamos e liberamos a documentação. Obrigado! 🙏",
     ].join("\n");
   }
 
@@ -300,8 +348,13 @@ export function mensagemDaEtapa(etapa: Etapa, dados: DadosDaMensagem): string {
     // em `ongoing`, que é DEPOIS desta mensagem; e, desde que o status passou a
     // depender do anexo do contrato, pode não sair. Por isso ela anuncia o
     // e-mail como algo que vem, nunca como algo que foi.
-    "Você também vai receber a documentação completa e as orientações por e-mail.",
-    "",
+    //
+    // Produto sem pacote de documentação (Sala Privativa) fica sem a linha: não
+    // se sabe se o ClickBot manda e-mail quando a task entra em
+    // `ongoing - sala privativa`, e prometer e-mail que pode não vir é pior.
+    ...(dados.semDocumentacao
+      ? []
+      : ["Você também vai receber a documentação completa e as orientações por e-mail.", ""]),
     "Qualquer dúvida, é só chamar por aqui. Seja bem-vindo(a)! 🙌",
   ].join("\n");
 }

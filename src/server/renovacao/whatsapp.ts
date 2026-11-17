@@ -83,7 +83,7 @@ export const TEXTO_PADRAO_ONE = [
   "Agradecemos pela confiança e parceria contínua. Para mais informações ou para dar andamento ao processo de renovação, entre em contato conosco.",
 ].join("\n");
 
-export const ATRIBUIR_A_PADRAO = "Felipe";
+export const ATRIBUIR_A_PADRAO = "Lucas Xavier";
 
 const LIMITE_DO_TEXTO = { minimo: 40, maximo: 1500 };
 

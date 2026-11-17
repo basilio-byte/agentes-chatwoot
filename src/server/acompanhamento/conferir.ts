@@ -52,6 +52,7 @@ import {
   chaveDaEtapa,
   comentarioDaEtapa,
   CONFERIR_A_CADA_MS,
+  ehSalaPrivativa,
   etapaAEnviar,
   ETIQUETA_ASSINATURA,
   ETIQUETA_PAGAMENTO,
@@ -61,7 +62,7 @@ import {
   podeFalar,
   PROVIDER_ACOMPANHAMENTO,
   STATUS_ALVO,
-  STATUS_FINAL,
+  statusFinalDoProduto,
   TAREFAS_POR_RODADA,
   type Etapa,
 } from "./regras";
@@ -320,9 +321,14 @@ async function tratarTask(
     return { taskId, cliente: nome ?? undefined, etapa, motivo: "a task está sem CELULAR" };
   }
 
+  // O produto decide três coisas: os links da documentação, as frases que
+  // prometem documentação e o status em que a task termina.
+  const produto = produtoDaTarefa(tarefa);
+
   return await falarComOCliente({
     taskId,
     tarefa,
+    produto,
     etapa,
     nome,
     celular,
@@ -335,7 +341,7 @@ async function tratarTask(
     // diferentes, e mandar a documentação do endereço errado é pior do que não
     // mandar nenhuma. Produto sem seção configurada devolve lista vazia.
     linhasDaDocumentacao: blocoDaDocumentacao(
-      documentosDoProduto(leitura.documentos, produtoDaTarefa(tarefa)),
+      documentosDoProduto(leitura.documentos, produto),
     ),
     agora,
   });
@@ -447,6 +453,8 @@ async function abrirZapSign() {
 async function falarComOCliente(args: {
   taskId: string;
   tarefa: ClickUpTarefa;
+  /** O nome da opção de `TIPO DE PRODUTO`; decide o status final e as frases. */
+  produto: string | null;
   etapa: Etapa;
   nome: string | null;
   celular: string;
@@ -515,6 +523,7 @@ async function falarComOCliente(args: {
         linkPagamento: args.linkPagamento,
         linkAssinatura: args.linkAssinatura,
         linhasDaDocumentacao: args.linhasDaDocumentacao,
+        semDocumentacao: ehSalaPrivativa(args.produto),
       }),
     );
   } catch (erro) {
@@ -561,7 +570,7 @@ async function falarComOCliente(args: {
       problemas.push(`contrato assinado no campo: ${anexo.motivo} — não movi o status`);
     } else {
       await args.clickup
-        .atualizarTarefa(taskId, { status: STATUS_FINAL })
+        .atualizarTarefa(taskId, { status: statusFinalDoProduto(args.produto) })
         .catch((e: Error) => problemas.push(`status: ${e.message}`));
     }
   }
