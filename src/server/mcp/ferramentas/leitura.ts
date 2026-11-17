@@ -37,6 +37,7 @@ import { lerConfigFollowup } from "@/server/followup-reserva/config";
 import { candidatosAoFollowup } from "@/server/followup-reserva/conferir";
 import { PROVIDER_FOLLOWUP } from "@/server/followup-reserva/regras";
 import { lerConfigNps } from "@/server/nps/config";
+import { lerConfigDaLimpeza, PROVIDER_LIMPEZA } from "@/server/limpeza-do-contato/regras";
 import {
   CHAVE_DA_RODADA as CHAVE_DA_RODADA_DA_RECONFERENCIA,
   ultimasReconferencias,
@@ -1468,6 +1469,48 @@ const verFollowupsDeReserva = ferramenta({
 });
 
 /**
+ * A limpeza dos campos do contato depois da resolução: se está ligada, quais
+ * campos, e o desfecho de cada resolução (quais campos saíram, nunca os valores).
+ */
+const verLimpezaDeContatos = ferramenta({
+  name: "ver_limpeza_ao_resolver",
+  title: "Ver a limpeza dos campos do contato",
+  description:
+    "A limpeza dos campos do contato no Chatwoot 15 minutos depois de a conversa ser resolvida: se está ligada, quais atributos ela limpa e o desfecho de cada resolução — limpa (com os campos que saíram), nada a limpar, pulada (conversa reaberta, outra conversa do contato em andamento) ou pendente. Nunca mostra os valores dos campos.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    limite: z.number().int().min(1).max(50).optional().describe("Quantos desfechos devolver. Padrão 20."),
+  }),
+  async executar({ limite }) {
+    const [chatwoot, linhas] = await Promise.all([
+      db.integration.findUnique({
+        where: { provider: IntegrationProvider.CHATWOOT },
+        select: { config: true },
+      }),
+      db.webhookEvent.findMany({
+        where: { provider: PROVIDER_LIMPEZA },
+        orderBy: { createdAt: "desc" },
+        take: limite ?? 20,
+        select: { resultado: true, detalhe: true, createdAt: true, processedAt: true, payload: true },
+      }),
+    ]);
+    const config = lerConfigDaLimpeza(chatwoot?.config);
+    return responder({
+      ligada: config.ligada,
+      campos: config.campos,
+      desfechos: linhas.map((l) => ({
+        conversa: (l.payload as { conversa?: number } | null)?.conversa ?? null,
+        resultado: l.resultado,
+        detalhe: l.detalhe,
+        resolvidaEm: quando(l.createdAt),
+        tratadaEm: l.processedAt ? quando(l.processedAt) : null,
+      })),
+    });
+  },
+});
+
+/**
  * A varredura que devolve à fila a task corrigida à mão.
  *
  * ⚠ Ela é a única rodada do vigia cujo trabalho normal é NÃO fazer nada: task
@@ -1552,4 +1595,5 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   verReconferenciaDeContratos,
   verPesquisasDeSatisfacao,
   verFollowupsDeReserva,
+  verLimpezaDeContatos,
 ];

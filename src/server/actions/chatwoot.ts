@@ -20,6 +20,10 @@ import {
 } from "@/server/integrations/chatwoot/credenciais";
 import { ausenciasDaConfig, lerAusenciasDoTexto } from "@/server/integrations/chatwoot/ausencias";
 import { esquecerAusencias } from "@/server/integrations/chatwoot/ausencias-config";
+import {
+  configDoFormulario as configDaLimpezaDoFormulario,
+  lerConfigDaLimpeza,
+} from "@/server/limpeza-do-contato/regras";
 import { lerIdsDeCaixa } from "@/server/agents/equipe";
 import { autorDaSessao } from "@/server/gestao/autor";
 import { salvarEscopo } from "@/server/gestao/escopo";
@@ -62,7 +66,12 @@ export async function salvarConfigChatwoot(
     where: { provider: IntegrationProvider.CHATWOOT },
     select: { config: true },
   });
-  const config = { ...parsed.data, ausencias: ausenciasDaConfig(atual?.config) };
+  // A limpeza do contato (`limpezaDoContato`) também mora aqui e passa intacta.
+  const config = {
+    ...parsed.data,
+    ausencias: ausenciasDaConfig(atual?.config),
+    limpezaDoContato: lerConfigDaLimpeza(atual?.config),
+  };
 
   await db.integration.upsert({
     where: { provider: IntegrationProvider.CHATWOOT },
@@ -298,5 +307,56 @@ export async function resumoDoBot(agentId: string) {
     rotatedAt: bot?.rotatedAt ?? null,
     instanciaOk: Boolean(config),
     habilitadaGlobalmente: habilitada,
+  };
+}
+
+export type EstadoLimpeza = { ok?: string; erro?: string };
+
+/**
+ * A limpeza dos campos do contato depois da resolução (pedido do Diego,
+ * 17/11/2026). Formulário PRÓPRIO, como as ausências: mexe só na chave
+ * `limpezaDoContato` da configuração do Chatwoot.
+ */
+export async function salvarLimpezaDoContato(
+  _estado: EstadoLimpeza,
+  formData: FormData,
+): Promise<EstadoLimpeza> {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+
+  const lido = configDaLimpezaDoFormulario({
+    ligada: formData.get("ligada") === "on",
+    campos: String(formData.get("campos") ?? ""),
+  });
+  if ("erro" in lido) return { erro: lido.erro };
+
+  const registro = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    select: { config: true },
+  });
+  if (!registro) return { erro: "Configure a instância do Chatwoot antes." };
+
+  const anterior = lerConfigDaLimpeza(registro.config);
+  await db.integration.update({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    data: {
+      config: { ...(registro.config as Record<string, unknown>), limpezaDoContato: lido.config },
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      userId: sessao.user.id,
+      action: "integration.chatwoot.limpeza_do_contato.updated",
+      entity: "Integration",
+      entityId: IntegrationProvider.CHATWOOT,
+      diff: { antes: anterior, depois: lido.config },
+    },
+  });
+
+  revalidatePath("/integracoes");
+  return {
+    ok: lido.config.ligada
+      ? `Ligada: ${lido.config.campos.length} campo(s) do contato são limpos 15 min depois de a conversa ser resolvida.`
+      : "Desligada: nenhum campo do contato é limpo.",
   };
 }

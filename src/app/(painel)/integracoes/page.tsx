@@ -48,6 +48,12 @@ import { versaoDaConfig } from "@/server/notas-fiscais/versao";
 import { BotaoTentarDeNovo } from "@/components/botao-tentar-de-novo";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { AusenciasDaEquipeForm } from "@/components/ausencias-da-equipe";
+import { LimpezaDoContatoForm } from "@/components/limpeza-do-contato";
+import {
+  lerConfigDaLimpeza,
+  NUNCA_LIMPAR,
+  PROVIDER_LIMPEZA,
+} from "@/server/limpeza-do-contato/regras";
 import {
   ausenciasDaConfig,
   ausenciasEmTexto,
@@ -445,6 +451,23 @@ export default async function IntegracoesPage({
     modeloDocumento: configOpenAI.modeloDocumento,
   });
 
+  // Limpeza dos campos do contato: a config mora na linha do Chatwoot, e o resumo
+  // dos últimos 7 dias sai das linhas de `WebhookEvent` (sem nome nem valor).
+  const configDaLimpeza = lerConfigDaLimpeza(chatwoot?.config);
+  const desfechosDaLimpeza = await db.webhookEvent.groupBy({
+    by: ["resultado"],
+    where: {
+      provider: PROVIDER_LIMPEZA,
+      createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60_000) },
+    },
+    _count: { _all: true },
+  });
+  const resumoDaLimpeza = desfechosDaLimpeza.length
+    ? `Últimos 7 dias: ${desfechosDaLimpeza
+        .map((d) => `${d._count._all} ${d.resultado ?? "sem resultado"}`)
+        .join(" · ")}.`
+    : null;
+
   // Follow-up de reserva: a config, o rastro de cada reserva e as próximas — só
   // banco (`candidatosAoFollowup` não abre Conexa nem Chatwoot).
   const followup = registros.find((i) => i.provider === IntegrationProvider.FOLLOWUP_RESERVA);
@@ -574,6 +597,14 @@ export default async function IntegracoesPage({
                   vigentes={ausenciasDaEquipe
                     .filter((a) => ausenciaVigente(a, hojeEmSaoPaulo))
                     .map((a) => `${a.nome} → ${a.substituto} até ${dataBR(a.ate)}`)}
+                  somenteLeitura={!editavel}
+                />
+
+                <LimpezaDoContatoForm
+                  ligada={configDaLimpeza.ligada}
+                  campos={configDaLimpeza.campos.join("\n")}
+                  nuncaLimpa={NUNCA_LIMPAR.join(", ")}
+                  resumo={resumoDaLimpeza}
                   somenteLeitura={!editavel}
                 />
 

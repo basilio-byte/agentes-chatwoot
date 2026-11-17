@@ -1872,6 +1872,73 @@ ser preenchidos"*. Módulos em `src/server/contato/` (regras puras e testadas em
   - **Consulta de CNPJ que falha nunca impede a task**: a razão social fica em
     branco e o retorno a cobra. Cada campo extra é validado sozinho.
 
+### Limpeza dos campos do contato ao resolver a conversa
+
+Pedido do Diego (task 17twvjx2j0q, 17/11/2026). A task do CRM da Tayná nasceu com
+CANAL "Site" porque o contato carregava o canal de um cadastro antigo, e o
+"cadastro completo" (acima) copia os atributos do contato para os campos vazios
+da task. A análise anterior concluiu que não era erro de leitura, e o Diego
+respondeu com o que quer: *"limpar os campos editáveis do Chatwoot após a
+conversa ser resolvida; o que não mexe, dados pessoais (e-mail, CPF),
+permanecem"*. Regras puras e testadas em `limpeza-do-contato/regras.ts`; a rodada
+em `limpeza-do-contato/conferir.ts`; a tela no fim da aba Chatwoot de
+Integrações; a leitura no MCP em `ver_limpeza_ao_resolver`.
+
+- **A configuração mora na linha do Chatwoot** (`config.limpezaDoContato`), com
+  formulário PRÓPRIO (`salvarLimpezaDoContato`, `ADMIN`, auditoria). ⚠
+  `salvarConfigChatwoot` a PRESERVA ao gravar a URL e a conta, como as ausências:
+  o formulário da instância não a conhece, e gravar só o que ele manda a apagaria
+  em silêncio. **Nasce DESLIGADA.**
+- **Os campos, decididos pelo usuário em 17/11/2026** (`CAMPOS_PADRAO`, a CHAVE do
+  atributo no Chatwoot): canal, campanha, qualificação, avaliação do atendimento,
+  categoria de serviço, tipo de produto, espaço, faturamento, valor do contrato,
+  data de início do contrato, vencimento, informações complementares e
+  **observações**. Ramo de atividade, contador, parceiro e loja/box FICAM: o
+  usuário os deixou de fora.
+- ⚠ **Dado pessoal e de ligação nunca sai** (`NUNCA_LIMPAR`): nome completo,
+  e-mail, CPF, CNPJ, CEP, aniversário, estado civil, responsável, Instagram,
+  endereço do sócio, sede, ID da empresa, link do Conexa, ID do ClickUp, a
+  conferência de documento e os três IDs do WhatsApp. A trava é dupla: a tela
+  recusa a lista que os traga, e `camposParaLimpar` os filtra mesmo se alguém
+  gravar a config à mão. ⚠ **`id_clickup` e `link_conexa` ficam por um motivo que
+  não é "dado pessoal"**: são o que acha a task e o cliente do próximo
+  atendimento; limpá-los faria o agente criar task em dobro.
+- ⚠ **A chave é a do Chatwoot, e ela perde o acento** ("Aniversário" é
+  `aniversrio`, "Qualificação" é `qualificao`). A tela recusa o nome escrito como
+  aparece (`Qualificação`), porque uma chave que não existe não limparia nada e a
+  tela diria "ligada".
+- **15 minutos DEPOIS da resolução**, não na hora (`ESPERA_MS`). O agente de CRM
+  lê esses campos para montar a task quando alguém marca o checkbox, e em 30
+  dias 8 de 119 marcações do `passar_para_crm` vieram com a conversa resolvida
+  menos de 10 minutos depois. Com a espera ele lê antes.
+- **Duas pontas, como a conversa encerrada.** O webhook de CONTA
+  (`registrarLimpezaDoContato`, no mesmo ponto das outras três portas de
+  resolução) grava uma linha `pendente` em `WebhookEvent` (provider
+  `LIMPEZA_CONTATO`, `conversa:<id>:<instante da resolução>`, sem nome nem
+  telefone); o vigia, de 2 em 2 minutos, trata as de mais de 15 min. Vale para a
+  resolução de qualquer origem: pessoa, pesquisa de satisfação ou prazo do agente.
+- ⚠ **Só limpa com a conversa ainda RESOLVIDA e o contato sem outra conversa em
+  andamento**, lido ao vivo (`decidirLimpeza`). Reabriu, o atendimento continua; o
+  mesmo contato com outra conversa aberta (o WhatsApp da caixa 29 e o Instagram,
+  por exemplo), os campos podem ser dela. Resolvida DE NOVO depois, a limpeza vai
+  com a resolução mais nova.
+- **Limpar é REMOVER a chave** (`definirAtributosDoContato` com `null`), lendo e
+  mesclando: `custom_attributes` do contato substitui o objeto inteiro, e o resto
+  fica intacto. Grava com o token de USUÁRIO (o do bot não escreve em contato).
+- **Falha não vira silêncio nem laço**: Chatwoot fora do ar volta a pendente (a
+  validade de 48 h, `VALIDADE_MS`, segura o fim: limpar dois dias depois apagaria
+  o que o atendimento seguinte já preencheu); recusa 4xx fecha como `falhou`. O
+  rastro diz QUAIS campos saíram, nunca os valores.
+- ⚠ **Não apaga o que já está nas tasks**: a task do CRM guarda o que copiou na
+  hora. A limpeza só impede que o próximo atendimento herde o canal do anterior.
+- ⚠ **Não limpa por trás do Chatwoot**: nenhuma das 32 automações ativas da conta
+  usa atributo de contato (conferido em 17/11/2026), então a limpeza não aciona
+  automação. Uma automação futura que leia atributo de contato deve ser conferida
+  contra esta lista.
+- ⚠ **Contatos antigos continuam como estão**: 1.120 têm Canal preenchido hoje, e
+  a limpeza só alcança quem tiver uma conversa resolvida DEPOIS de ligada. Limpar o
+  estoque é decisão à parte, em lote, e este arquivo pede cerimônia para isso.
+
 ### Venda autônoma paga vira "ganho" no CRM Comercial
 
 Pedido do Diego (task "Ajustes Auto Venda", 16/10/2026): *"Dar ganho (quando

@@ -17,6 +17,7 @@ import { CaminhoDoRepasse, ConversationStatus } from "@/generated/prisma/enums";
 import { dispararGatilhosDeConversa } from "@/server/conversa-encerrada/disparar";
 import { dispararGatilhosDeCheckbox } from "@/server/conversa-marcada/disparar";
 import { dispararPesquisaNps } from "@/server/nps/disparar";
+import { registrarLimpezaDoContato } from "@/server/limpeza-do-contato/conferir";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,6 +73,9 @@ export async function POST(req: Request) {
   // A pesquisa de satisfação também nasce de um checkbox, no mesmo evento. Nunca
   // lança — ver `nps/disparar.ts`.
   await dispararPesquisaNps(evento);
+  // A limpeza dos campos do contato nasce da mesma resolução, no mesmo formato de
+  // topo; só marca a hora, quem limpa é o vigia 15 min depois. Nunca lança.
+  await registrarLimpezaDoContato(evento);
 
   const conversa = evento.conversation;
   const conversationId = conversa?.id;

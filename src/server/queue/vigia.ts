@@ -16,6 +16,7 @@ import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
 import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
 import { conferirFollowupsDeReserva } from "@/server/followup-reserva/conferir";
+import { limparContatosResolvidos } from "@/server/limpeza-do-contato/conferir";
 import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { propagarReajustes } from "@/server/renovacao/propagar";
 import { avancarTarefasDoLote } from "@/server/renovacao/avancar";
@@ -305,6 +306,17 @@ export function iniciarVigia(): NodeJS.Timeout {
       await conferirFollowupsDeReserva();
     } catch (erro) {
       logger.error({ erro }, "follow-up de reserva: a conferência falhou ao iniciar");
+    }
+
+    // Limpeza dos campos do contato 15 min depois da resolução: de 2 em 2 min, e
+    // sem pendente é uma consulta ao banco.
+    try {
+      const rodada = await limparContatosResolvidos();
+      if (rodada.limpas || rodada.falhas || rodada.expiradas) {
+        logger.info(rodada, "limpeza do contato conferida");
+      }
+    } catch (erro) {
+      logger.error({ erro }, "limpeza do contato falhou");
     }
 
     // Retrato da leva de renovação: uma vez por dia, guarda o valor de cada
