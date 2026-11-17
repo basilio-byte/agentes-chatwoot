@@ -11,7 +11,13 @@ const AGORA = Date.parse("2026-09-22T18:00:00Z");
 
 let chamadas: string[] = [];
 let prazos: Array<Record<string, unknown>> = [];
-let conversa = { status: "open", assigneeId: null as number | null, assigneeTipo: null as string | null, inboxId: 29 };
+let conversa = {
+  status: "open",
+  assigneeId: null as number | null,
+  assigneeTipo: null as string | null,
+  inboxId: 29,
+  contactId: 555 as number | null,
+};
 let mensagens: Array<{ id: number; message_type: number; private?: boolean; sender?: { type?: string } }> = [];
 let registrado: Record<string, unknown> | null = null;
 
@@ -40,6 +46,7 @@ vi.mock("@/server/integrations/chatwoot/credenciais", () => ({
   clienteDoAgente: async () => ({
     obterConversa: async () => conversa,
     listarMensagens: async () => mensagens,
+    obterContato: async () => ({ telefone: "+5584987654321" }),
     enviarMensagem: async (id: number, texto: string, opcoes?: { privado?: boolean }) => {
       chamadas.push(`${opcoes?.privado ? "nota" : "mensagem"}:${id}:${texto}`);
       return { id: 1 };
@@ -55,6 +62,15 @@ vi.mock("@/server/integrations/chatwoot/resolucao", () => ({
   devolverAoAgente: async () => 1,
 }));
 vi.mock("@/server/queue/atendimento", () => ({ agendarAtendimento: async () => undefined }));
+
+let pesquisaPedida: Record<string, unknown> | null = null;
+let pesquisaRecusa: string | null = null;
+vi.mock("@/server/nps/automatica", () => ({
+  iniciarPesquisaAutomatica: async (args: Record<string, unknown>) => {
+    pesquisaPedida = args;
+    return pesquisaRecusa ? { iniciada: false, motivo: pesquisaRecusa } : { iniciada: true, pesquisaId: "nps-1" };
+  },
+}));
 vi.mock("./crm", () => ({ passarTarefaDoCrm: async () => ({ tarefas: [], problemas: [] }) }));
 vi.mock("@/server/prazos/registrar", () => ({
   registrarPrazo: async (args: Record<string, unknown>) => {
@@ -89,7 +105,9 @@ function prazoDeResolver(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   chamadas = [];
   prazos = [];
-  conversa = { status: "open", assigneeId: null, assigneeTipo: null, inboxId: 29 };
+  conversa = { status: "open", assigneeId: null, assigneeTipo: null, inboxId: 29, contactId: 555 };
+  pesquisaPedida = null;
+  pesquisaRecusa = null;
   mensagens = [
     { id: 99, message_type: 0, sender: { type: "contact" } },
     { id: 100, message_type: 1, sender: { type: "agent_bot" } },
@@ -141,6 +159,69 @@ describe("prazo do cliente com acao resolver", () => {
   });
 });
 
+describe("prazo do cliente com acao pesquisa (fim do atendimento do robô)", () => {
+  const prazoDePesquisa = () =>
+    prazoDeResolver({ acao: { tipo: "pesquisa" }, motivo: "2ª via enviada; o cliente não respondeu" });
+
+  it("cliente em silêncio: inicia a pesquisa com o agente e a porta, deixa nota e NÃO resolve agora", async () => {
+    prazos = [prazoDePesquisa()];
+
+    const rodada = await executarPrazosVencidos(AGORA);
+
+    expect(rodada.executados).toBe(1);
+    expect(pesquisaPedida).toMatchObject({
+      chatwootConversationId: 13222,
+      inboxId: 29,
+      portaAgentId: "porta",
+      agentId: "financeiro",
+      telefone: "+5584987654321",
+    });
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0]).toMatch(/^nota:13222:⏱️ Cliente sem responder há 30 min depois de o agente concluir/);
+    // Quem resolve é a pesquisa, no fim dela.
+    expect(chamadas.some((c) => c.startsWith("status:"))).toBe(false);
+    expect(chamadas.some((c) => c.startsWith("mensagem:"))).toBe(false);
+    expect(prazos[0]).toMatchObject({
+      status: PrazoStatus.EXECUTADO,
+      resultado: "pesquisa de satisfação iniciada",
+    });
+  });
+
+  it("a pesquisa não pode sair: resolve como \"resolver\", com o motivo na nota", async () => {
+    prazos = [prazoDePesquisa()];
+    pesquisaRecusa = "este telefone já recebeu a pesquisa nas últimas 24 h (conversa #9738)";
+
+    await executarPrazosVencidos(AGORA);
+
+    expect(chamadas[0]).toMatch(/sem pesquisa de satisfação \(este telefone já recebeu/);
+    expect(chamadas).toContain("status:13222:resolved");
+    expect(chamadas).toContain("banco:resolvida:13222");
+    expect(prazos[0]).toMatchObject({ status: PrazoStatus.EXECUTADO });
+    expect(String(prazos[0].resultado)).toMatch(/^conversa resolvida sem pesquisa/);
+  });
+
+  it("o cliente escreveu antes de vencer: nem pesquisa nem resolve", async () => {
+    prazos = [prazoDePesquisa()];
+    mensagens.push({ id: 101, message_type: 0, sender: { type: "contact" } });
+
+    await executarPrazosVencidos(AGORA);
+
+    expect(pesquisaPedida).toBeNull();
+    expect(chamadas).toEqual([]);
+    expect(prazos[0].status).toBe(PrazoStatus.CANCELADO);
+  });
+
+  it("uma pessoa assumiu a conversa: nem pesquisa nem resolve", async () => {
+    prazos = [prazoDePesquisa()];
+    conversa = { ...conversa, assigneeId: 44, assigneeTipo: "User" };
+
+    await executarPrazosVencidos(AGORA);
+
+    expect(pesquisaPedida).toBeNull();
+    expect(prazos[0].status).not.toBe(PrazoStatus.EXECUTADO);
+  });
+});
+
 describe("a ferramenta prazo_resposta_do_cliente", () => {
   const ferramenta = prazosIntegration.tools.find((t) => t.name === "prazo_resposta_do_cliente")!;
   const ctx = {
@@ -162,6 +243,17 @@ describe("a ferramenta prazo_resposta_do_cliente", () => {
     expect(r.registrado).toBe(true);
     expect(String(r.observacao)).toContain("a conversa é resolvida");
     expect(registrado).toMatchObject({ tipo: PrazoTipo.CLIENTE, acao: { tipo: "resolver" }, minutos: 30 });
+  });
+
+  it('"pesquisa" não precisa de texto, e registra a ação', async () => {
+    const r = (await ferramenta.execute(
+      ferramenta.inputSchema.parse({ minutos: 10, acao: "pesquisa", motivo: "reserva confirmada" }),
+      ctx,
+    )) as Record<string, unknown>;
+
+    expect(r.registrado).toBe(true);
+    expect(String(r.observacao)).toContain("pesquisa de satisfação");
+    expect(registrado).toMatchObject({ tipo: PrazoTipo.CLIENTE, acao: { tipo: "pesquisa" }, minutos: 10 });
   });
 
   it('"mensagem" sem texto é recusa, e nada é registrado', async () => {

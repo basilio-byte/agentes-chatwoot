@@ -42,7 +42,16 @@ export type AcaoDoPrazo =
    * de que o robô não resolve conversa (pedido do Régis, 22/09/2026: a 2ª via
    * que o Financeiro manda não precisa de ninguém depois).
    */
-  | { tipo: "resolver" };
+  | { tipo: "resolver" }
+  /**
+   * CLIENTE: o cliente parou de responder depois de o agente concluir o
+   * atendimento — sai a pesquisa de satisfação, a mesma do checkbox, que
+   * resolve a conversa no fim dela. Sem pesquisa possível (desligada, caixa de
+   * fora, telefone que já respondeu há pouco), só resolve, como "resolver".
+   * Pedido do Régis (17/11/2026, conversa 10954): o atendimento feito todo pelo
+   * robô terminava sem ninguém clicar no botão do NPS.
+   */
+  | { tipo: "pesquisa" };
 
 /** Só os campos da mensagem do Chatwoot que a decisão lê. */
 export type MensagemDaConversa = {

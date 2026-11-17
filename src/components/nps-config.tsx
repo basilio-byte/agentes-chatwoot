@@ -20,6 +20,7 @@ export type ValoresNps = {
   textoLembrete: string;
   textoNotaBaixa: string;
   textoNotaAlta: string;
+  automatica: boolean;
 };
 
 export function NpsConfigForm({
@@ -36,7 +37,12 @@ export function NpsConfigForm({
     {},
   );
 
-  const texto = (nome: keyof ValoresNps, label: string, linhas: number, hint?: string) => (
+  const texto = (
+    nome: Exclude<keyof ValoresNps, "automatica">,
+    label: string,
+    linhas: number,
+    hint?: string,
+  ) => (
     <Field label={label} hint={hint}>
       <Textarea
         name={nome}
@@ -59,6 +65,27 @@ export function NpsConfigForm({
         />
         Pesquisa ligada
       </label>
+
+      <div className="space-y-1">
+        {/* Diz ao servidor que esta tela mostrou a caixa: formulário antigo, sem
+            ela, não desliga a pesquisa automática por engano. */}
+        <input type="hidden" name="automaticaNaTela" value="1" />
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="automatica"
+            defaultChecked={valores.automatica}
+            disabled={somenteLeitura}
+            className="size-4 accent-accent"
+          />
+          Também no fim dos atendimentos feitos só pelo robô
+        </label>
+        <p className="pl-6 text-xs text-muted">
+          Quem decide quando é o agente: depois de concluir o pedido, ele registra o
+          prazo do cliente com a ação “pesquisa”. Desligada aqui, esse prazo só
+          resolve a conversa.
+        </p>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field

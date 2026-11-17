@@ -15,6 +15,7 @@ import { conferirPresentes } from "@/server/aniversario/conferir";
 import { conferirNotasFiscais } from "@/server/notas-fiscais/conferir";
 import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
+import { conferirFollowupsDeReserva } from "@/server/followup-reserva/conferir";
 import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { propagarReajustes } from "@/server/renovacao/propagar";
 import { avancarTarefasDoLote } from "@/server/renovacao/avancar";
@@ -295,6 +296,15 @@ export function iniciarVigia(): NodeJS.Timeout {
       await conferirAutoVendas();
     } catch (erro) {
       logger.error({ erro }, "auto venda: a conferência falhou ao iniciar");
+    }
+
+    // Follow-up da reserva que um agente criou e não foi paga: de 5 em 5 min, e
+    // só abre o Conexa e o Chatwoot para a reserva cuja hora chegou. Só INICIA a
+    // rodada — desligada (o padrão), é uma consulta ao banco.
+    try {
+      await conferirFollowupsDeReserva();
+    } catch (erro) {
+      logger.error({ erro }, "follow-up de reserva: a conferência falhou ao iniciar");
     }
 
     // Retrato da leva de renovação: uma vez por dia, guarda o valor de cada

@@ -188,7 +188,7 @@ export const prazosIntegration: IntegrationDefinition = {
       name: "prazo_resposta_do_cliente",
       categoria: "Prazos",
       description:
-        'Registra um prazo para o CLIENTE responder. Use no fim do seu turno, e só quando as suas instruções mandarem agir se ele não responder em N minutos. Se o cliente escrever antes, o prazo cai sozinho; chamar de novo troca o prazo anterior. Se vencer, o sistema faz UMA coisa: manda a mensagem que você deixou (acao "mensagem"), entrega a conversa à pessoa indicada, com o aviso (acao "atribuir"), ou resolve a conversa sem mandar nada (acao "resolver", só quando as instruções mandarem). Se uma pessoa da equipe assumir ou escrever na conversa, nada acontece.',
+        'Registra um prazo para o CLIENTE responder. Use no fim do seu turno, e só quando as suas instruções mandarem agir se ele não responder em N minutos. Se o cliente escrever antes, o prazo cai sozinho; chamar de novo troca o prazo anterior. Se vencer, o sistema faz UMA coisa: manda a mensagem que você deixou (acao "mensagem"), entrega a conversa à pessoa indicada, com o aviso (acao "atribuir"), resolve a conversa sem mandar nada (acao "resolver") ou manda a pesquisa de satisfação, que resolve a conversa no fim dela (acao "pesquisa", depois de você concluir o pedido do cliente) — essas duas, só quando as instruções mandarem. Se uma pessoa da equipe assumir ou escrever na conversa, nada acontece.',
       requiresConfirmation: true,
       inputSchema: z.object({
         minutos: z
@@ -198,9 +198,9 @@ export const prazosIntegration: IntegrationDefinition = {
           .max(1440)
           .describe("Quantos minutos de silêncio do cliente, a partir de agora."),
         acao: z
-          .enum(["mensagem", "atribuir", "resolver"])
+          .enum(["mensagem", "atribuir", "resolver", "pesquisa"])
           .describe(
-            '"mensagem": manda o texto ao cliente. "atribuir": entrega a uma pessoa, com o texto como aviso. "resolver": resolve a conversa, sem texto.',
+            '"mensagem": manda o texto ao cliente. "atribuir": entrega a uma pessoa, com o texto como aviso. "resolver": resolve a conversa, sem texto. "pesquisa": manda a pesquisa de satisfação, sem texto.',
           ),
         texto: z
           .string()
@@ -220,7 +220,7 @@ export const prazosIntegration: IntegrationDefinition = {
       async execute(entrada, ctx) {
         const args = entrada as {
           minutos: number;
-          acao: "mensagem" | "atribuir" | "resolver";
+          acao: "mensagem" | "atribuir" | "resolver" | "pesquisa";
           texto?: string;
           atendente?: string;
           motivo: string;
@@ -230,7 +230,8 @@ export const prazosIntegration: IntegrationDefinition = {
         if (fora) return { registrado: false, erro: fora };
 
         const texto = args.texto?.trim() ?? "";
-        if (args.acao !== "resolver" && texto.length < 5) {
+        const semTexto = args.acao === "resolver" || args.acao === "pesquisa";
+        if (!semTexto && texto.length < 5) {
           return {
             registrado: false,
             erro: `Com acao "${args.acao}", escreva em texto o que o cliente vai ler no vencimento.`,
@@ -306,7 +307,9 @@ export const prazosIntegration: IntegrationDefinition = {
               ? { tipo: "atribuir", atendente: nomeDestino!, aviso: texto }
               : args.acao === "resolver"
                 ? { tipo: "resolver" }
-                : { tipo: "mensagem", texto },
+                : args.acao === "pesquisa"
+                  ? { tipo: "pesquisa" }
+                  : { tipo: "mensagem", texto },
           motivo: args.motivo,
         });
 
@@ -318,7 +321,9 @@ export const prazosIntegration: IntegrationDefinition = {
               ? `Se o cliente não responder até lá, ele recebe o aviso e a conversa passa para ${nomeDestino}. Se responder antes, nada acontece. Termine o seu turno normalmente.`
               : args.acao === "resolver"
                 ? "Se o cliente não responder até lá, a conversa é resolvida, sem nada para ele. Se responder antes, nada acontece. Termine o seu turno normalmente."
-                : "Se o cliente não responder até lá, ele recebe a mensagem de retomada, uma vez só. Se responder antes, nada acontece. Termine o seu turno normalmente.",
+                : args.acao === "pesquisa"
+                  ? "Se o cliente não responder até lá, o sistema manda a pesquisa de satisfação e a conversa é resolvida no fim dela; se a pesquisa não puder sair, a conversa só é resolvida. Se ele responder antes, nada acontece. Não fale da pesquisa ao cliente. Termine o seu turno normalmente."
+                  : "Se o cliente não responder até lá, ele recebe a mensagem de retomada, uma vez só. Se responder antes, nada acontece. Termine o seu turno normalmente.",
         };
       },
     },

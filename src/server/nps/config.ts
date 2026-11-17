@@ -50,6 +50,14 @@ export const npsConfigSchema = z.object({
   minutosAposNota: z.number().int().min(1).max(120).default(10),
   /** O mesmo telefone não recebe a pesquisa de novo dentro deste intervalo. 0 = sem limite. */
   horasEntrePesquisas: z.number().int().min(0).max(720).default(24),
+  /**
+   * A pesquisa no fim de um atendimento feito só pelo robô (pedido do Régis,
+   * 17/11/2026): quem decide QUANDO é o agente, registrando o prazo do cliente
+   * com acao "pesquisa" depois de concluir o pedido. Desligada, esse prazo só
+   * resolve a conversa, como a acao "resolver". Ligada por padrão porque nada
+   * muda até um prompt usar a ação.
+   */
+  automatica: z.boolean().default(true),
   textos: z
     .object({
       agradecimento: texto(TEXTOS_PADRAO.agradecimento),
@@ -83,6 +91,7 @@ const ROTULOS: Record<string, string> = {
   horasAteEncerrar: "Horas até encerrar sem nota (de 0,25 a 48)",
   minutosAposNota: "Minutos até encerrar depois da nota (inteiro, de 1 a 120)",
   horasEntrePesquisas: "Intervalo por telefone (inteiro, de 0 a 720 horas)",
+  automatica: "Pesquisa no fim dos atendimentos do robô",
   agradecimento: "Texto de agradecimento",
   convite: "Texto de convite",
   pergunta: "Texto da pergunta",
@@ -127,6 +136,9 @@ export function configDoFormulario(
     horasAteEncerrar: numero("horasAteEncerrar"),
     minutosAposNota: numero("minutosAposNota"),
     horasEntrePesquisas: numero("horasEntrePesquisas"),
+    // Formulário de versão antiga, sem o campo, não desliga nada: a caixa
+    // desmarcada só vale quando a tela diz que mostrou a caixa.
+    automatica: ler("automaticaNaTela") === "1" ? ler("automatica") === "on" : true,
     textos: {
       agradecimento: valor("textoAgradecimento"),
       convite: valor("textoConvite"),

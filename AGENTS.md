@@ -1343,6 +1343,39 @@ fixas e gravar um número — e levou 59 s e quatro idas ao modelo para gravar u
 - **A tela lista as últimas 15 pesquisas** com situação, nota e o rastro do que
   foi feito (`resultado`), sem telefone nem nome.
 
+#### No fim de um atendimento feito só pelo robô (17/11/2026)
+
+Pedido do Régis (task 17twvjx3ne5, conversa 10954): o Financeiro mandou a 2ª
+via, resolveu sozinho, e ninguém clicou no botão NPS — o atendimento automático
+terminava sem pesquisa. Decisão do usuário: **o agente marca o fim**.
+
+- **O gatilho é o prazo do cliente com `acao: "pesquisa"`** (`nps/automatica.ts`),
+  registrado pelo agente depois de concluir o pedido. Venceu com o cliente em
+  silêncio e ninguém da equipe na conversa (as travas de todo prazo do
+  cliente), grava a MESMA `PesquisaNps` do checkbox, `AGENDADA`, e o executor do
+  NPS faz o resto: três mensagens, lembrete, nota, resolver no fim.
+- ⚠ **Pesquisa que não pode sair vira "resolver"**: NPS desligado, a chave
+  "também no fim dos atendimentos do robô" desligada na aba NPS, caixa fora da
+  pesquisa, pesquisa já andando na conversa, ou o mesmo telefone dentro de
+  `horasEntrePesquisas`. O agente disse que o atendimento acabou: sem a regra, a
+  conversa da 2ª via ficaria aberta para sempre, o que é pior do que hoje. O
+  motivo vai na nota interna e no `resultado` do prazo.
+- **`PesquisaNps.agentId` diz de onde veio** (nulo = botão). A automática não
+  mexe no checkbox — escrever os atributos à toa faria o Chatwoot rodar de novo
+  as automações de "conversa atualizada" — e por isso também não exige o token
+  de leitura. A aba NPS mostra a origem, e `ver_pesquisas_de_satisfacao`, no
+  MCP, filtra por ela.
+- **A chave da tela nasce ligada**, ao contrário da doutrina de sempre, porque
+  sozinha ela não faz nada: o que liga de fato é o prompt de cada agente usar a
+  ação. Formulário antigo, sem o campo, não a desliga (`automaticaNaTela`).
+- ⚠ **Quanto esperar é decisão do prompt, e pesa**: a mensagem de agradecimento
+  diz que a conversa será encerrada, e "obrigado" do cliente depois da pergunta
+  não é nota — encerra a pesquisa sem nota. Na 10954 o "Obrigada" chegou 3 min
+  depois da 2ª via; prazo curto demais perde a nota de quem ia agradecer antes.
+- ⚠ **Não entra no contrato de métricas ainda**: as views de `metricas_v1` não
+  leem a coluna nova. Separar a nota dos atendimentos automáticos é acréscimo de
+  coluna na view, decisão de quem consome o banco central.
+
 ### Janela de 24 h do WhatsApp: a etiqueta de fechada é do sistema
 
 Integração `JANELA`, na aba Janela de Integrações, fora do registry como o NPS:
@@ -1874,6 +1907,63 @@ Regras puras e testadas em `auto-venda/regras.ts`; a rodada em
 - **Só abre o Conexa com reserva esperando pagamento**, e o ClickUp só com
   reserva paga. ClickUp ou Conexa desligado no painel vale para a rodada também.
 - Só reserva por enquanto: a venda de Endereço Fiscal (contrato) não passa por aqui.
+
+### Follow-up da reserva que o agente fez e não foi paga
+
+Integração `FOLLOWUP_RESERVA`, fora do registry como o NPS e a cobrança: sem
+modelo, sem ferramenta. Pedido do Régis (task 17twvjx3nec, conversa 11708): o
+agente de Salas reservou às 10h02 a sala das 17h, faturou R$ 70, e ninguém
+conferiu se o cliente vinha nem se pagou. Decisões do usuário (17/11/2026): **só
+a reserva NÃO paga recebe, e perto do horário**. Regras puras e testadas em
+`followup-reserva/regras.ts`; a rodada em `followup-reserva/conferir.ts`, no
+vigia, de 5 em 5 min; a tela na aba "Follow-up de reserva" de Integrações; a
+leitura no MCP em `ver_followups_de_reserva`.
+
+- **A reserva é a que um AGENTE criou numa conversa**, com a cobrança que ele
+  gerou — a mesma leitura das `ToolCall` da venda autônoma
+  (`reservasDosAgentes`). Reserva feita pela equipe é dela.
+- **Quando:** `horasAntesDoInicio` (3 h) antes do começo, mas nunca depois de
+  22 h da última mensagem do cliente — a janela de 24 h do WhatsApp oficial,
+  depois da qual mensagem livre não chega —, só entre `horaDeInicio` e
+  `horaDeFim` (8h–20h) e nunca antes de `minutosAposReserva` (30) depois de
+  reservar. Fora do horário, vale o último instante permitido ANTES (reserva das
+  8h recebe na véspera, até 19h59). Reserva marcada com semanas de antecedência
+  recebe ~22 h depois de reservar, a menos que o cliente escreva de novo: a
+  janela anda e o follow-up chega mais perto. Sem instante que caiba em tudo
+  (reservou às 21h para as 8h), não há follow-up.
+- **Sem reserva na hora, não abre nada**: a hora prevista sai só do banco (a
+  janela contada da criação). Só a reserva cuja hora chegou custa leitura no
+  Conexa e no Chatwoot, e a hora é refeita com a última mensagem de verdade.
+- **Pago é o que o Conexa diz, na hora**: reserva paga, do pacote de horas ou
+  cancelada, ou cobrança paga, não recebe nada. A equipe pode ter mudado o
+  horário: vale o do Conexa agora. Sem cobrança gerada pelo agente, não há link,
+  e não há follow-up.
+- ⚠ **Nunca por cima de uma pessoa**: conversa aberta com alguém da equipe dono
+  (ou dono de tipo desconhecido) não recebe mensagem — quem atende ganha uma
+  nota interna. Conversa resolvida não tem ninguém falando, então recebe, mesmo
+  com o dono que sobrou. Conversa em andamento (cliente esperando resposta, ou
+  alguém escreveu há menos de 10 min) espera a rodada seguinte; a 30 min do
+  começo, desiste com nota.
+- ⚠ **Uma mensagem por reserva**: `WebhookEvent` (provider `FOLLOWUP_RESERVA`,
+  `reserva:<id>`) nasce `reservado` ANTES do envio; recusa clara do Chatwoot
+  (4xx) vira `falhou`; rede, prazo ou 5xx depois de pedir vira `incerto`, e nada
+  é reenviado. A mensagem e a nota saem pelo ROBÔ da caixa (nota de `user`
+  contaria como "a equipe escreveu" para prazos e NPS).
+- **Nasce desligado e, ligado, começa em SOMBRA**: lê o Conexa e o Chatwoot de
+  verdade e registra o que faria numa chave própria (`sombra:reserva:<id>`), sem
+  mensagem nem nota. Passar para `ligado` não herda os ensaios.
+- **O texto é da tela**, com os marcadores `{nome}` (primeiro nome; sem nome, "Oi,
+  {nome}!" vira "Oi!"), `{sala}` (`[SEAWAY] - SALA DE REUNIÃO 01 - 10 pessoas` →
+  "Sala de Reunião 01 (Seaway)"), `{data}`, `{inicio}`, `{fim}`, `{valor}` e
+  `{link}`, que é obrigatório. Marcador desconhecido é recusado: sairia literal
+  ao cliente.
+- **A resposta do cliente segue o atendimento normal.** Conversa resolvida
+  reabre na porta (agente de entrada), com o follow-up no histórico; o agente de
+  Salas não cancela nem remarca, e o prompt dele já manda passar a uma pessoa.
+- ⚠ **Não provado contra o Chatwoot real**: mensagem do sistema numa conversa
+  RESOLVIDA só foi provada na caixa 31 (aviso de cobrança: chegou ao WhatsApp,
+  sem reabrir). Na 29, que é a das reservas, a primeira rodada ligada é quem
+  prova. A sombra prova a leitura.
 
 ### Renovação de contratos: a leva do mês e o retrato do valor
 
@@ -4110,6 +4200,10 @@ havia ninguém vendo o tempo passar.
   prazo do cliente: cliente escreveu, alguém da equipe escreveu (nota conta),
   pessoa dona ou outro agente dono — não resolve. É a segunda exceção ao "o
   robô nunca resolve", e só existe onde o prompt manda registrar.
+- **E também manda a pesquisa de satisfação** (`acao: "pesquisa"`, 17/11/2026):
+  no vencimento, a mesma pesquisa do botão NPS, que resolve a conversa no fim
+  dela; sem pesquisa possível, faz o mesmo que `resolver`. Ver "No fim de um
+  atendimento feito só pelo robô", na seção do NPS.
 - **Tarde demais, descarta.** Worker fora do ar faz o prazo ser visto atrasado;
   passou do próprio prazo (piso de 10 min) depois do vencimento, não age.
 - **Desligar é botão de parada.** Integração desligada, na tela global ou na do

@@ -184,3 +184,36 @@ export function juntarRastro(partes: (string | null | undefined)[]): string | nu
   if (!texto) return null;
   return texto.length > 2000 ? `…${texto.slice(-1999)}` : texto;
 }
+
+/**
+ * Por que a pesquisa automática NÃO deve sair, ou `null` se pode — o fim de um
+ * atendimento feito só pelo robô (prazo do cliente com acao "pesquisa", pedido
+ * do Régis em 17/11/2026, conversa 10954).
+ *
+ * As mesmas réguas do checkbox — integração ligada, caixa da pesquisa, uma
+ * pesquisa por conversa, o mesmo telefone uma vez a cada N horas — mais a chave
+ * própria da tela. Quem chama trata a recusa resolvendo a conversa, como a acao
+ * "resolver": o agente já disse que o atendimento acabou.
+ */
+export function motivoParaNaoIniciar(args: {
+  ligada: boolean;
+  config: Pick<NpsConfig, "automatica" | "caixas" | "horasEntrePesquisas">;
+  inboxId: number | null;
+  /** Há pesquisa desta conversa ainda com relógio (agendada, aguardando…). */
+  emAndamento: boolean;
+  /** Conversa da última pesquisa ENVIADA a este telefone dentro do intervalo. */
+  telefoneRecente: number | null;
+}): string | null {
+  if (!args.ligada) return "a pesquisa de satisfação está desligada";
+  if (!args.config.automatica) {
+    return "a pesquisa no fim dos atendimentos do robô está desligada na tela do NPS";
+  }
+  if (args.inboxId == null || !args.config.caixas.includes(args.inboxId)) {
+    return `a caixa ${args.inboxId ?? "desconhecida"} está fora da pesquisa`;
+  }
+  if (args.emAndamento) return "já há uma pesquisa em andamento nesta conversa";
+  if (args.telefoneRecente != null) {
+    return `este telefone já recebeu a pesquisa nas últimas ${args.config.horasEntrePesquisas} h (conversa #${args.telefoneRecente})`;
+  }
+  return null;
+}

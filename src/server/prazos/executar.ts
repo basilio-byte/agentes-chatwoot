@@ -12,6 +12,7 @@ import {
   entregarAoHumano,
   marcarResolvida,
 } from "@/server/integrations/chatwoot/resolucao";
+import { iniciarPesquisaAutomatica } from "@/server/nps/automatica";
 import { agendarAtendimento } from "@/server/queue/atendimento";
 import { passarTarefaDoCrm, type AtualizacaoDoCrm } from "./crm";
 import { decidirPrazo, type AcaoDoPrazo } from "./decisao";
@@ -44,6 +45,7 @@ const acaoSchema = z.discriminatedUnion("tipo", [
     aviso: z.string().min(1),
   }),
   z.object({ tipo: z.literal("resolver") }),
+  z.object({ tipo: z.literal("pesquisa") }),
 ]);
 
 type Prazo = NonNullable<Awaited<ReturnType<typeof db.prazoDeConversa.findFirst>>>;
@@ -198,6 +200,7 @@ async function tratar(
     case "executar":
       return agir(cliente, prazo, acao.data, {
         inboxId: aoVivo.inboxId ?? conversaNoBanco?.chatwootInboxId ?? null,
+        contactId: aoVivo.contactId ?? null,
       });
   }
 }
@@ -228,7 +231,7 @@ async function agir(
   cliente: ChatwootClient,
   prazo: Prazo,
   acao: AcaoDoPrazo,
-  conversa: { inboxId: number | null },
+  conversa: { inboxId: number | null; contactId: number | null },
 ): Promise<Fim> {
   const conversaId = prazo.chatwootConversationId;
 
@@ -387,22 +390,58 @@ async function agir(
     }
 
     case "resolver": {
-      // Nota antes: quem reabrir a conversa (o cliente escrevendo de novo, ou
-      // alguém da equipe) lê por que ela foi resolvida.
-      await notaInterna(
+      await resolverConversa(
         cliente,
         conversaId,
         `⏱️ Cliente sem responder há ${prazo.minutos} min: conversa resolvida pelo agente. Motivo: ${prazo.motivo}`,
       );
-      await cliente.alternarStatus(conversaId, "resolved");
-      // Sem esperar o webhook: o corte do histórico vale a partir de agora, e
-      // quando o cliente voltar o atendimento começa do zero, na porta.
-      try {
-        await marcarResolvida(conversaId);
-      } catch (erro) {
-        logger.warn({ conversa: conversaId, erro }, "prazo: resolvida no Chatwoot, mas não no banco");
-      }
       return { status: PrazoStatus.EXECUTADO, resultado: "conversa resolvida" };
+    }
+
+    case "pesquisa": {
+      // O telefone entra na régua "o mesmo telefone uma vez a cada N horas"
+      // ANTES de gravar a pesquisa: recusada ali, a conversa ainda é resolvida
+      // aqui, como o agente pediu. Sem ele, quem lê é o executor do NPS.
+      let telefone: string | null = null;
+      if (conversa.contactId != null) {
+        try {
+          telefone = (await cliente.obterContato(conversa.contactId)).telefone;
+        } catch (erro) {
+          logger.warn({ conversa: conversaId, erro }, "prazo: telefone do contato não lido para o NPS");
+        }
+      }
+
+      const inicio = await iniciarPesquisaAutomatica({
+        chatwootConversationId: conversaId,
+        inboxId: conversa.inboxId,
+        portaAgentId: prazo.portaAgentId,
+        agentId: prazo.agentId,
+        telefone,
+      });
+      if (inicio.iniciada) {
+        // A pesquisa sai alguns segundos depois (`ESPERA_DO_ENVIO_MS`): a nota
+        // chega antes das mensagens dela, e é escrita pelo robô — não conta como
+        // "a equipe escreveu" para o lembrete da pesquisa.
+        await notaInterna(
+          cliente,
+          conversaId,
+          [
+            `⏱️ Cliente sem responder há ${prazo.minutos} min depois de o agente concluir o atendimento: a pesquisa de satisfação sai agora, e a conversa é resolvida no fim dela.`,
+            `Motivo registrado pelo agente: ${prazo.motivo}`,
+          ].join("\n"),
+        );
+        return { status: PrazoStatus.EXECUTADO, resultado: "pesquisa de satisfação iniciada" };
+      }
+
+      await resolverConversa(
+        cliente,
+        conversaId,
+        `⏱️ Cliente sem responder há ${prazo.minutos} min: conversa resolvida pelo agente, sem pesquisa de satisfação (${inicio.motivo}). Motivo: ${prazo.motivo}`,
+      );
+      return {
+        status: PrazoStatus.EXECUTADO,
+        resultado: `conversa resolvida sem pesquisa: ${inicio.motivo}`,
+      };
     }
 
     case "atribuir": {
@@ -444,6 +483,23 @@ async function agir(
       );
       return { status: PrazoStatus.EXECUTADO, resultado: `atribuída a ${nome}` };
     }
+  }
+}
+
+/**
+ * Resolve a conversa no Chatwoot e no banco, com a nota antes: quem reabrir a
+ * conversa (o cliente escrevendo de novo, ou alguém da equipe) lê por que ela
+ * foi resolvida.
+ */
+async function resolverConversa(cliente: ChatwootClient, conversaId: number, nota: string) {
+  await notaInterna(cliente, conversaId, nota);
+  await cliente.alternarStatus(conversaId, "resolved");
+  // Sem esperar o webhook: o corte do histórico vale a partir de agora, e
+  // quando o cliente voltar o atendimento começa do zero, na porta.
+  try {
+    await marcarResolvida(conversaId);
+  } catch (erro) {
+    logger.warn({ conversa: conversaId, erro }, "prazo: resolvida no Chatwoot, mas não no banco");
   }
 }
 

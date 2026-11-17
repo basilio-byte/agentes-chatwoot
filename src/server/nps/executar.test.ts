@@ -352,6 +352,25 @@ describe("envio da pesquisa", () => {
     expect(linha().status).toBe("FALHOU");
     expect(chamadas).toEqual([]);
   });
+
+  it("pesquisa automática (fim do atendimento do robô): não mexe no checkbox nem exige o token de leitura", async () => {
+    // Nasceu do prazo do agente, não de checkbox: escrever os atributos à toa
+    // faria o Chatwoot rodar de novo as automações de "conversa atualizada".
+    linhas = [pesquisa({ agentId: "agente-financeiro", portaAgentId: "porta-1" })];
+    leituraConfigurada = false;
+    aoVivo = { status: "open", assigneeId: null, assigneeTipo: null, inboxId: 29, contactId: 555 };
+
+    await avancarPesquisa("p1", AGORA);
+
+    expect(atributos).toEqual([]);
+    expect(aoCliente()).toEqual([
+      TEXTOS_PADRAO.agradecimento,
+      TEXTOS_PADRAO.convite,
+      TEXTOS_PADRAO.pergunta,
+    ]);
+    expect(linha()).toMatchObject({ status: "AGUARDANDO" });
+    expect(linha().resultado).toBe("pesquisa enviada no fim do atendimento do robô");
+  });
 });
 
 describe("desligar", () => {

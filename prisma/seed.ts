@@ -39,6 +39,7 @@ const CATALOGO: Record<IntegrationProvider, string> = {
   [IntegrationProvider.BOAS_VINDAS]: "Template de boas-vindas (WhatsApp oficial)",
   [IntegrationProvider.ACOMPANHAMENTO]: "Acompanhamento de contratos",
   [IntegrationProvider.RENOVACAO]: "Renovação de contratos",
+  [IntegrationProvider.FOLLOWUP_RESERVA]: "Follow-up de reserva",
 };
 
 async function main() {

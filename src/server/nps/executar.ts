@@ -151,19 +151,25 @@ async function enviar(p: Pesquisa, config: NpsConfig, agora: number) {
 
   // Desmarca na hora, com o token de usuário e mesclando os atributos: o caminho
   // que o gatilho de checkbox já provou em produção.
-  const leitura = await clienteDeLeitura();
-  if (!leitura) {
-    await finalizar(
-      p,
-      FALHOU,
-      "sem token de leitura do Chatwoot — configure em Integrações → Chatwoot",
-    );
-    return;
-  }
-  try {
-    await leitura.cliente.definirAtributosDaConversa(conversa, { [config.checkbox]: null });
-  } catch (erro) {
-    avisos.push(`checkbox não desmarcado: ${mensagemDe(erro)}`);
+  //
+  // A pesquisa automática (fim de atendimento do robô, `automatica.ts`) não
+  // nasceu de checkbox nenhum: escrever os atributos à toa ainda faria o
+  // Chatwoot rodar de novo as automações de "conversa atualizada".
+  if (!p.agentId) {
+    const leitura = await clienteDeLeitura();
+    if (!leitura) {
+      await finalizar(
+        p,
+        FALHOU,
+        "sem token de leitura do Chatwoot — configure em Integrações → Chatwoot",
+      );
+      return;
+    }
+    try {
+      await leitura.cliente.definirAtributosDaConversa(conversa, { [config.checkbox]: null });
+    } catch (erro) {
+      avisos.push(`checkbox não desmarcado: ${mensagemDe(erro)}`);
+    }
   }
 
   // As mensagens saem pelo robô da caixa, como as do atendimento.
@@ -285,7 +291,10 @@ async function enviar(p: Pesquisa, config: NpsConfig, agora: number) {
 
   // A task do CRM não é tocada aqui: ela fica no status em que estiver
   // (decisão do usuário, 16/09/2026). A pesquisa só grava a nota, mais tarde.
-  await anotar(p, ["pesquisa enviada", ...avisos]);
+  await anotar(p, [
+    p.agentId ? "pesquisa enviada no fim do atendimento do robô" : "pesquisa enviada",
+    ...avisos,
+  ]);
 }
 
 /** Sem nota até a hora do lembrete: confere a conversa ao vivo e lembra, uma vez. */

@@ -674,6 +674,13 @@ enum IntegrationProvider {
   /// CLIENTE pelas automações do ClickUp, e avançar a fidelidade escreve no
   /// Conexa. Pedido do usuário em 16/11/2026.
   RENOVACAO
+  /// Follow-up da reserva que um AGENTE criou e faturou: perto do horário, se o
+  /// Conexa não mostrar o pagamento, o robô da caixa manda ao cliente a
+  /// confirmação com o link da cobrança (ou uma nota interna, se uma pessoa
+  /// estiver com a conversa). Função do sistema, sem modelo, FORA do registry.
+  /// Nasce desligado, e o primeiro degrau ao ligar é o modo sombra. Pedido do
+  /// Régis em 17/11/2026 (conversa 11708).
+  FOLLOWUP_RESERVA
 }
 
 enum IntegrationStatus {
@@ -1284,7 +1291,14 @@ model PesquisaNps {
   telefone               String?
   status                 PesquisaNpsStatus @default(AGENDADA)
   /// Instante da marcação do checkbox. Com a conversa, é a idempotência.
+  /// Na pesquisa automática, o instante em que o prazo do agente venceu.
   marcadaEm              DateTime
+  /// O agente que concluiu o atendimento, quando a pesquisa saiu sozinha no fim
+  /// de um atendimento do robô (prazo do cliente com acao "pesquisa", pedido do
+  /// Régis em 17/11/2026). Nulo = alguém da equipe marcou o checkbox. Sem chave
+  /// estrangeira, como `PrazoDeConversa.agentId`: arquivar ou excluir o agente
+  /// não pode apagar a nota que o cliente deu.
+  agentId                String?
   /// Quando a etapa atual deve rodar.
   venceEm                DateTime
   enviadaEm              DateTime?

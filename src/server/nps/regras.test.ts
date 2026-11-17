@@ -5,6 +5,7 @@ import {
   lerNota,
   mensagemDoCliente,
   motivoParaNaoAgir,
+  motivoParaNaoIniciar,
   notaSemCrm,
   quemEscreveuDepois,
   respostaDaNota,
@@ -199,5 +200,44 @@ describe("juntarRastro", () => {
     expect(rastro).toHaveLength(2000);
     expect(rastro.startsWith("…")).toBe(true);
     expect(rastro.endsWith(" · fim")).toBe(true);
+  });
+});
+
+describe("motivoParaNaoIniciar — a pesquisa no fim do atendimento do robô", () => {
+  const base = {
+    ligada: true,
+    config: { automatica: true, caixas: [29], horasEntrePesquisas: 24 },
+    inboxId: 29,
+    emAndamento: false,
+    telefoneRecente: null,
+  };
+
+  it("tudo certo: pode", () => {
+    expect(motivoParaNaoIniciar(base)).toBeNull();
+  });
+
+  it("NPS desligado", () => {
+    expect(motivoParaNaoIniciar({ ...base, ligada: false })).toMatch(/desligada/);
+  });
+
+  it("a chave da tela desligada", () => {
+    expect(
+      motivoParaNaoIniciar({ ...base, config: { ...base.config, automatica: false } }),
+    ).toMatch(/atendimentos do robô está desligada/);
+  });
+
+  it("caixa de fora, ou desconhecida", () => {
+    expect(motivoParaNaoIniciar({ ...base, inboxId: 31 })).toMatch(/caixa 31 está fora/);
+    expect(motivoParaNaoIniciar({ ...base, inboxId: null })).toMatch(/caixa desconhecida/);
+  });
+
+  it("já há pesquisa andando nesta conversa", () => {
+    expect(motivoParaNaoIniciar({ ...base, emAndamento: true })).toMatch(/em andamento/);
+  });
+
+  it("o mesmo telefone já recebeu dentro do intervalo", () => {
+    expect(motivoParaNaoIniciar({ ...base, telefoneRecente: 10954 })).toBe(
+      "este telefone já recebeu a pesquisa nas últimas 24 h (conversa #10954)",
+    );
   });
 });

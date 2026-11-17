@@ -33,6 +33,10 @@ import { CHAVE_DA_RODADA, ultimasPropagacoes } from "@/server/renovacao/propagar
 import { configDaRenovacao } from "@/server/renovacao/config";
 import { ultimasRodadasDa } from "@/server/renovacao/rodadas";
 import { ultimasRodadasDoAcompanhamento } from "@/server/acompanhamento/conferir";
+import { lerConfigFollowup } from "@/server/followup-reserva/config";
+import { candidatosAoFollowup } from "@/server/followup-reserva/conferir";
+import { PROVIDER_FOLLOWUP } from "@/server/followup-reserva/regras";
+import { lerConfigNps } from "@/server/nps/config";
 import {
   CHAVE_DA_RODADA as CHAVE_DA_RODADA_DA_RECONFERENCIA,
   ultimasReconferencias,
@@ -1327,6 +1331,143 @@ const verAcompanhamentoDeContratos = ferramenta({
 });
 
 /**
+ * As últimas pesquisas de satisfação, de onde veio cada uma (botão NPS ou fim de
+ * atendimento do robô) e o rastro do que a pesquisa fez. É por aqui que se
+ * confere a primeira pesquisa automática sem pedir print. Sem telefone: a tela
+ * também não o mostra.
+ */
+const verPesquisasDeSatisfacao = ferramenta({
+  name: "ver_pesquisas_de_satisfacao",
+  title: "Ver as pesquisas de satisfação (NPS)",
+  description:
+    "As últimas pesquisas de satisfação: conversa, situação (agendada, aguardando nota, respondida, expirada…), nota, de onde veio (o botão NPS, marcado por alguém da equipe, ou o fim de um atendimento feito só pelo robô, com o agente que concluiu) e o rastro do que a pesquisa fez. Diz também se o NPS e a pesquisa automática estão ligados.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    limite: z.number().int().min(1).max(50).optional().describe("Quantas devolver. Padrão 15."),
+    origem: z
+      .enum(["todas", "automatica", "botao"])
+      .optional()
+      .describe('"automatica": só as do fim de atendimento do robô; "botao": só as do checkbox. Padrão "todas".'),
+  }),
+  async executar({ limite, origem }) {
+    const [integracao, pesquisas] = await Promise.all([
+      db.integration.findUnique({
+        where: { provider: IntegrationProvider.NPS },
+        select: { enabled: true, config: true },
+      }),
+      db.pesquisaNps.findMany({
+        where:
+          origem === "automatica"
+            ? { agentId: { not: null } }
+            : origem === "botao"
+              ? { agentId: null }
+              : {},
+        orderBy: { criadaEm: "desc" },
+        take: limite ?? 15,
+        select: {
+          chatwootConversationId: true,
+          status: true,
+          nota: true,
+          marcadaEm: true,
+          enviadaEm: true,
+          agentId: true,
+          resultado: true,
+        },
+      }),
+    ]);
+    const ids = [...new Set(pesquisas.map((p) => p.agentId).filter((id): id is string => !!id))];
+    const agentes = new Map(
+      ids.length
+        ? (await db.agent.findMany({ where: { id: { in: ids } }, select: { id: true, key: true } })).map(
+            (a) => [a.id, a.key] as const,
+          )
+        : [],
+    );
+    const config = lerConfigNps(integracao?.config);
+
+    return responder({
+      ligada: integracao?.enabled ?? false,
+      automaticaLigada: config.automatica,
+      pesquisas: pesquisas.map((p) => ({
+        conversa: p.chatwootConversationId,
+        situacao: p.status,
+        nota: p.nota,
+        origem: p.agentId ? `fim do atendimento do robô (${agentes.get(p.agentId) ?? p.agentId})` : "botão NPS",
+        marcadaEm: quando(p.marcadaEm),
+        enviadaEm: p.enviadaEm ? quando(p.enviadaEm) : null,
+        rastro: p.resultado,
+      })),
+    });
+  },
+});
+
+/**
+ * O follow-up de reserva: o que já aconteceu com cada reserva e as próximas, com
+ * a hora prevista. A MESMA consulta da tela (`candidatosAoFollowup`), só banco.
+ */
+const verFollowupsDeReserva = ferramenta({
+  name: "ver_followups_de_reserva",
+  title: "Ver o follow-up de reserva",
+  description:
+    "O follow-up da reserva que um agente criou e não foi paga: se está ligado e em que modo (sombra só registra; ligado manda ao cliente), as próximas reservas futuras dos agentes com a hora prevista do follow-up, e o desfecho de cada reserva já conferida — mensagem enviada, ensaio da sombra, nota para quem atende, ou sem follow-up e por quê (paga, pacote, cancelada, janela do WhatsApp…).",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    limite: z.number().int().min(1).max(50).optional().describe("Quantos desfechos devolver. Padrão 20."),
+  }),
+  async executar({ limite }) {
+    const integracao = await db.integration.findUnique({
+      where: { provider: IntegrationProvider.FOLLOWUP_RESERVA },
+      select: { enabled: true, config: true },
+    });
+    const config = lerConfigFollowup(integracao?.config);
+    const [desfechos, proximos] = await Promise.all([
+      db.webhookEvent.findMany({
+        where: { provider: PROVIDER_FOLLOWUP },
+        orderBy: { createdAt: "desc" },
+        take: limite ?? 20,
+        select: { externalId: true, resultado: true, detalhe: true, createdAt: true, payload: true },
+      }),
+      integracao?.enabled ? candidatosAoFollowup(new Date(), config) : Promise.resolve([]),
+    ]);
+
+    return responder({
+      ligado: integracao?.enabled ?? false,
+      modo: config.modo,
+      aviso: !integracao?.enabled
+        ? "DESLIGADO: nenhuma reserva é conferida."
+        : config.modo === "sombra"
+          ? "Modo SOMBRA: a rodada confere e registra o que faria, sem mandar nada a ninguém."
+          : undefined,
+      regras: {
+        horasAntesDoInicio: config.horasAntesDoInicio,
+        minutosAposReserva: config.minutosAposReserva,
+        horarioDeEnvio: `${config.horaDeInicio}h às ${config.horaDeFim}h`,
+      },
+      proximos: proximos.map((c) => ({
+        reserva: c.reservaId,
+        conversa: c.chatwootConversationId,
+        cobranca: c.cobrancaId,
+        comeca: quando(c.inicio),
+        followUpPrevisto: c.previsto ? quando(c.previsto) : "sem horário possível",
+      })),
+      desfechos: desfechos.map((e) => {
+        const dados = (e.payload ?? {}) as { reservaId?: number; conversa?: number };
+        return {
+          reserva: dados.reservaId ?? null,
+          conversa: dados.conversa ?? null,
+          sombra: e.externalId.startsWith("sombra:"),
+          resultado: e.resultado,
+          detalhe: e.detalhe,
+          em: quando(e.createdAt),
+        };
+      }),
+    });
+  },
+});
+
+/**
  * A varredura que devolve à fila a task corrigida à mão.
  *
  * ⚠ Ela é a única rodada do vigia cujo trabalho normal é NÃO fazer nada: task
@@ -1409,4 +1550,6 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   verLevaDeRenovacao,
   verAcompanhamentoDeContratos,
   verReconferenciaDeContratos,
+  verPesquisasDeSatisfacao,
+  verFollowupsDeReserva,
 ];

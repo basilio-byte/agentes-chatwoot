@@ -101,3 +101,24 @@ describe("configDoFormulario", () => {
     expect("config" in lido && Object.keys(lido.config)).not.toContain("statusDeAnalise");
   });
 });
+
+describe("pesquisa no fim dos atendimentos do robô", () => {
+  it("ligada por padrão: nada muda até um prompt usar a acao \"pesquisa\"", () => {
+    expect(lerConfigNps({}).automatica).toBe(true);
+  });
+
+  it("a caixa desmarcada na tela desliga", () => {
+    const lido = configDoFormulario(formulario({ automaticaNaTela: "1" }));
+    expect("config" in lido && lido.config.automatica).toBe(false);
+  });
+
+  it("a caixa marcada liga", () => {
+    const lido = configDoFormulario(formulario({ automaticaNaTela: "1", automatica: "on" }));
+    expect("config" in lido && lido.config.automatica).toBe(true);
+  });
+
+  it("formulário de versão antiga, sem o campo, não desliga nada", () => {
+    const lido = configDoFormulario(formulario());
+    expect("config" in lido && lido.config.automatica).toBe(true);
+  });
+});

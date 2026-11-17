@@ -79,6 +79,10 @@ import { AcompanhamentoConfigForm } from "@/components/acompanhamento-config";
 import { configMateriaisSchema } from "@/server/integrations/materiais";
 import { GoogleConfigForm } from "@/components/google-config";
 import { NpsConfigForm } from "@/components/nps-config";
+import { FollowupConfigForm } from "@/components/followup-config";
+import { lerConfigFollowup } from "@/server/followup-reserva/config";
+import { candidatosAoFollowup } from "@/server/followup-reserva/conferir";
+import { PROVIDER_FOLLOWUP } from "@/server/followup-reserva/regras";
 import { lerConfigNps } from "@/server/nps/config";
 import { SITUACAO_DA_PESQUISA } from "@/server/nps/rotulos";
 import { JanelaConfigForm } from "@/components/janela-config";
@@ -104,6 +108,7 @@ import {
 import {
   BellRing,
   Building2,
+  CalendarCheck,
   Cake,
   Ear,
   FileSignature,
@@ -396,6 +401,7 @@ export default async function IntegracoesPage({
         nota: true,
         marcadaEm: true,
         resultado: true,
+        agentId: true,
       },
     }),
     // "reservado" é a nota a caminho (ou que falhou e será desfeita): não é rastro.
@@ -438,6 +444,39 @@ export default async function IntegracoesPage({
     modeloVisao: configOpenAI.modeloVisao,
     modeloDocumento: configOpenAI.modeloDocumento,
   });
+
+  // Follow-up de reserva: a config, o rastro de cada reserva e as próximas — só
+  // banco (`candidatosAoFollowup` não abre Conexa nem Chatwoot).
+  const followup = registros.find((i) => i.provider === IntegrationProvider.FOLLOWUP_RESERVA);
+  const configFollowup = lerConfigFollowup(followup?.config);
+  const [desfechosDoFollowup, proximosFollowups] = await Promise.all([
+    // "reservado" é a mensagem a caminho: não é rastro. Sem nome nem telefone.
+    db.webhookEvent.findMany({
+      where: { provider: PROVIDER_FOLLOWUP, resultado: { not: "reservado" } },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: { id: true, externalId: true, resultado: true, detalhe: true, createdAt: true, payload: true },
+    }),
+    followup?.enabled
+      ? candidatosAoFollowup(new Date(), configFollowup).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  // O agente que concluiu cada pesquisa automática, para a coluna "Origem".
+  // Só os da lista: são 15 pesquisas, e a maioria nasce do botão (sem agente).
+  const idsDeAgentesDoNps = [
+    ...new Set(pesquisasNps.map((p) => p.agentId).filter((id): id is string => !!id)),
+  ];
+  const nomeDoAgente = new Map(
+    idsDeAgentesDoNps.length
+      ? (
+          await db.agent.findMany({
+            where: { id: { in: idsDeAgentesDoNps } },
+            select: { id: true, name: true },
+          })
+        ).map((a) => [a.id, a.name] as const)
+      : [],
+  );
 
   const nomesDasEmpresas = new Map(
     categoriasFiscais.categorias.flatMap((c) => c.empresas.map((e) => [e.id, e.nome] as const)),
@@ -1161,6 +1200,16 @@ export default async function IntegracoesPage({
                       O mesmo telefone não recebe a pesquisa de novo em{" "}
                       {configNps.horasEntrePesquisas} h.
                     </li>
+                    <li>
+                      <strong>Atendimento feito só pelo robô</strong>: ninguém
+                      clica no botão, então quem marca o fim é o agente. Depois
+                      de concluir o pedido (2ª via enviada, reserva confirmada),
+                      ele registra o prazo do cliente com a ação “pesquisa”; se o
+                      cliente ficar em silêncio, a mesma pesquisa sai sozinha. Se
+                      ela não puder sair (telefone que respondeu há pouco, caixa
+                      de fora), a conversa só é resolvida.{" "}
+                      {configNps.automatica ? "Ligada." : "Desligada nesta tela."}
+                    </li>
                   </ul>
 
                   <Aviso tone="danger">
@@ -1185,6 +1234,7 @@ export default async function IntegracoesPage({
                       textoLembrete: configNps.textos.lembrete,
                       textoNotaBaixa: configNps.textos.notaBaixa,
                       textoNotaAlta: configNps.textos.notaAlta,
+                      automatica: configNps.automatica,
                     }}
                     habilitada={nps?.enabled ?? false}
                     somenteLeitura={!editavel}
@@ -1203,6 +1253,7 @@ export default async function IntegracoesPage({
                           <th>Situação</th>
                           <th>Nota</th>
                           <th>Marcada em</th>
+                          <th>Origem</th>
                           <th>O que aconteceu</th>
                         </>
                       }
@@ -1233,8 +1284,198 @@ export default async function IntegracoesPage({
                             <td className="whitespace-nowrap text-muted">
                               {formatarData(p.marcadaEm)}
                             </td>
+                            <td className="whitespace-nowrap text-xs text-muted">
+                              {p.agentId
+                                ? `fim do atendimento · ${nomeDoAgente.get(p.agentId) ?? "agente"}`
+                                : "botão NPS"}
+                            </td>
                             <td className="min-w-64 text-xs leading-relaxed text-muted">
                               {p.resultado ?? "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Tabela>
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            id: "followup",
+            rotulo: "Follow-up de reserva",
+            icone: <CalendarCheck size={14} aria-hidden />,
+            conteudo: (
+              <div className="space-y-6">
+                <Card className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">Follow-up de reserva</h2>
+                    {followup?.enabled ? (
+                      <Badge tone={configFollowup.modo === "ligado" ? "success" : "warning"}>
+                        {configFollowup.modo === "ligado" ? "ligado" : "ligado em sombra"}
+                      </Badge>
+                    ) : (
+                      <Badge>desligado</Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-muted">
+                    A reserva que um <strong>agente</strong> criou e faturou, e que
+                    ainda não aparece paga no Conexa, ganha uma mensagem ao cliente
+                    perto do horário, pelo robô da caixa: sala, dia, horário, valor
+                    e o link da cobrança, perguntando se está tudo certo.{" "}
+                    <strong>Sem modelo</strong>: o texto é o de baixo.
+                  </p>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-muted">
+                    <li>
+                      Sai {configFollowup.horasAntesDoInicio.toLocaleString("pt-BR")} h
+                      antes do início — antes disso, se a janela de 24 h do
+                      WhatsApp fosse fechar, porque depois dela a mensagem não
+                      chega —, só entre {configFollowup.horaDeInicio}h e{" "}
+                      {configFollowup.horaDeFim}h, e nunca antes de{" "}
+                      {configFollowup.minutosAposReserva} min depois de reservar.
+                    </li>
+                    <li>
+                      <strong>Paga, do pacote de horas ou cancelada não recebe nada.</strong>{" "}
+                      O Conexa é lido na hora do envio.
+                    </li>
+                    <li>
+                      Com uma pessoa da equipe dona da conversa, o cliente não
+                      recebe nada: quem atende ganha uma nota interna. Conversa em
+                      andamento espera a rodada seguinte.
+                    </li>
+                    <li>
+                      Uma mensagem por reserva. Se o cliente responder, o
+                      atendimento segue normalmente; reserva feita pela equipe não
+                      entra.
+                    </li>
+                  </ul>
+
+                  <FollowupConfigForm
+                    valores={{
+                      modo: configFollowup.modo,
+                      horasAntesDoInicio: String(configFollowup.horasAntesDoInicio).replace(".", ","),
+                      minutosAposReserva: String(configFollowup.minutosAposReserva),
+                      horaDeInicio: String(configFollowup.horaDeInicio),
+                      horaDeFim: String(configFollowup.horaDeFim),
+                      texto: configFollowup.texto,
+                    }}
+                    habilitada={followup?.enabled ?? false}
+                    somenteLeitura={!editavel}
+                  />
+                </Card>
+
+                {followup?.enabled ? (
+                  <Card className="space-y-3">
+                    <h2 className="text-sm font-semibold">Próximas reservas</h2>
+                    {proximosFollowups.length === 0 ? (
+                      <p className="text-sm text-muted">
+                        Nenhuma reserva futura de agente esperando o follow-up.
+                      </p>
+                    ) : (
+                      <Tabela
+                        cabecalho={
+                          <>
+                            <th>Reserva</th>
+                            <th>Conversa</th>
+                            <th>Começa</th>
+                            <th>Follow-up previsto</th>
+                          </>
+                        }
+                      >
+                        {proximosFollowups.map((c) => {
+                          const link = linkDaConversa(c.chatwootConversationId);
+                          return (
+                            <tr key={c.reservaId}>
+                              <td>{c.reservaId}</td>
+                              <td className="whitespace-nowrap">
+                                {link ? (
+                                  <a
+                                    href={link}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-accent hover:underline"
+                                  >
+                                    #{c.chatwootConversationId}
+                                  </a>
+                                ) : (
+                                  `#${c.chatwootConversationId}`
+                                )}
+                              </td>
+                              <td className="whitespace-nowrap text-muted">
+                                {formatarData(c.inicio)}
+                              </td>
+                              <td className="whitespace-nowrap text-muted">
+                                {c.previsto ? formatarData(c.previsto) : "sem horário possível"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </Tabela>
+                    )}
+                    <p className="text-xs text-muted">
+                      A previsão conta a janela do WhatsApp a partir da reserva; se
+                      o cliente escreveu depois, o follow-up pode sair mais perto
+                      do horário.
+                    </p>
+                  </Card>
+                ) : null}
+
+                <Card className="space-y-3">
+                  <h2 className="text-sm font-semibold">O que aconteceu com cada reserva</h2>
+                  {desfechosDoFollowup.length === 0 ? (
+                    <p className="text-sm text-muted">Nenhuma reserva conferida ainda.</p>
+                  ) : (
+                    <Tabela
+                      cabecalho={
+                        <>
+                          <th>Reserva</th>
+                          <th>Conversa</th>
+                          <th>Desfecho</th>
+                          <th>Quando</th>
+                          <th>Detalhe</th>
+                        </>
+                      }
+                    >
+                      {desfechosDoFollowup.map((e) => {
+                        const dados = (e.payload ?? {}) as { reservaId?: number; conversa?: number };
+                        const link = dados.conversa ? linkDaConversa(dados.conversa) : null;
+                        const tom =
+                          e.resultado === "enviado"
+                            ? "success"
+                            : e.resultado === "incerto" || e.resultado === "falhou"
+                              ? "danger"
+                              : e.resultado === "nota"
+                                ? "warning"
+                                : undefined;
+                        return (
+                          <tr key={e.id}>
+                            <td>{dados.reservaId ?? "—"}</td>
+                            <td className="whitespace-nowrap">
+                              {link ? (
+                                <a
+                                  href={link}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-accent hover:underline"
+                                >
+                                  #{dados.conversa}
+                                </a>
+                              ) : dados.conversa ? (
+                                `#${dados.conversa}`
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td>
+                              <Badge tone={tom}>{e.resultado ?? "—"}</Badge>
+                            </td>
+                            <td className="whitespace-nowrap text-muted">
+                              {formatarData(e.createdAt)}
+                            </td>
+                            <td className="min-w-64 text-xs leading-relaxed text-muted">
+                              {e.detalhe ?? "—"}
                             </td>
                           </tr>
                         );
