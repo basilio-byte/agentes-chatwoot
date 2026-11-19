@@ -55,3 +55,51 @@ export function marcarLimiteDeEtapas(limite: number): string {
 export function ehLimiteDeEtapas(registro: string | null | undefined): boolean {
   return typeof registro === "string" && registro.startsWith(MARCA_LIMITE_DE_ETAPAS);
 }
+
+/**
+ * A resposta que o modelo não terminou: cortada no teto de tokens de saída.
+ *
+ * Irmã da marca acima, e pelo mesmo motivo: era sucesso limpo. Em 19/11/2026 o
+ * agente de contratos de Sala Privativa voltou do proxy para o GLM quatro vezes
+ * na mesma task, e nas quatro o GLM gastou os 16.384 tokens de saída sem
+ * escrever nada nem pedir ferramenta. O runner só deixava um aviso no log, a
+ * execução ficava `SUCCESS` com resposta vazia, e a task parada sem comentário
+ * — quem testava via "sucesso" e nada acontecendo.
+ *
+ * ⚠ Continua `SUCCESS`, como a outra: relançar refaria o turno inteiro, e um
+ * turno que já chamou ferramenta não é idempotente.
+ */
+export const MARCA_RESPOSTA_CORTADA = "[resposta cortada no teto de tokens]";
+
+/**
+ * O texto gravado em `AgentRun.error`.
+ *
+ * Separa o caso grave (nada saiu: nem texto, nem ferramenta) do incômodo (o
+ * texto saiu pela metade). ⚠ Nada de "timeout", "aborted" e afins aqui: a view
+ * `metricas_v1.execucoes` classifica o erro por essas palavras, e isto não é
+ * falha de conexão.
+ */
+export function marcarRespostaCortada(teto: number, nadaSaiu: boolean): string {
+  return nadaSaiu
+    ? `${MARCA_RESPOSTA_CORTADA} o modelo gastou os ${teto} tokens de saída ` +
+        "permitidos sem escrever resposta nem pedir ferramenta: o que o prompt " +
+        "manda fazer a partir dali não foi feito. Se a execução voltou do proxy " +
+        "para a OpenRouter, foi o modelo da volta que não deu conta do turno."
+    : `${MARCA_RESPOSTA_CORTADA} a última resposta do modelo parou no teto de ` +
+        `${teto} tokens de saída e saiu incompleta.`;
+}
+
+export function ehRespostaCortada(registro: string | null | undefined): boolean {
+  return typeof registro === "string" && registro.startsWith(MARCA_RESPOSTA_CORTADA);
+}
+
+/**
+ * O selo de aviso da execução, ou nulo quando o registro é erro de verdade (ou
+ * não há registro). É o que a tela usa para pintar de aviso, e não de erro, as
+ * duas ressalvas de uma execução `SUCCESS`.
+ */
+export function ressalvaDaExecucao(registro: string | null | undefined): string | null {
+  if (ehLimiteDeEtapas(registro)) return "parou no limite de etapas";
+  if (ehRespostaCortada(registro)) return "resposta cortada no teto de tokens";
+  return null;
+}

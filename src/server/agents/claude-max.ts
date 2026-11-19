@@ -4,6 +4,7 @@ import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import {
   MODELO_PADRAO_CLAUDE_MAX,
+  PRAZO_DO_PROXY_COM_ALGUEM_ESPERANDO_MS,
   resolverMotor,
   type MotorDoAgente,
   type ResolucaoDoMotor,
@@ -31,11 +32,15 @@ export function claudeMaxConfigurado(): boolean {
 }
 
 /**
- * Teto de uma ida ao proxy. Uma resposta do Opus com raciocínio passa de um
- * minuto; acima disto é mais barato voltar para a OpenRouter do que esperar —
+ * Teto PADRÃO de uma ida ao proxy. Uma resposta do Opus com raciocínio passa de
+ * um minuto; acima disto é mais barato voltar para a OpenRouter do que esperar —
  * o vigia entrega a conversa a uma pessoa em 3 minutos de espera.
+ *
+ * ⚠ O runner manda o teto de cada chamada pela origem do turno
+ * (`prazoDaIdaAoProxy`, em `motor.ts`): em segundo plano, onde ninguém espera,
+ * ele é maior. Este valor só vale para quem chama o cliente sem dizer.
  */
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = PRAZO_DO_PROXY_COM_ALGUEM_ESPERANDO_MS;
 
 let cliente: OpenAI | null = null;
 

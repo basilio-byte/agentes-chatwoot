@@ -21,6 +21,7 @@ let respostasOpenRouter: Array<Resposta | Error>;
 let respostasProxy: Array<Resposta | Error>;
 let chamadasOpenRouter: Chamada[];
 let chamadasProxy: Chamada[];
+let prazosProxy: Array<number | undefined>;
 let atualizacoes: Record<string, unknown>[];
 let toolsExecutadas: string[];
 let toolCallsGravadas: Record<string, unknown>[];
@@ -112,8 +113,9 @@ vi.mock("./claude-max", () => ({
   getClaudeMax: () => ({
     chat: {
       completions: {
-        create: async (parametros: Chamada) => {
+        create: async (parametros: Chamada, opcoes?: { timeout?: number }) => {
           chamadasProxy.push(structuredClone(parametros));
+          prazosProxy.push(opcoes?.timeout);
           return proxima(respostasProxy);
         },
       },
@@ -180,6 +182,7 @@ beforeEach(() => {
   respostasProxy = [];
   chamadasOpenRouter = [];
   chamadasProxy = [];
+  prazosProxy = [];
   atualizacoes = [];
   toolsExecutadas = [];
   toolCallsGravadas = [];
@@ -411,5 +414,96 @@ describe("turno cortado no teto de etapas", () => {
     await rodar();
 
     expect(finalDaExecucao().error).toBeNull();
+  });
+});
+
+/** O modelo bateu no teto de saída: `finish_reason: "length"`. */
+const cortada = (texto: string): Resposta => ({
+  choices: [{ message: { role: "assistant", content: texto }, finish_reason: "length" }],
+  usage: { prompt_tokens: 70000, completion_tokens: 16384, cost: 0.02 },
+});
+
+/**
+ * 19/11/2026, agente de contratos de Sala Privativa: o proxy foi cortado, o
+ * turno voltou para o GLM, e o GLM gastou os 16.384 tokens de saída sem
+ * escrever nada nem pedir ferramenta. A execução ficava SUCCESS, vazia e sem
+ * erro — e a task, parada sem comentário. Quatro vezes no mesmo dia.
+ */
+describe("resposta cortada no teto de tokens", () => {
+  const rodarGatilho = () =>
+    executarAgente({ agentId: AGENTE.id, source: RunSource.TRIGGER, mensagem: "task em onboarding" });
+
+  it("⚠ nada saiu: fica SUCCESS — relançar não é seguro — mas com a ressalva escrita", async () => {
+    respostasOpenRouter = [cortada("")];
+
+    const r = await rodarGatilho();
+
+    expect(r.resposta).toBe("");
+    const fim = finalDaExecucao();
+    expect(fim.status).toBe("SUCCESS");
+    expect(fim.error).toContain("[resposta cortada no teto de tokens]");
+    expect(fim.error).toContain("sem escrever resposta nem pedir ferramenta");
+    // O teto que valeu, já cortado pelo limite do modelo (8000 < 16384).
+    expect(fim.error).toContain("8000");
+  });
+
+  it("⚠ o caso de 19/11: proxy cortado, volta vazia — as duas coisas ficam escritas", async () => {
+    plano = CLAUDE_MAX;
+    respostasProxy = [new Error("Request timed out.")];
+    respostasOpenRouter = [cortada("")];
+
+    await rodarGatilho();
+
+    const fim = finalDaExecucao();
+    expect(fim.motor).toBe("OPENROUTER");
+    expect(fim.voltaDoProxy).toContain("Request timed out.");
+    expect(fim.error).toContain("[resposta cortada no teto de tokens]");
+  });
+
+  it("texto pela metade é ressalva menor: diz que saiu incompleto", async () => {
+    respostasOpenRouter = [cortada("O contrato foi gera")];
+
+    const r = await rodarGatilho();
+
+    expect(r.resposta).toBe("O contrato foi gera");
+    expect(finalDaExecucao().error).toContain("saiu incompleta");
+  });
+
+  it("parar por ter terminado (stop) não é corte", async () => {
+    respostasOpenRouter = [final("Contrato gerado.", 0.001)];
+
+    await rodarGatilho();
+
+    expect(finalDaExecucao().error).toBeNull();
+  });
+});
+
+describe("prazo de cada ida ao proxy", () => {
+  it("⚠ no atendimento continua 120 s: o vigia entrega a conversa em 3 min", async () => {
+    plano = CLAUDE_MAX;
+    respostasProxy = [final("olá")];
+
+    await rodar();
+
+    expect(prazosProxy).toEqual([120_000]);
+  });
+
+  it("no gatilho, onde ninguém espera, o Claude tem tempo de terminar de pensar", async () => {
+    plano = CLAUDE_MAX;
+    respostasProxy = [pedeTool("task"), final("feito")];
+
+    await executarAgente({ agentId: AGENTE.id, source: RunSource.TRIGGER, mensagem: "task em onboarding" });
+
+    // Toda ida do turno leva o mesmo teto, não só a primeira.
+    expect(prazosProxy).toEqual([300_000, 300_000]);
+  });
+
+  it("a OpenRouter não muda: nenhum prazo novo vai para ela", async () => {
+    respostasOpenRouter = [final("olá", 0.001)];
+
+    await executarAgente({ agentId: AGENTE.id, source: RunSource.TRIGGER, mensagem: "x" });
+
+    expect(prazosProxy).toEqual([]);
+    expect(chamadasOpenRouter).toHaveLength(1);
   });
 });

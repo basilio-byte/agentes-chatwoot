@@ -11,6 +11,7 @@ import { estimarCusto, limitarSaida, type UsoTokens } from "./catalogo";
 import { getClaudeMax, planejarMotor } from "./claude-max";
 import {
   chamarComVolta,
+  prazoDaIdaAoProxy,
   PREFIXO_CLAUDE_MAX,
   semPedidosRepetidos,
   type Motor,
@@ -27,7 +28,7 @@ import {
   ehInterrupcao,
   limparPedido,
 } from "./cancelamento";
-import { marcarLimiteDeEtapas } from "@/lib/limite-de-etapas";
+import { marcarLimiteDeEtapas, marcarRespostaCortada } from "@/lib/limite-de-etapas";
 import { ehSemCredito, marcarSemCredito } from "./sem-credito";
 import { avisarTextoJunto } from "./texto-junto";
 import { RunSource, RunStatus } from "@/generated/prisma/enums";
@@ -188,6 +189,12 @@ export async function executarAgente(
   let motorUsado: Motor = plano.motor;
   let modeloUsado = modeloPlanejado;
   let voltaDoProxy: string | null = null;
+  // A última resposta parou no teto de saída? E saiu alguma coisa dela?
+  let cortada: { nadaSaiu: boolean } | null = null;
+  // Cortado pelo limite real do modelo: o padrão é alto para dar folga a um
+  // turno com transferências e tools, mas pedir mais do que o modelo aceita é
+  // 400 em vários provedores.
+  const tetoDeSaida = limitarSaida(agente.maxTokens, modelo);
 
   try {
     while (true) {
@@ -210,10 +217,7 @@ export async function executarAgente(
 
       const parametros: ParametrosOpenRouter = {
         model: agente.model,
-        // Cortado pelo limite real do modelo: o padrão é alto para dar folga a
-        // um turno com transferências e tools, mas pedir mais do que o modelo
-        // aceita é 400 em vários provedores.
-        max_tokens: limitarSaida(agente.maxTokens, modelo),
+        max_tokens: tetoDeSaida,
         messages,
         ...(enviarFerramentas ? { tools: ferramentas } : {}),
         // Faz a OpenRouter devolver o custo real da chamada em `usage.cost`.
@@ -259,9 +263,14 @@ export async function executarAgente(
           ? {
               motor: "CLAUDE_MAX",
               modelo: modeloPlanejado,
+              // O teto depende de quem espera: 120 s no atendimento, mais em
+              // segundo plano — ver `prazoDaIdaAoProxy`.
               chamar: () =>
                 comParadaVigiada(run.id, (signal) =>
-                  getClaudeMax().chat.completions.create(parametrosDoProxy, { signal }),
+                  getClaudeMax().chat.completions.create(parametrosDoProxy, {
+                    signal,
+                    timeout: prazoDaIdaAoProxy(entrada.source),
+                  }),
                 ),
             }
           : null,
@@ -315,8 +324,11 @@ export async function executarAgente(
           : (escolha.message.tool_calls ?? []);
       if (pedidos.length === 0) {
         if (escolha.finish_reason === "length") {
+          // Só o log não bastava: a execução ficava SUCCESS e muda, e ninguém
+          // lê o log. Vira ressalva em `error` — ver `limite-de-etapas.ts`.
+          cortada = { nadaSaiu: !texto };
           logger.warn(
-            { runId: run.id, maxTokens: agente.maxTokens },
+            { runId: run.id, maxTokens: tetoDeSaida, nadaSaiu: !texto },
             "resposta truncada por max_tokens",
           );
         }
@@ -380,9 +392,12 @@ export async function executarAgente(
         // escrita, e não `ERROR`: o erro faria o BullMQ reexecutar o turno
         // inteiro, que não é idempotente — segundo documento na ZapSign,
         // segundo contrato no Conexa. Ver `limite-de-etapas.ts`.
+        // A resposta cortada no teto de saída segue a mesma doutrina.
         error: atingiuLimite
           ? marcarLimiteDeEtapas(agente.maxToolIterations)
-          : null,
+          : cortada
+            ? marcarRespostaCortada(tetoDeSaida, cortada.nadaSaiu)
+            : null,
         output: resposta,
         messages: JSON.parse(JSON.stringify(messages)),
         ...uso,

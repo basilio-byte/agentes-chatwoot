@@ -1,5 +1,49 @@
 import { describe, expect, it } from "vitest";
-import { motivoDaVolta, resolverMotor, semPedidosRepetidos, type MotorDoAgente } from "./motor";
+import { RunSource } from "@/generated/prisma/enums";
+import {
+  motivoDaVolta,
+  prazoDaIdaAoProxy,
+  PRAZO_DO_PROXY_COM_ALGUEM_ESPERANDO_MS,
+  PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS,
+  resolverMotor,
+  semPedidosRepetidos,
+  type MotorDoAgente,
+} from "./motor";
+
+/**
+ * 19/11/2026: o agente de contratos de Sala Privativa, acionado pelo ClickUp,
+ * foi cortado em 4 de 5 tentativas porque o Claude raciocinava mais de 2 min no
+ * 1º passo. Onde ninguém espera, o teto do atendimento não faz sentido.
+ */
+describe("prazoDaIdaAoProxy", () => {
+  it("⚠ com alguém esperando, continua o teto de 120 s (o vigia escala em 3 min)", () => {
+    expect(PRAZO_DO_PROXY_COM_ALGUEM_ESPERANDO_MS).toBe(120_000);
+    for (const origem of [RunSource.CHATWOOT, RunSource.PLAYGROUND, RunSource.MESA, RunSource.INTERNO]) {
+      expect(prazoDaIdaAoProxy(origem)).toBe(120_000);
+    }
+  });
+
+  it("em segundo plano, o Claude tem tempo de terminar de pensar", () => {
+    for (const origem of [
+      RunSource.TRIGGER,
+      RunSource.SCHEDULE,
+      RunSource.CONVERSA_ENCERRADA,
+      RunSource.CONVERSA_MARCADA,
+      RunSource.CONVERSA_PARADA,
+    ]) {
+      expect(prazoDaIdaAoProxy(origem)).toBe(PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS);
+    }
+    // Acima dos ~125 s medidos no 1º passo, abaixo dos 10 min do próprio proxy.
+    expect(PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS).toBeGreaterThan(180_000);
+    expect(PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS).toBeLessThan(600_000);
+  });
+
+  it("toda origem tem prazo (origem nova não cai em undefined)", () => {
+    for (const origem of Object.values(RunSource)) {
+      expect(prazoDaIdaAoProxy(origem)).toBeGreaterThan(0);
+    }
+  });
+});
 
 const resolver = (
   motorDoAgente: MotorDoAgente,

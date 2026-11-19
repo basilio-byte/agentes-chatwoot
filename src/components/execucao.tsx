@@ -12,7 +12,7 @@ import {
   type ToolCallDetalhada,
 } from "@/server/actions/execucoes";
 import type { RunSource } from "@/generated/prisma/enums";
-import { ehLimiteDeEtapas } from "@/lib/limite-de-etapas";
+import { ressalvaDaExecucao } from "@/lib/limite-de-etapas";
 import { ROTULO_DA_FONTE } from "@/lib/origens";
 import { Aviso, Badge, Button, Card, Meta } from "@/components/ui";
 import {
@@ -440,9 +440,10 @@ export function Execucao({
 
   const erroDeExecucao = resumo.status === "ERROR";
   const rodando = resumo.status === "RUNNING";
-  // Parar no teto de etapas é ressalva, não falha: a execução é `SUCCESS` de
-  // propósito (relançar duplicaria contrato), então quem avisa é o selo.
-  const paradoNoLimite = ehLimiteDeEtapas(resumo.error);
+  // Parar no teto de etapas, ou ter a resposta cortada no teto de tokens, é
+  // ressalva, não falha: a execução é `SUCCESS` de propósito (relançar
+  // duplicaria contrato), então quem avisa é o selo.
+  const ressalva = ressalvaDaExecucao(resumo.error);
   // Interrompida não é erro nem sucesso: foi decisão de alguém, e pintar de
   // vermelho mandaria procurar defeito onde não há.
   const tomDoStatus = erroDeExecucao
@@ -486,9 +487,9 @@ export function Execucao({
           {/* Sem este selo, o turno cortado no teto de etapas é visualmente
               indistinguível de um que terminou — e foi assim que as etiquetas
               que ninguém marcou pareceram desobediência do modelo. */}
-          {paradoNoLimite ? (
+          {ressalva ? (
             <Badge tone="warning" title={resumo.error ?? undefined}>
-              parou no limite de etapas
+              {ressalva}
             </Badge>
           ) : null}
           <span title="Quando rodou">{formatarData(resumo.createdAt)}</span>
@@ -558,7 +559,7 @@ export function Execucao({
             <p
               className={cn(
                 "line-clamp-2 text-sm",
-                paradoNoLimite ? "text-warning" : "text-danger",
+                ressalva ? "text-warning" : "text-danger",
               )}
             >
               {resumo.error}

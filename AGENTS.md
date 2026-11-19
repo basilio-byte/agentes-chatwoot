@@ -103,6 +103,21 @@ dois motores em `runner.test.ts`.
   da OpenRouter. O SDK repetiria 429 e 5xx sozinho, com espera, e a volta já
   é a nova tentativa; acima de 2 minutos, o vigia (3 min) está quase entregando
   a conversa a uma pessoa.
+  ⚠ **Os 120 s valem só onde alguém espera** (`prazoDaIdaAoProxy`, em
+  `motor.ts`, desde 19/11/2026): atendimento, playground, mesa e chamada
+  interna. Em segundo plano (gatilho, agendamento e as três origens de conversa
+  encerrada, marcada e parada) o teto é de **300 s**. O agente de contratos de
+  Sala Privativa, acionado pelo ClickUp, foi cortado em 4 de 5 tentativas na
+  mesma task: o Claude passa o 1º passo inteiro raciocinando sobre o roteiro e o
+  pacote da task (~156 mil caracteres) antes da primeira ferramenta — 103 s na
+  tentativa que passou, mais de 119 s nas outras. Cortado, o turno voltava para
+  o GLM, que gastava os 16.384 tokens de saída sem escrever nada, e a task
+  ficava parada sem comentário. O app chega ao proxy pela rede interna do Docker
+  (sem Traefik no caminho) e o próprio proxy só corta em 10 min.
+  ⚠ **E a resposta cortada no teto de saída deixou de ser sucesso limpo**: a
+  execução continua `SUCCESS`, como a do limite de etapas, mas leva a marca
+  `[resposta cortada no teto de tokens]` em `AgentRun.error` e o selo em
+  Execuções (`lib/limite-de-etapas.ts`). Antes, só ia um aviso para o log.
 - **Com o motor na OpenRouter, a chamada sai IGUAL**: mesmos campos, mesmo
   cliente, mesma conta de custo — `runner.test.ts` trava os campos um a um. No
   proxy vai o protocolo puro (`provider`, `usage` e `reasoning` ele ignoraria) e
@@ -2625,7 +2640,9 @@ O prompt não cabia em 12 nem no caminho feliz: o mínimo são 10.
   natural de quem leu foi que o modelo tinha ignorado o prompt.
   Hoje `AgentRun.error` recebe a marca `[parou no limite de etapas]`
   (`lib/limite-de-etapas.ts`), o cartão de Execuções ganha o selo em tom de
-  aviso, e `listar_execucoes` a devolve.
+  aviso, e `listar_execucoes` a devolve. A irmã dela,
+  `[resposta cortada no teto de tokens]`, nasceu do mesmo silêncio em
+  19/11/2026 — ver "Motor alternativo".
   ⚠ **A execução continua `SUCCESS`, de propósito**: virar `ERROR` faria o
   BullMQ reexecutar o turno inteiro, que não é idempotente — segundo documento
   na ZapSign e **segundo contrato no Conexa**, que é segunda cobrança

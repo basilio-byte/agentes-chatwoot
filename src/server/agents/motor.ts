@@ -1,3 +1,4 @@
+import type { RunSource } from "@/generated/prisma/enums";
 import { ehInterrupcao } from "./cancelamento";
 
 /**
@@ -27,6 +28,47 @@ export type MotorDoAgente = "PADRAO" | Motor;
 export const PREFIXO_CLAUDE_MAX = "claude-max/";
 
 export const MODELO_PADRAO_CLAUDE_MAX = "claude-sonnet-5";
+
+/** Teto de uma ida ao proxy quando alguém espera a resposta. */
+export const PRAZO_DO_PROXY_COM_ALGUEM_ESPERANDO_MS = 120_000;
+/** Teto de uma ida ao proxy em segundo plano: ninguém do outro lado. */
+export const PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS = 300_000;
+
+/**
+ * Quanto uma ida ao proxy pode durar antes de voltar para a OpenRouter.
+ *
+ * Os 120 s nasceram do atendimento: o vigia entrega a conversa a uma pessoa em
+ * 3 minutos de espera, e acima de 2 minutos é melhor responder pela OpenRouter
+ * do que deixar o cliente esperando. Isso NÃO vale onde ninguém espera.
+ *
+ * ⚠ Em 19/11/2026 o agente de contratos de Sala Privativa (gatilho do ClickUp)
+ * foi cortado em 4 de 5 tentativas na mesma task: o Claude passa o 1º passo
+ * inteiro raciocinando sobre o roteiro e o pacote da task (~156 mil caracteres)
+ * antes de chamar a primeira ferramenta — 103 s na tentativa que passou, mais
+ * de 119 s nas outras. Cortado, o turno voltava para o GLM, que gastava o teto
+ * de saída sem escrever nada, e a task ficava parada sem comentário. Lá o
+ * relógio não protege ninguém: esperar o Claude terminar é o certo.
+ *
+ * `switch` sem `default`, como `tipoDeTurno`: origem nova quebra o typecheck.
+ */
+export function prazoDaIdaAoProxy(origem: RunSource): number {
+  switch (origem) {
+    // Cliente no WhatsApp, ou uma pessoa olhando a tela (playground e mesa).
+    case "CHATWOOT":
+    case "PLAYGROUND":
+    case "MESA":
+    // Roda DENTRO do turno de quem a chamou, quase sempre um atendimento: o
+    // relógio do vigia conta o turno inteiro, inclusive esta espera.
+    case "INTERNO":
+      return PRAZO_DO_PROXY_COM_ALGUEM_ESPERANDO_MS;
+    case "TRIGGER":
+    case "SCHEDULE":
+    case "CONVERSA_ENCERRADA":
+    case "CONVERSA_MARCADA":
+    case "CONVERSA_PARADA":
+      return PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS;
+  }
+}
 
 export type ResolucaoDoMotor = {
   motor: Motor;
