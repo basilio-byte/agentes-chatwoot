@@ -1,3 +1,4 @@
+import { APIConnectionError, APIConnectionTimeoutError } from "openai";
 import { describe, expect, it } from "vitest";
 import { RunSource } from "@/generated/prisma/enums";
 import {
@@ -33,9 +34,12 @@ describe("prazoDaIdaAoProxy", () => {
     ]) {
       expect(prazoDaIdaAoProxy(origem)).toBe(PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS);
     }
-    // Acima dos ~125 s medidos no 1º passo, abaixo dos 10 min do próprio proxy.
+    // Acima dos ~125 s medidos no 1º passo. ⚠ E NÃO acima de 300 s: o fetch do
+    // Node (undici) desiste de uma resposta sem cabeçalho em 300 s
+    // (headersTimeout), antes do nosso teto e dos 10 min do proxy. Subir isto
+    // sem trocar o dispatcher do cliente não daria um segundo a mais.
     expect(PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS).toBeGreaterThan(180_000);
-    expect(PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS).toBeLessThan(600_000);
+    expect(PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS).toBeLessThanOrEqual(300_000);
   });
 
   it("toda origem tem prazo (origem nova não cai em undefined)", () => {
@@ -97,13 +101,20 @@ describe("motivoDaVolta", () => {
     expect(motivoDaVolta(erro(504))).toContain("tempo do turno");
   });
 
-  it("rede e tempo esgotado pelo nome do erro do SDK", () => {
+  it("⚠ rede e tempo esgotado pelo erro DE VERDADE do SDK, que não tem `name`", () => {
+    // Era assim que a volta de 19/11 chegou: classe certa, `name` = "Error".
+    const tempo = new APIConnectionTimeoutError();
+    expect(tempo.name).not.toBe("APIConnectionTimeoutError");
+    expect(motivoDaVolta(tempo)).toBe("o proxy demorou demais para responder");
+    expect(motivoDaVolta(new APIConnectionError({ message: undefined }))).toBe("não consegui falar com o proxy");
+  });
+
+  it("o nome e a mensagem padrão do SDK ficam de reserva", () => {
     expect(motivoDaVolta(Object.assign(new Error("x"), { name: "APIConnectionTimeoutError" }))).toBe(
       "o proxy demorou demais para responder",
     );
-    expect(motivoDaVolta(Object.assign(new Error("x"), { name: "APIConnectionError" }))).toBe(
-      "não consegui falar com o proxy",
-    );
+    expect(motivoDaVolta(new Error("Request timed out."))).toBe("o proxy demorou demais para responder");
+    expect(motivoDaVolta(new Error("Connection error."))).toBe("não consegui falar com o proxy");
   });
 
   it("o resto sai com o status e a mensagem, cortada", () => {

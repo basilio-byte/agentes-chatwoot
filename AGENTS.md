@@ -113,7 +113,15 @@ dois motores em `runner.test.ts`.
   tentativa que passou, mais de 119 s nas outras. Cortado, o turno voltava para
   o GLM, que gastava os 16.384 tokens de saída sem escrever nada, e a task
   ficava parada sem comentário. O app chega ao proxy pela rede interna do Docker
-  (sem Traefik no caminho) e o próprio proxy só corta em 10 min.
+  (sem Traefik no caminho), e o proxy só corta em 10 min.
+  ⚠ **300 s é o máximo sem mexer no cliente:** o `fetch` do Node (undici)
+  desiste de uma resposta sem cabeçalho em 300 s (`headersTimeout`), e o proxy,
+  sem streaming, só manda o cabeçalho com a resposta pronta. Subir a constante
+  não daria um segundo a mais; seria preciso um dispatcher próprio no cliente.
+  ⚠ **O motivo da volta por tempo nunca era traduzido:** `motivoDaVolta`
+  comparava `error.name`, que o SDK 7 não define. Desde 19/11/2026 compara a
+  classe (`APIConnectionTimeoutError`, `APIConnectionError`), e Execuções diz "o
+  proxy demorou demais para responder" em vez de "Request timed out.".
   ⚠ **E a resposta cortada no teto de saída deixou de ser sucesso limpo**: a
   execução continua `SUCCESS`, como a do limite de etapas, mas leva a marca
   `[resposta cortada no teto de tokens]` em `AgentRun.error` e o selo em
@@ -1205,6 +1213,16 @@ sugestão.
   falam com o cliente), e o texto final não é enviado a ninguém. Sem dono, ou
   com o nosso robô como dono, não roda — para esse caso já existem o
   atendimento e o vigia.
+  ⚠⚠ **No código, isso NÃO acontece hoje** (achado pela revisão de 19/11/2026,
+  defeito desde 17/09): em `prepararContexto` (`agents/contexto.ts`),
+  `emSegundoPlano` vale para `interno`, `encerrada` e `marcada`, e deixa
+  `parada` de fora. O turno da conversa parada recebe as ferramentas de canal e
+  o roster, e `atribuir_para_atendente`, `atribuir_por_rodizio` e
+  `transferir_para_humano` mandam o `aviso` ao cliente sem conferir o dono.
+  Quem segura hoje é só a allowlist do `assistente-vendedor` (no Chatwoot,
+  apenas `registrar_nota_interna` e `ver_dados_do_contato`). Liberar "todas"
+  para ele, ou ligar o gatilho noutro agente, abre o vazamento. O conserto é
+  incluir `parada` em `emSegundoPlano`, e ainda não foi aplicado.
 - ⚠ **O tempo parado conta pela última mensagem PÚBLICA, nunca pela última
   atividade.** A nota que este agente escreve é `message_type: 1` com
   `private: true`, e vira o `last_non_activity_message` da conversa: pelo outro

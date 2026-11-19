@@ -1,3 +1,4 @@
+import { APIConnectionError, APIConnectionTimeoutError } from "openai";
 import type { RunSource } from "@/generated/prisma/enums";
 import { ehInterrupcao } from "./cancelamento";
 
@@ -31,7 +32,14 @@ export const MODELO_PADRAO_CLAUDE_MAX = "claude-sonnet-5";
 
 /** Teto de uma ida ao proxy quando alguém espera a resposta. */
 export const PRAZO_DO_PROXY_COM_ALGUEM_ESPERANDO_MS = 120_000;
-/** Teto de uma ida ao proxy em segundo plano: ninguém do outro lado. */
+/**
+ * Teto de uma ida ao proxy em segundo plano: ninguém do outro lado.
+ *
+ * ⚠ 300 s é também o MÁXIMO que dá sem mexer no cliente: o fetch do Node
+ * (undici) desiste de uma resposta sem cabeçalho em 300 s (`headersTimeout`), e
+ * o proxy, sem streaming, só manda o cabeçalho com a resposta pronta. Para ir
+ * além, o cliente do proxy precisaria de um dispatcher próprio.
+ */
 export const PRAZO_DO_PROXY_EM_SEGUNDO_PLANO_MS = 300_000;
 
 /**
@@ -137,8 +145,21 @@ export function motivoDaVolta(erro: unknown): string {
   const status = typeof e.status === "number" ? e.status : null;
   const nome = typeof e.name === "string" ? e.name : "";
 
-  if (nome === "APIConnectionTimeoutError") return "o proxy demorou demais para responder";
-  if (nome === "APIConnectionError") return "não consegui falar com o proxy";
+  // ⚠ Pela CLASSE, não pelo nome: o SDK 7 não define `name` nos erros dele (fica
+  // "Error"), e até 19/11/2026 estas duas linhas nunca dispararam — as voltas
+  // por tempo saíam como "o proxy falhou: Request timed out.". O nome e a
+  // mensagem padrão do SDK ficam de reserva. O tempo esgotado vem antes porque
+  // ele É um erro de conexão (subclasse).
+  if (
+    erro instanceof APIConnectionTimeoutError ||
+    nome === "APIConnectionTimeoutError" ||
+    e.message === "Request timed out."
+  ) {
+    return "o proxy demorou demais para responder";
+  }
+  if (erro instanceof APIConnectionError || nome === "APIConnectionError" || e.message === "Connection error.") {
+    return "não consegui falar com o proxy";
+  }
 
   const porStatus: Record<number, string> = {
     401: "o login da assinatura no proxy está vencido ou foi recusado (401)",

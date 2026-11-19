@@ -22,6 +22,7 @@ let respostasProxy: Array<Resposta | Error>;
 let chamadasOpenRouter: Chamada[];
 let chamadasProxy: Chamada[];
 let prazosProxy: Array<number | undefined>;
+let opcoesOpenRouter: Array<Record<string, unknown>>;
 let atualizacoes: Record<string, unknown>[];
 let toolsExecutadas: string[];
 let toolCallsGravadas: Record<string, unknown>[];
@@ -98,8 +99,11 @@ vi.mock("./openrouter", () => ({
     return {
       chat: {
         completions: {
-          create: async (parametros: Chamada) => {
+          create: async (parametros: Chamada, opcoes?: Record<string, unknown>) => {
             chamadasOpenRouter.push(structuredClone(parametros));
+            // Só as chaves: o `signal` não é clonável, e o que se confere é
+            // quais opções a chamada levou.
+            opcoesOpenRouter.push(Object.fromEntries(Object.keys(opcoes ?? {}).map((k) => [k, true])));
             return proxima(respostasOpenRouter);
           },
         },
@@ -183,6 +187,7 @@ beforeEach(() => {
   chamadasOpenRouter = [];
   chamadasProxy = [];
   prazosProxy = [];
+  opcoesOpenRouter = [];
   atualizacoes = [];
   toolsExecutadas = [];
   toolCallsGravadas = [];
@@ -456,7 +461,8 @@ describe("resposta cortada no teto de tokens", () => {
 
     const fim = finalDaExecucao();
     expect(fim.motor).toBe("OPENROUTER");
-    expect(fim.voltaDoProxy).toContain("Request timed out.");
+    // Traduzido: em 19/11 saiu cru ("o proxy falhou: Request timed out.").
+    expect(fim.voltaDoProxy).toBe("o proxy demorou demais para responder");
     expect(fim.error).toContain("[resposta cortada no teto de tokens]");
   });
 
@@ -498,12 +504,16 @@ describe("prazo de cada ida ao proxy", () => {
     expect(prazosProxy).toEqual([300_000, 300_000]);
   });
 
-  it("a OpenRouter não muda: nenhum prazo novo vai para ela", async () => {
-    respostasOpenRouter = [final("olá", 0.001)];
+  it("⚠ a OpenRouter não muda: a chamada a ela continua só com o `signal`", async () => {
+    // Nem direto, nem na volta do proxy: o teto dela é o do cliente dela, com as
+    // repetições do SDK. Um `timeout` aqui cortaria a OpenRouter também.
+    plano = CLAUDE_MAX;
+    respostasProxy = [new Error("Request timed out.")];
+    respostasOpenRouter = [pedeTool("task"), final("feito", 0.001)];
 
     await executarAgente({ agentId: AGENTE.id, source: RunSource.TRIGGER, mensagem: "x" });
 
-    expect(prazosProxy).toEqual([]);
-    expect(chamadasOpenRouter).toHaveLength(1);
+    expect(prazosProxy).toEqual([300_000]);
+    expect(opcoesOpenRouter).toEqual([{ signal: true }, { signal: true }]);
   });
 });

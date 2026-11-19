@@ -181,6 +181,9 @@ function Detalhe({
   linkDaConversa: string | null;
 }) {
   const [verTranscricao, setVerTranscricao] = useState(false);
+  // Ressalva de uma execução SUCCESS (teto de etapas, resposta cortada): aviso,
+  // não erro — e a frase da volta do proxy não pode dizer que deu tudo certo.
+  const ressalva = ressalvaDaExecucao(detalhe.error);
 
   const numeros: [string, React.ReactNode][] = [
     ["Modelo", resumo.model ?? "não registrado"],
@@ -212,7 +215,10 @@ function Detalhe({
       {resumo.voltaDoProxy ? (
         <Aviso tone="warning">
           O proxy Claude MAX falhou — {resumo.voltaDoProxy} — e o turno seguiu
-          na OpenRouter, com o modelo acima — a resposta saiu normalmente.
+          na OpenRouter, com o modelo acima
+          {ressalva
+            ? ", e não terminou direito: veja a ressalva abaixo."
+            : " — a resposta saiu normalmente."}
         </Aviso>
       ) : null}
 
@@ -241,8 +247,8 @@ function Detalhe({
 
       {detalhe.error ? (
         <div className="space-y-1">
-          <Meta>Erro</Meta>
-          <Bloco className="text-danger">{detalhe.error}</Bloco>
+          <Meta>{ressalva ? "Ressalva" : "Erro"}</Meta>
+          <Bloco className={ressalva ? "text-warning" : "text-danger"}>{detalhe.error}</Bloco>
         </div>
       ) : null}
 
