@@ -255,7 +255,7 @@ export function decidirValor(
     escreve: false,
     motivo: `a tarefa está com ${reais(naTarefa)}, que não é o valor de antes (${reais(
       retrato.valorCentavos / 100,
-    )}) nem o de agora (${reais(novo)}) — alguém negociou fora do reajuste`,
+    )}) nem o de agora (${reais(novo)}). Pode ser um valor negociado ou um que ficou de um ciclo anterior sem atualizar; o sistema não troca, confira qual vale`,
   };
 }
 

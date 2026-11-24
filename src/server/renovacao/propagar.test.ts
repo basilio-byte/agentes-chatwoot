@@ -241,7 +241,9 @@ describe("propagarReajustes: quando não escreve", () => {
 
     expect(escritas.some((e) => e.includes(CAMPO_VALOR))).toBe(false);
     expect(comentarios[0]).toContain("Valor do contrato não atualizado");
-    expect(comentarios[0]).toContain("negociou fora do reajuste");
+    // ⚠ Não afirma que houve negociação: na leva de novembro, a maioria era valor
+    // de um ciclo anterior que nunca foi atualizado (24/11/2026).
+    expect(comentarios[0]).toContain("Pode ser um valor negociado ou um que ficou de um ciclo anterior");
   });
 
   it("já estava em dia: reserva fechada, nenhuma escrita e nenhum comentário", async () => {
