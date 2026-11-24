@@ -253,7 +253,10 @@ export async function propagarReajustes(
         })),
       );
 
-      if (!tarefasDoCliente.length) {
+      // ⚠ Pela lista INTEIRA do cliente, não pela que sobrou: cliente com tarefa
+      // no fluxo, toda ela já levada por outro contrato do lote, é pendência de
+      // verdade (um contrato sem a sua tarefa), não espera.
+      if (!(porCliente.get(clienteId) ?? []).length) {
         // Sem tarefa nenhuma do cliente no fluxo: espera o D-30 trazê-la.
         aguardandoTarefaNoFluxo += casamento.semTarefa.length;
       } else {

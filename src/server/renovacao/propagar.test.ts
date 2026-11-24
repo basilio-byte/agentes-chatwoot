@@ -307,6 +307,18 @@ describe("propagarReajustes: quando não escreve", () => {
     expect(eventos.some((e) => e.externalId.startsWith("reajuste:"))).toBe(false);
   });
 
+  it("⚠ cliente COM tarefa no fluxo, já levada por outro contrato do lote: é pendência, não espera", async () => {
+    // Dois contratos iguais e UMA tarefa: o primeiro leva a tarefa; o segundo
+    // fica sem a sua — isso a equipe precisa ver, não é o D-30 que vai resolver.
+    retratos = [retrato(), retrato({ contratoId: 10602 })];
+    await propagarReajustes({ forcar: true }, AGORA);
+    const segunda = await propagarReajustes({ forcar: true }, new Date(AGORA.getTime() + 30 * 60_000));
+
+    expect(segunda.aguardandoTarefaNoFluxo).toBe(0);
+    expect(segunda.pendentes).toHaveLength(1);
+    expect(segunda.pendentes?.[0]).toContain("10602");
+  });
+
   it("⚠ tarefa da ONE Empreendimentos (outro Conexa) NUNCA recebe o reajuste da Seahub", async () => {
     // O "(5060)" do nome e o idCliente=5060 do link conferem — mas o link é de
     // OUTRA conta do Conexa, e o 5060 de lá é outra empresa.
