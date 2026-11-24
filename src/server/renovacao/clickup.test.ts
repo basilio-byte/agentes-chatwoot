@@ -73,6 +73,46 @@ describe("tarefaDoFluxo", () => {
     expect(t.valor).toBeNull();
     expect(t.dataDeReajuste).toBeNull();
   });
+
+  it("⚠ tarefa da ONE Empreendimentos (link de outro Conexa) fica SEM cliente da Seahub", () => {
+    const one = {
+      id: "86ak30ahk",
+      name: "(72) BANDEIRANTES PROPAGANDA POTIGUAR LTDA",
+      custom_fields: [
+        {
+          id: "4f3ca1c7-2933-49d5-b2de-d6e9c8d506bd",
+          value: "https://oneempreendimentos.conexa.app/index.php?r=x&idCliente=72#",
+        },
+      ],
+    };
+    const t = tarefaDoFluxo(one, undefined, "seahubcoworking.conexa.app");
+    expect(t.clienteId).toBeNull();
+    expect(t.deOutraConta).toBe(true);
+
+    // Sem saber o host da Seahub, o comportamento é o de antes (pelo nome).
+    expect(tarefaDoFluxo(one).clienteId).toBe(72);
+  });
+
+  it("o link da própria Seahub não muda nada: o cliente continua saindo do NOME", () => {
+    // A tarefa do (701) tem o link do 3824 (erro de cadastro): a listagem segue o
+    // nome, e quem barra a contradição é `confereOCliente`, antes de escrever.
+    const t = tarefaDoFluxo(
+      {
+        id: "86a4173uu",
+        name: "(701) LUCAS GABRIEL",
+        custom_fields: [
+          {
+            id: "4f3ca1c7-2933-49d5-b2de-d6e9c8d506bd",
+            value: "https://seahubcoworking.conexa.app/index.php?r=x&idCliente=3824",
+          },
+        ],
+      },
+      undefined,
+      "seahubcoworking.conexa.app",
+    );
+    expect(t.clienteId).toBe(701);
+    expect(t.deOutraConta).toBeUndefined();
+  });
 });
 
 describe("lerTarefasDoFluxo", () => {

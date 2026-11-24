@@ -5,11 +5,13 @@ import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 
 import {
   cruzarComAsTarefas,
+  LISTA_BASE_DE_CLIENTES,
   lerTarefasDoFluxo,
   tarefasOrfas,
   type ContratoParaCruzar,
   type TarefaDoFluxo,
 } from "./clickup";
+import { hostDoConexaDaSeahub } from "./config";
 import {
   diferencaMensal,
   valorAnterior,
@@ -110,7 +112,7 @@ async function tarefasDoFluxo() {
     carregar: async () => {
       const clickup = await abrirClickUp("tela de renovações");
       if ("erro" in clickup) throw new Error(clickup.erro);
-      return lerTarefasDoFluxo(clickup.cliente);
+      return lerTarefasDoFluxo(clickup.cliente, LISTA_BASE_DE_CLIENTES, await hostDoConexaDaSeahub());
     },
   });
 }

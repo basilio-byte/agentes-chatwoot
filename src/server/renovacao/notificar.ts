@@ -16,6 +16,7 @@ import {
   type TarefaParaNotificar,
 } from "./notificacao";
 import { PROVIDER_RENOVACAO, STATUS_NOTIFICACAO, STATUS_RENOVACAO } from "./regras";
+import { gravarResumoDoDia } from "./rodadas";
 
 /**
  * A rodada que passa a tarefa de `renovação` para `notificação renovação`
@@ -162,11 +163,11 @@ export async function moverParaNotificacao(
       esperando,
       pendentes,
     };
-    await registrarRodada(agora, movidas.length ? "movido" : "nada a mover", rodada);
+    await registrarRodada(agora, rodada);
     return rodada;
   } catch (erro) {
     logger.error({ erro }, "notificação da renovação falhou");
-    await registrarRodada(agora, "falhou", { erro: (erro as Error).message });
+    await registrarRodada(agora, { erro: (erro as Error).message });
     throw erro;
   } finally {
     rodando = false;
@@ -249,26 +250,22 @@ async function moverUma(
   return { movida: true };
 }
 
-async function registrarRodada(agora: Date, resultado: string, detalhe: unknown) {
-  try {
-    const externalId = `${CHAVE_DA_RODADA}:${diaEmSaoPaulo(agora)}`;
-    const dados = {
-      resultado,
-      detalhe: JSON.stringify(detalhe).slice(0, 2000),
-      processedAt: agora,
-    };
-    await db.webhookEvent.upsert({
-      where: { provider_externalId: { provider: PROVIDER_RENOVACAO, externalId } },
-      create: {
-        provider: PROVIDER_RENOVACAO,
-        externalId,
-        eventType: "notificacao-rodada",
-        payload: {},
-        ...dados,
-      },
-      update: dados,
-    });
-  } catch (erro) {
-    logger.error({ erro }, "não consegui registrar o desfecho da notificação");
-  }
+/**
+ * O resumo do dia SOMA as rodadas (ver `resumo-do-dia.ts`): a rodada que não
+ * acha nada não apaga a que fez alguma coisa mais cedo.
+ */
+async function registrarRodada(agora: Date, rodada: RodadaDeNotificacao | { erro: string }) {
+  await gravarResumoDoDia({
+    chave: CHAVE_DA_RODADA,
+    eventType: "notificacao-rodada",
+    agora,
+    rodada,
+    campos: { listas: ["movidas"] },
+    resultado: (somado) =>
+      "erro" in rodada && rodada.erro
+        ? "falhou"
+        : Array.isArray(somado.movidas) && somado.movidas.length
+          ? "movido"
+          : "nada a mover",
+  });
 }

@@ -168,17 +168,54 @@ export function statusDeContinuidade(status: string | null | undefined) {
 }
 
 /**
+ * Até quantos dias À FRENTE de hoje a fidelidade de um contrato ainda é "do
+ * ciclo que está renovando agora". A tarefa vai para `ongoing` quando o cliente
+ * paga, que é perto da fidelidade (às vezes um pouco antes, às vezes meses
+ * depois); um contrato já avançado está ~1 ano à frente. Sessenta dias separam
+ * os dois com folga.
+ */
+export const DIAS_A_FRENTE_DO_CICLO = 60;
+
+function mesmoValor(a: number | null, b: number | null) {
+  return a != null && b != null && Math.round(a * 100) === Math.round(b * 100);
+}
+
+/**
  * O que fazer com as datas. Pura: recebe o que foi lido e devolve o plano.
  *
  * Tudo o que for dúvida vira aviso ou `semContrato`, nunca escrita: a data
  * errada de um contrato empurra a renovação de um cliente para o ano errado.
+ *
+ * ⚠⚠ **A DATA DE REAJUSTE nova sai da FIDELIDADE do Conexa, não da data da
+ * tarefa** (24/11/2026). O n8n faz "data da URL + 365", e a primeira versão daqui
+ * copiou isso com +1 ano. No dia do lote de dezembro alguém gravou, numa ação em
+ * massa, 01/12/2027 na DATA DE REAJUSTE de 51 tarefas do fluxo — e "data da
+ * tarefa + 1 ano" daria 2028: o aviso de 30 dias da renovação de 2027 nunca
+ * dispararia. O Conexa é a fonte da verdade (é a fidelidade que a Duda atualiza
+ * e a que a leva lê), então, achado o contrato da tarefa, a data da tarefa vira a
+ * fidelidade NOVA dele. De quebra some a deriva de um dia que os dois fluxos do
+ * n8n (+364 e +365) deixaram (contrato 3713: tarefa 10/12, Conexa 11/12).
+ *
+ * O contrato é achado em dois passos:
+ * 1. pela fidelidade perto da data de partida (± `TOLERANCIA_DE_DIAS`), como
+ *    sempre — e o casamento por valor desempata;
+ * 2. ⚠ se nenhum contrato tem a fidelidade perto da data (a data da tarefa está
+ *    errada), pelo VALOR, só entre os contratos do ciclo de agora (fidelidade até
+ *    `DIAS_A_FRENTE_DO_CICLO` dias à frente — o já avançado fica de fora) e só
+ *    quando todos os que batem são equivalentes. Sem `hoje`, este passo não roda.
+ *
+ * Sem contrato (tarefa da ONE, cliente sem contrato ativo), vale o de antes —
+ * data da tarefa + 1 ano —, com uma trava nova: data de partida mais de
+ * `DIAS_A_FRENTE_DO_CICLO` dias no futuro não é empurrada mais um ano.
  */
 export function planejarDatas(entrada: {
   tarefa: TarefaParaDatas;
   pedido: PedidoDasDatas;
   contratos: ContratoParaDatas[];
+  /** O dia de hoje (AAAA-MM-DD, São Paulo). Liga o passo 2 e a trava de data futura. */
+  hoje?: string;
 }): PlanoDasDatas {
-  const { tarefa, pedido, contratos } = entrada;
+  const { tarefa, pedido, contratos, hoje } = entrada;
 
   if (!statusDeContinuidade(tarefa.status)) {
     return {
@@ -193,17 +230,6 @@ export function planejarDatas(entrada: {
   }
 
   const avisos: string[] = [];
-  const reajusteNovo = fidelidadeRenovada(base);
-
-  // A data da tarefa só é escrita se ainda for a de partida: se já é outra, a
-  // chamada repetida (ou a pessoa) já a avançou, e avançar de novo daria +2 anos.
-  const escreverReajuste =
-    tarefa.dataDeReajuste === null || tarefa.dataDeReajuste === base;
-  if (!escreverReajuste) {
-    avisos.push(
-      `a DATA DE REAJUSTE da tarefa já é ${tarefa.dataDeReajuste}, e não ${base} — já foi avançada, não mexi`,
-    );
-  }
 
   let encerramentoNovo: string | null = null;
   let escreverEncerramento = false;
@@ -216,27 +242,26 @@ export function planejarDatas(entrada: {
     );
   }
 
-  // O contrato desta tarefa: ativo, com a fidelidade em torno da data de partida.
+  const ativos = contratos.filter((c) => c.ativo && c.fidelidade);
+  let contrato: { id: number; fidelidadeAtual: string; fidelidadeNova: string } | null = null;
+  let semContrato: string | null = null;
+  const comFidelidade = (c: ContratoParaDatas) => ({
+    id: c.id,
+    fidelidadeAtual: c.fidelidade as string,
+    fidelidadeNova: fidelidadeRenovada(c.fidelidade as string),
+  });
+
+  // Passo 1: a fidelidade em torno da data de partida.
   // ⚠ A exigência de data é mais dura que a do casamento comum, de propósito: o
   // contrato que o valor sozinho explicaria pode já ter sido avançado, e
   // avançá-lo de novo escreveria o ano errado no Conexa.
-  const candidatos = contratos
-    .filter(
-      (c) =>
-        c.ativo &&
-        c.fidelidade &&
-        Math.abs(diasEntre(base, c.fidelidade)) <= TOLERANCIA_DE_DIAS,
-    )
+  const pertoDaData = ativos
+    .filter((c) => Math.abs(diasEntre(base, c.fidelidade as string)) <= TOLERANCIA_DE_DIAS)
     .sort((a, b) => a.id - b.id);
 
-  let contrato: { id: number; fidelidadeAtual: string; fidelidadeNova: string } | null = null;
-  let semContrato: string | null = null;
-
-  if (!candidatos.length) {
-    semContrato = `nenhum contrato ativo do cliente tem a fidelidade perto de ${base} (já foi avançada, ou o cliente não tem contrato ativo)`;
-  } else {
+  if (pertoDaData.length) {
     const casamento = casarContratosComTarefas(
-      candidatos.map((c) => ({
+      pertoDaData.map((c) => ({
         id: c.id,
         fidelidade: c.fidelidade,
         antes: c.antes,
@@ -248,16 +273,58 @@ export function planejarDatas(entrada: {
     );
     const par = casamento.pares[0];
     if (par) {
-      contrato = {
-        id: par.contrato.id,
-        fidelidadeAtual: par.contrato.fidelidade as string,
-        fidelidadeNova: fidelidadeRenovada(par.contrato.fidelidade as string),
-      };
+      const escolhido = pertoDaData.find((c) => c.id === par.contrato.id) as ContratoParaDatas;
+      contrato = comFidelidade(escolhido);
     } else {
       semContrato =
         casamento.ambiguos[0]?.motivo ??
         casamento.semTarefa[0]?.motivo ??
         "não consegui ligar a tarefa a um contrato do cliente";
+    }
+  } else {
+    // Passo 2: a data da tarefa não bate com contrato nenhum. Pelo valor, só no
+    // ciclo de agora, e só sem dúvida.
+    const doCiclo = hoje
+      ? ativos.filter((c) => diasEntre(hoje, c.fidelidade as string) <= DIAS_A_FRENTE_DO_CICLO)
+      : [];
+    const peloValor = doCiclo
+      .filter((c) => mesmoValor(tarefa.valor, c.valor) || mesmoValor(tarefa.valor, c.antes))
+      .sort((a, b) => a.id - b.id);
+    const assinaturas = new Set(peloValor.map((c) => `${c.antes ?? "?"}|${c.valor ?? "?"}|${c.fidelidade}`));
+
+    if (peloValor.length && assinaturas.size === 1) {
+      contrato = comFidelidade(peloValor[0]);
+      avisos.push(
+        `a DATA DE REAJUSTE de partida (${formatar(base)}) não bate com a fidelidade de nenhum contrato do cliente; o contrato ${contrato.id} foi ligado pelo valor (fidelidade ${formatar(contrato.fidelidadeAtual)}), e a data da tarefa passa a ser a fidelidade nova dele`,
+      );
+    } else if (assinaturas.size > 1) {
+      semContrato = `a DATA DE REAJUSTE da tarefa (${formatar(base)}) não bate com nenhum contrato, e ${peloValor.length} contratos do cliente têm o valor dela — a equipe precisa indicar qual é`;
+    } else {
+      semContrato = `nenhum contrato ativo do cliente tem a fidelidade perto de ${base} (já foi avançada, ou o cliente não tem contrato ativo)`;
+    }
+  }
+
+  let reajusteNovo: string;
+  let escreverReajuste: boolean;
+  if (contrato) {
+    // A fidelidade nova é a verdade; escrever o mesmo valor de novo não faz mal,
+    // e um valor diferente (deriva, data em massa) é justamente o que se corrige.
+    reajusteNovo = contrato.fidelidadeNova;
+    escreverReajuste = tarefa.dataDeReajuste !== reajusteNovo;
+  } else {
+    reajusteNovo = fidelidadeRenovada(base);
+    // A data da tarefa só é escrita se ainda for a de partida: se já é outra, a
+    // chamada repetida (ou a pessoa) já a avançou, e avançar de novo daria +2 anos.
+    escreverReajuste = tarefa.dataDeReajuste === null || tarefa.dataDeReajuste === base;
+    if (!escreverReajuste) {
+      avisos.push(
+        `a DATA DE REAJUSTE da tarefa já é ${tarefa.dataDeReajuste}, e não ${base} — já foi avançada, não mexi`,
+      );
+    } else if (hoje && diasEntre(hoje, base) > DIAS_A_FRENTE_DO_CICLO) {
+      escreverReajuste = false;
+      avisos.push(
+        `a DATA DE REAJUSTE de partida (${formatar(base)}) está mais de ${DIAS_A_FRENTE_DO_CICLO} dias à frente e nenhum contrato a confirma: somar mais um ano pularia uma renovação — não mexi, a equipe confere a data`,
+      );
     }
   }
 

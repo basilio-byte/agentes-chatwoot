@@ -119,7 +119,8 @@ function Linha({ linha, hoje }: { linha: LinhaDaRenovacao; hoje: string }) {
             {dia(linha.reajusteEm)}
             <div className="text-[11px] text-muted">
               {linha.reajusteIndice ?? "—"}
-              {linha.reajustePct != null && ` ${linha.reajustePct}%`}
+              {linha.reajustePct != null &&
+                ` ${linha.reajustePct.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`}
             </div>
           </>
         ) : (

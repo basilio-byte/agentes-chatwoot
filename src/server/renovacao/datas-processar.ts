@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { diaEmSaoPaulo } from "@/lib/tempo";
 import type { ClickUpClient } from "@/server/integrations/clickup/client";
 import { deTimestamp } from "@/server/integrations/clickup/datas";
 import { paraTimestamp } from "@/server/integrations/clickup/formatacao";
@@ -9,7 +10,7 @@ import type { ConexaClient } from "@/server/integrations/conexa/client";
 import { abrirConexa } from "@/server/integrations/conexa/sistema";
 
 import { CAMPO_DATA_DE_REAJUSTE, idDoClienteNaTarefa, tarefaDoFluxo } from "./clickup";
-import { configDaRenovacao } from "./config";
+import { configDaRenovacao, hostDoConexaDaSeahub } from "./config";
 import { contratoDaLeva } from "./conexa";
 import {
   chaveDasDatas,
@@ -18,7 +19,7 @@ import {
   type ContratoParaDatas,
   type PedidoDasDatas,
 } from "./datas";
-import { PROVIDER_RENOVACAO } from "./regras";
+import { PROVIDER_RENOVACAO, deOutraContaDoConexa, hostDoLink } from "./regras";
 
 /**
  * Uma entrega da automação 8 do ClickUp: avança as datas da tarefa e a
@@ -108,7 +109,12 @@ export async function processarDatas(pedido: PedidoDasDatas): Promise<DesfechoDa
   }
 
   const fluxo = tarefaDoFluxo(tarefa);
-  const clienteId = idDoClienteNaTarefa(tarefa.name ?? "", textoDoCampo(tarefa, CAMPO_CONEXA_LINK));
+  const link = textoDoCampo(tarefa, CAMPO_CONEXA_LINK);
+  // ⚠ Tarefa da ONE Empreendimentos (outro Conexa): o "(72)" dela não é o
+  // cliente 72 da Seahub, e o Conexa da Seahub não é tocado.
+  const hostDaSeahub = await hostDoConexaDaSeahub();
+  const deOutraConta = deOutraContaDoConexa(link, hostDaSeahub);
+  const clienteId = deOutraConta ? null : idDoClienteNaTarefa(tarefa.name ?? "", link);
 
   // Os contratos do cliente, ao vivo, com o valor de antes do lote do retrato.
   let conexa: Conexa | null = null;
@@ -160,6 +166,7 @@ export async function processarDatas(pedido: PedidoDasDatas): Promise<DesfechoDa
     },
     pedido,
     contratos,
+    hoje: diaEmSaoPaulo(new Date()),
   });
 
   if (!plano.aplicavel) {
@@ -168,6 +175,9 @@ export async function processarDatas(pedido: PedidoDasDatas): Promise<DesfechoDa
   // Sem como ler o Conexa, não se afirma "nenhum contrato": o motivo é outro.
   if (erroDoConexa && !plano.contrato) {
     plano.semContrato = `não consegui ler os contratos do cliente no Conexa — ${erroDoConexa}`;
+  }
+  if (deOutraConta) {
+    plano.semContrato = `a tarefa é de outra conta do Conexa (${hostDoLink(link)}), não da Seahub: a fidelidade não é tocada daqui`;
   }
 
   const chave = chaveDasDatas(tarefa.id, plano.baseDoReajuste, sombra);

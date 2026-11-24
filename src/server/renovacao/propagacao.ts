@@ -1,6 +1,13 @@
 import { somarDias } from "@/lib/tempo";
 
-import { diferencaMensal, STATUS_NOTIFICACAO, STATUS_PG_PENDENTE, STATUS_RENOVACAO } from "./regras";
+import {
+  deOutraContaDoConexa,
+  diferencaMensal,
+  hostDoLink,
+  STATUS_NOTIFICACAO,
+  STATUS_PG_PENDENTE,
+  STATUS_RENOVACAO,
+} from "./regras";
 
 /**
  * Fase 2 da renovação: levar para o ClickUp o reajuste que uma PESSOA já
@@ -146,7 +153,19 @@ export function dentroDaJanela(
  * Link ausente ou ilegível **não** barra — a maioria das tarefas antigas não o
  * tem, e exigir o campo pararia a propagação inteira. Barra só a contradição.
  */
-export function confereOCliente(clienteId: number, linkDaTarefa?: string | null) {
+export function confereOCliente(
+  clienteId: number,
+  linkDaTarefa?: string | null,
+  hostDaSeahub?: string | null,
+) {
+  // ⚠ Antes do id, a CONTA: o "(72)" da ONE Empreendimentos é o cliente 72 de
+  // outro Conexa, e o `idCliente=72` do link dela confere com o 72 da Seahub.
+  if (deOutraContaDoConexa(linkDaTarefa, hostDaSeahub)) {
+    return {
+      confere: false as const,
+      motivo: `o CONEXA LINK da tarefa é de outra conta do Conexa (${hostDoLink(linkDaTarefa)}), não da Seahub — é tarefa de outra empresa`,
+    };
+  }
   const achado = linkDaTarefa?.match(/[?&]idCliente=(\d{1,7})\b/);
   if (!achado) return { confere: true as const };
   const doLink = Number(achado[1]);
@@ -245,6 +264,11 @@ export function decidirStatus(status: string | null | undefined): DecisaoDoStatu
   };
 }
 
+/** "4,63%": o percentual como se lê em português (o comentário saía "4.63%"). */
+export function percentualEmPortugues(valor: number) {
+  return `${valor.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+}
+
 export function reais(valor: number) {
   return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -272,7 +296,8 @@ export function comentarioDaPropagacao(entrada: {
 }) {
   const { retrato, valor, percentual, status, linkDoConexa } = entrada;
   const indice = retrato.reajusteIndice ?? "índice não informado";
-  const pct = retrato.reajustePct != null ? `${retrato.reajustePct}%` : "percentual não informado";
+  const pct =
+    retrato.reajustePct != null ? percentualEmPortugues(retrato.reajustePct) : "percentual não informado";
 
   const linhas = [
     `🔁 **Reajuste do contrato lançado no Conexa** — ${indice} ${pct} em ${dia(retrato.reajusteEm)}.`,
@@ -290,7 +315,7 @@ export function comentarioDaPropagacao(entrada: {
     linhas.push(`- ⚠ **Valor do contrato não atualizado:** ${valor.motivo}`);
   }
 
-  if (percentual.escreve) linhas.push(`- **Reajuste:** ${percentual.valor}%`);
+  if (percentual.escreve) linhas.push(`- **Reajuste:** ${percentualEmPortugues(percentual.valor)}`);
   else linhas.push(`- ⚠ **Reajuste (%) não atualizado:** ${percentual.motivo}`);
 
   if (status.avanca) linhas.push(`- **Status:** ${STATUS_ORIGEM} → ${status.para}`);

@@ -104,6 +104,21 @@ describe("confereOCliente", () => {
     expect(confereOCliente(5060, "https://x.conexa.app/index.php?r=y").confere).toBe(true);
   });
 
+  it("⚠ link de OUTRA conta do Conexa barra, mesmo com o mesmo número de cliente", () => {
+    const r = confereOCliente(
+      72,
+      "https://oneempreendimentos.conexa.app/index.php?r=x&idCliente=72#",
+      "seahubcoworking.conexa.app",
+    );
+    expect(r.confere).toBe(false);
+    if (r.confere) throw new Error("deveria barrar");
+    expect(r.motivo).toContain("oneempreendimentos.conexa.app");
+    // O mesmo link sem saber o host da Seahub: só o id é conferido, como antes.
+    expect(
+      confereOCliente(72, "https://oneempreendimentos.conexa.app/index.php?r=x&idCliente=72#").confere,
+    ).toBe(true);
+  });
+
   it("não casa por prefixo: 185 não é 1858", () => {
     expect(confereOCliente(185, "https://x/?idCliente=1858").confere).toBe(false);
     expect(confereOCliente(1858, "https://x/?idCliente=185").confere).toBe(false);
@@ -204,7 +219,8 @@ describe("comentarioDaPropagacao", () => {
   });
 
   it("nomeia a fonte: índice, percentual e data do ERP", () => {
-    expect(completo).toContain("IPCA 4.58% em 23/10/2026");
+    expect(completo).toContain("IPCA 4,58% em 23/10/2026");
+    expect(completo).toContain("**Reajuste:** 4,58%");
   });
 
   it("mostra o de→para e a diferença MENSAL (anual ÷ 12)", () => {

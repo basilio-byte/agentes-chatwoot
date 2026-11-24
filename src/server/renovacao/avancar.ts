@@ -1,6 +1,5 @@
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { diaEmSaoPaulo } from "@/lib/tempo";
 import { dentroDoHorario } from "@/server/cobranca/regras";
 import type { ClickUpClient } from "@/server/integrations/clickup/client";
 import { abrirClickUp } from "@/server/integrations/clickup/sistema";
@@ -8,6 +7,7 @@ import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 import { LISTA_BASE_DE_CLIENTES, PAGINAS_MAXIMAS } from "./clickup";
 import { DIAS_PARA_PROPAGAR, STATUS_DESTINO, STATUS_ORIGEM } from "./propagacao";
 import { PROVIDER_RENOVACAO } from "./regras";
+import { gravarResumoDoDia } from "./rodadas";
 
 /**
  * O status que ficou para trás: a tarefa cujo contrato JÁ levou o reajuste e que
@@ -141,7 +141,7 @@ export async function avancarTarefasDoLote(
       pendentes,
     };
     if (avancadas.length || pendentes.length) {
-      await registrarRodada(agora, avancadas.length ? "avançado" : "nada avançado", rodada);
+      await registrarRodada(agora, rodada);
     }
     return rodada;
   } finally {
@@ -149,26 +149,22 @@ export async function avancarTarefasDoLote(
   }
 }
 
-async function registrarRodada(agora: Date, resultado: string, detalhe: unknown) {
-  try {
-    const externalId = `${CHAVE_DA_RODADA}:${diaEmSaoPaulo(agora)}`;
-    const dados = {
-      resultado,
-      detalhe: JSON.stringify(detalhe).slice(0, 2000),
-      processedAt: agora,
-    };
-    await db.webhookEvent.upsert({
-      where: { provider_externalId: { provider: PROVIDER_RENOVACAO, externalId } },
-      create: {
-        provider: PROVIDER_RENOVACAO,
-        externalId,
-        eventType: "avanco-rodada",
-        payload: {},
-        ...dados,
-      },
-      update: dados,
-    });
-  } catch (erro) {
-    logger.error({ erro }, "não consegui registrar o desfecho do avanço");
-  }
+/**
+ * O resumo do dia SOMA as rodadas (ver `resumo-do-dia.ts`): a rodada que não
+ * acha nada não apaga a que fez alguma coisa mais cedo.
+ */
+async function registrarRodada(agora: Date, rodada: RodadaDeAvanco | { erro: string }) {
+  await gravarResumoDoDia({
+    chave: CHAVE_DA_RODADA,
+    eventType: "avanco-rodada",
+    agora,
+    rodada,
+    campos: { listas: ["avancadas"] },
+    resultado: (somado) =>
+      "erro" in rodada && rodada.erro
+        ? "falhou"
+        : Array.isArray(somado.avancadas) && somado.avancadas.length
+          ? "avançado"
+          : "nada avançado",
+  });
 }

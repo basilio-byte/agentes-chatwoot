@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Uma entrega da automação 8 com banco, ClickUp e Conexa simulados. O caso base
@@ -51,7 +51,10 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-vi.mock("./config", () => ({ configDaRenovacao: async () => ({ avancarDatas: modo }) }));
+vi.mock("./config", () => ({
+  configDaRenovacao: async () => ({ avancarDatas: modo }),
+  hostDoConexaDaSeahub: async () => "seahubcoworking.conexa.app",
+}));
 
 vi.mock("@/server/integrations/clickup/sistema", () => ({
   abrirClickUp: async () => {
@@ -122,7 +125,7 @@ function tarefa(status = "ongoing") {
       { id: CAMPO_VALOR, value: "104.48" },
       { id: CAMPO_REAJUSTE, value: String(NOV_27) },
       { id: CAMPO_ENCERRAMENTO, value: String(Date.UTC(2027, 10, 16, 15)) },
-      { id: CAMPO_LINK, value: "https://x.conexa.app/index.php?r=y&idCliente=5051" },
+      { id: CAMPO_LINK, value: "https://seahubcoworking.conexa.app/index.php?r=y&idCliente=5051" },
     ],
   };
 }
@@ -139,6 +142,13 @@ beforeEach(() => {
   aberturas = { clickup: 0, conexa: 0 };
   tarefaViva = tarefa();
   contratosDoConexa = [contratoCru(10574)];
+  // O "hoje" do plano entra na conta do contrato (o ciclo de agora): data fixa,
+  // para o teste não mudar de resposta com o calendário.
+  vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-28T15:00:00Z") });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("processarDatas: o caminho que funciona", () => {
@@ -252,6 +262,45 @@ describe("processarDatas: o que NÃO faz", () => {
     expect(r.resultado).toBe("avançado");
     expect(escritas.length).toBe(2);
     expect(comentarios[0]).toContain("Fidelidade no Conexa não alterada");
+  });
+});
+
+describe("processarDatas: dados tortos (24/11/2026)", () => {
+  it("⚠ DATA DE REAJUSTE gravada em massa (01/12/2027): liga pelo valor e a data volta à fidelidade nova", async () => {
+    const DEZ_01_2027 = Date.UTC(2027, 11, 1, 15);
+    tarefaViva = {
+      ...tarefa(),
+      custom_fields: [
+        { id: CAMPO_VALOR, value: "104.48" },
+        { id: CAMPO_REAJUSTE, value: String(DEZ_01_2027) },
+        { id: CAMPO_LINK, value: "https://seahubcoworking.conexa.app/index.php?r=y&idCliente=5051" },
+      ],
+    };
+    await processarDatas({ tarefaId: "86adjmaqg", dataReajuste: "2027-12-01", dataEncerramento: null });
+
+    expect(patches).toEqual([{ id: 10574, data: "2027-11-27" }]);
+    // 27/11/2027, e não 01/12/2028 ("data da tarefa + 1 ano").
+    expect(escritas.find((e) => e.campo === CAMPO_REAJUSTE)?.valor).toBe(Date.UTC(2027, 10, 27, 15));
+    expect(comentarios[0]).toContain("ligado pelo valor");
+  });
+
+  it("⚠ tarefa da ONE Empreendimentos (outro Conexa): o Conexa da Seahub nem é aberto", async () => {
+    tarefaViva = {
+      ...tarefa("one"),
+      name: "(72) BANDEIRANTES PROPAGANDA POTIGUAR LTDA",
+      custom_fields: [
+        { id: CAMPO_VALOR, value: "3367.26" },
+        { id: CAMPO_REAJUSTE, value: String(NOV_27) },
+        { id: CAMPO_LINK, value: "https://oneempreendimentos.conexa.app/index.php?r=y&idCliente=72#" },
+      ],
+    };
+    contratosDoConexa = [contratoCru(3137, { customerId: 72 })];
+
+    await processarDatas(pedido);
+
+    expect(aberturas.conexa).toBe(0);
+    expect(patches).toEqual([]);
+    expect(comentarios[0]).toContain("outra conta do Conexa");
   });
 });
 

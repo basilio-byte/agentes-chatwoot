@@ -25,6 +25,41 @@ import { somarDias } from "@/lib/tempo";
 /** Chave das entregas desta capacidade em `WebhookEvent`. */
 export const PROVIDER_RENOVACAO = "RENOVACAO";
 
+/** O host de um endereço, em minúsculas, ou nulo se não for endereço. */
+export function hostDoLink(link: string | null | undefined): string | null {
+  const texto = (link ?? "").trim();
+  if (!texto) return null;
+  try {
+    return new URL(texto).hostname.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * O `CONEXA LINK` da tarefa aponta para OUTRA conta do Conexa?
+ *
+ * ⚠⚠ **A Base de clientes guarda tarefas de mais de uma empresa** (medido em
+ * 24/11/2026): as da ONE Empreendimentos têm o link em
+ * `oneempreendimentos.conexa.app`, e o "(72)" do nome delas é o cliente 72 DAQUELE
+ * Conexa — não o cliente 72 da Seahub. Ligar uma tarefa dessas a um contrato da
+ * Seahub de mesmo número poria o reajuste de uma empresa na ficha de outra.
+ *
+ * Só conta como "outra conta" o link de OUTRO `*.conexa.app`: link torto ou de
+ * outro site não prova nada sobre a empresa, e tarefa antiga sem link segue
+ * sendo da Seahub, como sempre foi. Sem saber o host da Seahub (Conexa sem
+ * configuração), não barra.
+ */
+export function deOutraContaDoConexa(
+  link: string | null | undefined,
+  hostDaSeahub: string | null | undefined,
+): boolean {
+  const host = hostDoLink(link);
+  if (!host || !hostDaSeahub) return false;
+  if (!host.endsWith(".conexa.app")) return false;
+  return host !== hostDaSeahub.toLowerCase();
+}
+
 /**
  * Quantos dias antes da fidelidade a tarefa entra em `renovação`.
  *

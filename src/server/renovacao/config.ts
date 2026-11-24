@@ -1,6 +1,7 @@
 import { IntegrationProvider } from "@/generated/prisma/enums";
 import { db } from "@/lib/db";
 
+import { hostDoLink } from "./regras";
 import { ATRIBUIR_A_PADRAO, recusaDoTexto } from "./whatsapp";
 
 /**
@@ -106,6 +107,26 @@ function enderecoDe(config: unknown) {
     tokenHash: typeof c.tokenHash === "string" && c.tokenHash.length > 0 ? c.tokenHash : null,
     tokenGeradoEm: typeof c.tokenGeradoEm === "string" ? c.tokenGeradoEm : null,
   };
+}
+
+/**
+ * O host do Conexa DA SEAHUB (`seahubcoworking.conexa.app`), tirado da `baseUrl`
+ * da integração — é contra ele que se reconhece a tarefa de outra empresa na
+ * Base de clientes (`deOutraContaDoConexa`). Só lê a configuração, sem
+ * credencial. Falha de leitura devolve nulo, e nulo não barra nada: o
+ * comportamento volta a ser o de antes desta trava.
+ */
+export async function hostDoConexaDaSeahub(): Promise<string | null> {
+  try {
+    const linha = await db.integration.findUnique({
+      where: { provider: IntegrationProvider.CONEXA },
+      select: { config: true },
+    });
+    const base = (linha?.config as { baseUrl?: unknown } | null)?.baseUrl;
+    return typeof base === "string" ? hostDoLink(base) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A configuração de agora. Falha de leitura vale DESLIGADO. */

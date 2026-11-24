@@ -226,6 +226,8 @@ describe("planejarDatas", () => {
       }),
     );
     expect(p.contrato?.id).toBe(3713);
+    // ⚠ E a data nova sai do CONEXA: a deriva de um dia some, em vez de seguir adiante.
+    expect(p.reajusteNovo).toBe("2027-12-11");
   });
 
   it("⚠ nenhum contrato com a fidelidade perto: o Conexa NÃO é tocado, e as datas da tarefa avançam", () => {
@@ -250,6 +252,121 @@ describe("planejarDatas", () => {
       }),
     );
     expect(p.contrato).toBeNull();
+  });
+});
+
+describe("planejarDatas: a data sai da fidelidade do Conexa (24/11/2026)", () => {
+  // O caso real: a DATA DE REAJUSTE de 51 tarefas foi gravada em massa como
+  // 01/12/2027; o contrato 10654 (cliente 5083) tem fidelidade 08/12/2026 e foi
+  // reajustado de R$ 99,90 para R$ 104,53.
+  const emMassa = (extra: Partial<TarefaParaDatas> = {}) =>
+    tarefa({ valor: 104.53, dataDeReajuste: "2027-12-01", ...extra });
+  const pedidoEmMassa = { tarefaId: "86adugf6r", dataReajuste: "2027-12-01", dataEncerramento: null };
+  const c10654 = (extra: Partial<ContratoParaDatas> = {}) =>
+    contrato(10654, { fidelidade: "2026-12-08", valor: 104.53, antes: 99.9, ...extra });
+  const HOJE = "2026-12-10";
+
+  it("⚠ data gravada em massa: o contrato é ligado pelo VALOR e a data volta à fidelidade nova", () => {
+    const p = aplicavel(
+      planejarDatas({ tarefa: emMassa(), pedido: pedidoEmMassa, contratos: [c10654()], hoje: HOJE }),
+    );
+    expect(p.contrato).toEqual({ id: 10654, fidelidadeAtual: "2026-12-08", fidelidadeNova: "2027-12-08" });
+    // Não 2028: "data da tarefa + 1 ano" pularia a renovação de 2027.
+    expect(p.reajusteNovo).toBe("2027-12-08");
+    expect(p.escreverReajuste).toBe(true);
+    expect(p.avisos.join(" ")).toContain("ligado pelo valor");
+  });
+
+  it("o valor de ANTES do lote também liga (a tarefa que ainda não recebeu a propagação)", () => {
+    const p = aplicavel(
+      planejarDatas({
+        tarefa: emMassa({ valor: 99.9 }),
+        pedido: pedidoEmMassa,
+        contratos: [c10654()],
+        hoje: HOJE,
+      }),
+    );
+    expect(p.contrato?.id).toBe(10654);
+  });
+
+  it("sem `hoje`, o passo pelo valor não roda (o comportamento de antes)", () => {
+    const p = aplicavel(planejarDatas({ tarefa: emMassa(), pedido: pedidoEmMassa, contratos: [c10654()] }));
+    expect(p.contrato).toBeNull();
+  });
+
+  it("⚠ o contrato JÁ avançado não é ligado de novo, e a data futura não ganha mais um ano", () => {
+    const p = aplicavel(
+      planejarDatas({
+        tarefa: emMassa(),
+        pedido: pedidoEmMassa,
+        contratos: [c10654({ fidelidade: "2027-12-08" })],
+        hoje: HOJE,
+      }),
+    );
+    expect(p.contrato).toBeNull();
+    expect(p.escreverReajuste).toBe(false);
+    expect(p.avisos.join(" ")).toContain("pularia uma renovação");
+  });
+
+  it("⚠ valor que não bate com contrato nenhum não liga", () => {
+    const p = aplicavel(
+      planejarDatas({
+        tarefa: emMassa({ valor: 3367.26 }),
+        pedido: pedidoEmMassa,
+        contratos: [c10654()],
+        hoje: HOJE,
+      }),
+    );
+    expect(p.contrato).toBeNull();
+  });
+
+  it("dois contratos diferentes com o valor da tarefa: ninguém é escolhido, a equipe indica", () => {
+    const p = aplicavel(
+      planejarDatas({
+        tarefa: emMassa(),
+        pedido: pedidoEmMassa,
+        contratos: [c10654(), contrato(10700, { fidelidade: "2026-12-20", valor: 104.53, antes: 99.9 })],
+        hoje: HOJE,
+      }),
+    );
+    expect(p.contrato).toBeNull();
+    expect(p.semContrato).toContain("indicar");
+  });
+
+  it("contratos EQUIVALENTES pelo valor (os quatro do 5051): vai o de menor id", () => {
+    const iguais = [10580, 10574, 10578].map((id) =>
+      contrato(id, { fidelidade: "2026-11-27", valor: 104.53, antes: 99.9 }),
+    );
+    const p = aplicavel(
+      planejarDatas({ tarefa: emMassa(), pedido: pedidoEmMassa, contratos: iguais, hoje: HOJE }),
+    );
+    expect(p.contrato?.id).toBe(10574);
+  });
+
+  it("a tarefa já mostra a fidelidade nova: não reescreve", () => {
+    const p = aplicavel(
+      planejarDatas({
+        tarefa: tarefa({ dataDeReajuste: "2027-11-27" }),
+        pedido: { tarefaId: "x", dataReajuste: "2026-11-27", dataEncerramento: null },
+        contratos: [contrato(10574)],
+        hoje: "2026-11-28",
+      }),
+    );
+    expect(p.contrato?.id).toBe(10574);
+    expect(p.escreverReajuste).toBe(false);
+  });
+
+  it("sem contrato (tarefa da ONE) e data do ciclo de agora: avança +1 ano, como sempre", () => {
+    const p = aplicavel(
+      planejarDatas({
+        tarefa: tarefa({ dataDeReajuste: "2026-12-05" }),
+        pedido: { tarefaId: "x", dataReajuste: "2026-12-05", dataEncerramento: null },
+        contratos: [],
+        hoje: HOJE,
+      }),
+    );
+    expect(p.reajusteNovo).toBe("2027-12-05");
+    expect(p.escreverReajuste).toBe(true);
   });
 });
 

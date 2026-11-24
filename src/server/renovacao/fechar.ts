@@ -1,6 +1,5 @@
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { diaEmSaoPaulo } from "@/lib/tempo";
 import { dentroDoHorario } from "@/server/cobranca/regras";
 import type { ClickUpClient } from "@/server/integrations/clickup/client";
 import { camposDaTarefa } from "@/server/integrations/clickup/campos-da-tarefa";
@@ -22,6 +21,7 @@ import {
 } from "./fechamento";
 import { DIAS_PARA_PROPAGAR } from "./propagacao";
 import { PROVIDER_RENOVACAO, STATUS_PG_PENDENTE } from "./regras";
+import { gravarResumoDoDia } from "./rodadas";
 
 /**
  * A rodada que fecha o ciclo quando o cliente paga — fase 4. As regras, e o
@@ -284,11 +284,11 @@ export async function fecharCiclosPagos(
       pendentes,
     };
     logger.debug({ vendasLidas, clientes: clientes.length }, "fechamento da renovação: custo da rodada");
-    await registrarRodada(agora, fechadas.length ? "fechado" : "nada fechado", rodada);
+    await registrarRodada(agora, rodada);
     return rodada;
   } catch (erro) {
     logger.error({ erro }, "fechamento da renovação falhou");
-    await registrarRodada(agora, "falhou", { erro: (erro as Error).message });
+    await registrarRodada(agora, { erro: (erro as Error).message });
     throw erro;
   } finally {
     rodando = false;
@@ -379,26 +379,22 @@ async function fecharUma(
     : { fechada: false, motivo: `o ClickUp devolveu a tarefa de "${destino}" — provavelmente uma trava da lista` };
 }
 
-async function registrarRodada(agora: Date, resultado: string, detalhe: unknown) {
-  try {
-    const externalId = `${CHAVE_DA_RODADA}:${diaEmSaoPaulo(agora)}`;
-    const dados = {
-      resultado,
-      detalhe: JSON.stringify(detalhe).slice(0, 2000),
-      processedAt: agora,
-    };
-    await db.webhookEvent.upsert({
-      where: { provider_externalId: { provider: PROVIDER_RENOVACAO, externalId } },
-      create: {
-        provider: PROVIDER_RENOVACAO,
-        externalId,
-        eventType: "pagamento-rodada",
-        payload: {},
-        ...dados,
-      },
-      update: dados,
-    });
-  } catch (erro) {
-    logger.error({ erro }, "não consegui registrar o desfecho do fechamento");
-  }
+/**
+ * O resumo do dia SOMA as rodadas (ver `resumo-do-dia.ts`): a rodada que não
+ * acha nada não apaga a que fez alguma coisa mais cedo.
+ */
+async function registrarRodada(agora: Date, rodada: RodadaDeFechamento | { erro: string }) {
+  await gravarResumoDoDia({
+    chave: CHAVE_DA_RODADA,
+    eventType: "pagamento-rodada",
+    agora,
+    rodada,
+    campos: { listas: ["fechadas"] },
+    resultado: (somado) =>
+      "erro" in rodada && rodada.erro
+        ? "falhou"
+        : Array.isArray(somado.fechadas) && somado.fechadas.length
+          ? "fechado"
+          : "nada fechado",
+  });
 }

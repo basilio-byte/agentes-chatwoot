@@ -38,7 +38,23 @@ let recusarEscrita = false;
 vi.mock("@/lib/db", () => ({
   db: {
     retratoDeRenovacao: { findMany: async () => retratos },
+    // O Conexa da Seahub: é contra ele que se reconhece a tarefa de outra empresa.
+    integration: {
+      findUnique: async () => ({
+        config: { baseUrl: "https://seahubcoworking.conexa.app/index.php/api/v2" },
+      }),
+    },
     webhookEvent: {
+      findUnique: async ({
+        where,
+      }: {
+        where: { provider_externalId: { provider: string; externalId: string } };
+      }) =>
+        eventos.find(
+          (e) =>
+            e.provider === where.provider_externalId.provider &&
+            e.externalId === where.provider_externalId.externalId,
+        ) ?? null,
       findMany: async ({ where }: { where: { externalId: { in?: string[]; startsWith?: string } } }) =>
         eventos.filter((e) =>
           where.externalId.in
@@ -157,7 +173,7 @@ describe("propagarReajustes: o caminho que funciona", () => {
       "86adm4t1k/status=pg pendente - renovação",
     ]);
     expect(comentarios).toHaveLength(1);
-    expect(comentarios[0]).toContain("IPCA 4.58%");
+    expect(comentarios[0]).toContain("IPCA 4,58%");
   });
 
   it("a reserva fecha como propagado, com a chave do contrato e do reajuste", async () => {
@@ -277,14 +293,41 @@ describe("propagarReajustes: quando não escreve", () => {
     expect(rodada.desfechos?.[0].problemas[0]).toContain("1858");
   });
 
-  it("sem tarefa nos status do fluxo, fica pendente em vez de virar reserva", async () => {
+  it("sem tarefa nos status do fluxo, ESPERA (contado, não listado) em vez de virar reserva", async () => {
+    // ⚠ O lote de 24/11/2026 reajustou também 61 contratos da leva de janeiro,
+    // cujas tarefas só entram no fluxo no D-30. Listá-los como pendência a cada
+    // meia hora, por semanas, enterraria as pendências de verdade.
     tarefasDaLista = [];
     tarefas = {};
 
     const rodada = await propagarReajustes({ forcar: true }, AGORA);
 
-    expect(rodada.pendentes?.[0]).toContain("sem tarefa");
+    expect(rodada.aguardandoTarefaNoFluxo).toBe(1);
+    expect(rodada.pendentes).toEqual([]);
     expect(eventos.some((e) => e.externalId.startsWith("reajuste:"))).toBe(false);
+  });
+
+  it("⚠ tarefa da ONE Empreendimentos (outro Conexa) NUNCA recebe o reajuste da Seahub", async () => {
+    // O "(5060)" do nome e o idCliente=5060 do link conferem — mas o link é de
+    // OUTRA conta do Conexa, e o 5060 de lá é outra empresa.
+    const t = tarefa({
+      campos: [
+        { id: CAMPO_VALOR, value: "1280" },
+        {
+          id: CAMPO_LINK,
+          value: "https://oneempreendimentos.conexa.app/index.php?r=x&idCliente=5060#",
+        },
+      ],
+    });
+    tarefasDaLista = [t];
+    tarefas = { [t.id]: t };
+
+    const rodada = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(escritas).toEqual([]);
+    expect(comentarios).toEqual([]);
+    // Na listagem ela nem é do cliente 5060: o contrato espera a tarefa dele.
+    expect(rodada.aguardandoTarefaNoFluxo).toBe(1);
   });
 
   it("⚠ escrita recusada pelo ClickUp DESFAZ a reserva: a rodada seguinte tenta de novo", async () => {
@@ -468,5 +511,21 @@ describe("propagarReajustes: os freios", () => {
     const linha = eventos.find((e) => e.externalId === "propagacao:2026-11-09");
     expect(linha?.resultado).toBe("propagado");
     expect(linha?.detalhe).toContain("10601");
+  });
+
+  it("⚠ o resumo do dia SOMA as rodadas: a que não escreve nada não apaga a que escreveu", async () => {
+    // Rodada 1 escreve o 10601. Rodada 2 só acha um contrato da leva seguinte,
+    // ainda sem tarefa no fluxo — antes, ela gravava "nada escrito" por cima.
+    await propagarReajustes({ forcar: true }, AGORA);
+    retratos = [retrato(), retrato({ contratoId: 20001, clienteId: 9001, leva: "2027-01" })];
+    await propagarReajustes({ forcar: true }, new Date(AGORA.getTime() + 30 * 60_000));
+
+    const linha = eventos.find((e) => e.externalId === "propagacao:2026-11-09");
+    expect(linha?.resultado).toBe("propagado");
+    const detalhe = JSON.parse(linha?.detalhe ?? "{}");
+    expect(detalhe.rodadas).toBe(2);
+    expect(detalhe.propagados).toBe(1);
+    expect(detalhe.desfechos.map((d: { contratoId: number }) => d.contratoId)).toEqual([10601]);
+    expect(detalhe.aguardandoTarefaNoFluxo).toBe(1);
   });
 });

@@ -3,7 +3,7 @@ import { deTimestamp } from "@/server/integrations/clickup/datas";
 import type { ClickUpTarefa } from "@/server/integrations/clickup/tipos";
 
 import { casarContratosComTarefas, type TarefaParaCasar } from "./casamento";
-import { STATUS_DO_FLUXO, type ContratoDaLeva } from "./regras";
+import { STATUS_DO_FLUXO, deOutraContaDoConexa, type ContratoDaLeva } from "./regras";
 
 /**
  * O lado ClickUp da renovação: achar, na Base de clientes, a tarefa de cada
@@ -53,6 +53,8 @@ export function idDoClienteNaTarefa(nome: string, linkConexa?: string | null) {
 /** `VALOR CONTRATO` (currency) e `DATA DE REAJUSTE` (date) da Base de clientes. */
 export const CAMPO_VALOR_DA_TAREFA = "0dad1007-feb0-437a-9051-87bbac539d4c";
 export const CAMPO_DATA_DE_REAJUSTE = "0231d769-5063-439d-8b03-ad660c6bada5";
+/** O `CONEXA LINK` (url) da Base de clientes, com o `idCliente` na query. */
+export const CAMPO_CONEXA_LINK_DA_TAREFA = "4f3ca1c7-2933-49d5-b2de-d6e9c8d506bd";
 
 export type TarefaDoFluxo = {
   id: string;
@@ -68,6 +70,12 @@ export type TarefaDoFluxo = {
    */
   valor?: number | null;
   dataDeReajuste?: string | null;
+  /**
+   * O `CONEXA LINK` aponta para outra conta do Conexa (ONE Empreendimentos):
+   * a tarefa é de outra empresa, e `clienteId` fica nulo para ela nunca casar
+   * com um contrato da Seahub de mesmo número.
+   */
+  deOutraConta?: boolean;
 };
 
 function emData(ms?: string | null) {
@@ -93,13 +101,29 @@ function dataDeReajusteDaTarefa(tarefa: ClickUpTarefa): string | null {
   return deTimestamp(String(bruto));
 }
 
-export function tarefaDoFluxo(tarefa: ClickUpTarefa, linkConexa?: string | null): TarefaDoFluxo {
+/**
+ * A tarefa como a renovação a enxerga.
+ *
+ * O id do cliente continua saindo do NOME (ou do `linkConexa` que quem chama
+ * passar — o link vence o nome, ver `idDoClienteNaTarefa`). O `CONEXA LINK`
+ * gravado na própria tarefa serve aqui a uma pergunta só: se ele é de OUTRA
+ * conta do Conexa, a tarefa não é da Seahub e não tem cliente para casar.
+ */
+export function tarefaDoFluxo(
+  tarefa: ClickUpTarefa,
+  linkConexa?: string | null,
+  hostDaSeahub?: string | null,
+): TarefaDoFluxo {
+  const linkGravado = campoDaTarefa(tarefa, CAMPO_CONEXA_LINK_DA_TAREFA);
+  const link = linkConexa ?? (typeof linkGravado === "string" ? linkGravado : null);
+  const deOutraConta = deOutraContaDoConexa(link, hostDaSeahub);
   return {
     id: tarefa.id,
     nome: (tarefa.name ?? "").trim(),
     status: tarefa.status?.status ?? "",
     url: tarefa.url,
-    clienteId: idDoClienteNaTarefa(tarefa.name ?? "", linkConexa),
+    clienteId: deOutraConta ? null : idDoClienteNaTarefa(tarefa.name ?? "", linkConexa),
+    ...(deOutraConta ? { deOutraConta: true } : {}),
     atualizadaEm: emData(tarefa.date_updated),
     valor: valorDaTarefa(tarefa),
     dataDeReajuste: dataDeReajusteDaTarefa(tarefa),
@@ -115,6 +139,7 @@ export type LeituraDasTarefas = {
 export async function lerTarefasDoFluxo(
   cliente: Pick<ClickUpClient, "listarTarefasDaLista">,
   listaId = LISTA_BASE_DE_CLIENTES,
+  hostDaSeahub: string | null = null,
 ): Promise<LeituraDasTarefas> {
   const tarefas: TarefaDoFluxo[] = [];
 
@@ -124,7 +149,7 @@ export async function lerTarefasDoFluxo(
       page: pagina,
     });
 
-    for (const t of tasks) tarefas.push(tarefaDoFluxo(t));
+    for (const t of tasks) tarefas.push(tarefaDoFluxo(t, undefined, hostDaSeahub));
 
     // A API devolve 100 por página; página incompleta é o fim da lista. Parar
     // pelo total não serve: ele muda enquanto se lê.

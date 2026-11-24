@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deOutraContaDoConexa,
+  hostDoLink,
   atrasados,
   daLeva,
   deveNotificar,
@@ -214,5 +216,34 @@ describe("renovou", () => {
   it("status ausente não vira renovação por acidente", () => {
     expect(renovou(null, "ongoing")).toBe(false);
     expect(renovou("notificação renovação", undefined)).toBe(false);
+  });
+});
+
+describe("deOutraContaDoConexa", () => {
+  const SEAHUB = "seahubcoworking.conexa.app";
+
+  it("⚠ link da ONE Empreendimentos é OUTRA empresa (medido em 24/11/2026)", () => {
+    expect(
+      deOutraContaDoConexa(
+        "https://oneempreendimentos.conexa.app/index.php?r=vendaRecorrente/gerenciarContratos&idCliente=72#",
+        SEAHUB,
+      ),
+    ).toBe(true);
+  });
+
+  it("link da própria Seahub não é outra conta, nem em maiúsculas", () => {
+    expect(deOutraContaDoConexa("https://SeahubCoworking.conexa.app/index.php?idCliente=5083", SEAHUB)).toBe(false);
+  });
+
+  it("sem link, link torto, link de outro site ou sem saber o host da Seahub: NÃO barra", () => {
+    expect(deOutraContaDoConexa(null, SEAHUB)).toBe(false);
+    expect(deOutraContaDoConexa("idCliente=72", SEAHUB)).toBe(false);
+    expect(deOutraContaDoConexa("https://drive.google.com/x?idCliente=72", SEAHUB)).toBe(false);
+    expect(deOutraContaDoConexa("https://oneempreendimentos.conexa.app/?idCliente=72", null)).toBe(false);
+  });
+
+  it("hostDoLink devolve o host em minúsculas, ou nulo", () => {
+    expect(hostDoLink("https://SEAHUBCOWORKING.conexa.app/index.php/api/v2")).toBe(SEAHUB);
+    expect(hostDoLink("não é endereço")).toBeNull();
   });
 });

@@ -6,7 +6,8 @@ import { abrirClickUp } from "@/server/integrations/clickup/sistema";
 import type { ClickUpClient } from "@/server/integrations/clickup/client";
 
 import { casarContratosComTarefas } from "./casamento";
-import { lerTarefasDoFluxo, type TarefaDoFluxo } from "./clickup";
+import { LISTA_BASE_DE_CLIENTES, lerTarefasDoFluxo, type TarefaDoFluxo } from "./clickup";
+import { hostDoConexaDaSeahub } from "./config";
 import {
   CAMPO_REAJUSTE,
   CAMPO_VALOR_CONTRATO,
@@ -25,6 +26,7 @@ import {
   type RetratoParaPropagar,
 } from "./propagacao";
 import { PROVIDER_RENOVACAO } from "./regras";
+import { gravarResumoDoDia } from "./rodadas";
 
 /**
  * A rodada que leva o reajuste do Conexa para a tarefa do ClickUp — fase 2 da
@@ -64,6 +66,12 @@ export type RodadaDePropagacao = {
   propagados?: number;
   /** Candidatos que a rodada olhou e não escreveu, com o motivo. */
   pendentes?: string[];
+  /**
+   * Contratos reajustados cujo cliente ainda não tem tarefa nos status do fluxo
+   * — o caso normal da leva SEGUINTE, que o mesmo lote reajusta semanas antes do
+   * D-30. Não é problema, é espera: fica contado, não listado como pendência.
+   */
+  aguardandoTarefaNoFluxo?: number;
   desfechos?: DesfechoDaPropagacao[];
   tarefasCompletas?: boolean;
   erro?: string;
@@ -173,7 +181,12 @@ export async function propagarReajustes(
       return { acao: "sem clickup", motivo: clickup.erro, candidatos: candidatos.length };
     }
 
-    const { tarefas, completa } = await lerTarefasDoFluxo(clickup.cliente);
+    const hostDaSeahub = await hostDoConexaDaSeahub();
+    const { tarefas, completa } = await lerTarefasDoFluxo(
+      clickup.cliente,
+      LISTA_BASE_DE_CLIENTES,
+      hostDaSeahub,
+    );
     const porCliente = new Map<number, TarefaDoFluxo[]>();
     for (const t of tarefas) {
       if (t.clienteId === null) continue;
@@ -184,6 +197,7 @@ export async function propagarReajustes(
 
     const desfechos: DesfechoDaPropagacao[] = [];
     const pendentes: string[] = [];
+    let aguardandoTarefaNoFluxo = 0;
     // ⚠ O teto conta as tarefas ABERTAS, não as escritas: cada uma custa a
     // leitura ao vivo, e é a conta de chamadas que o teto protege.
     let olhados = 0;
@@ -239,8 +253,13 @@ export async function propagarReajustes(
         })),
       );
 
-      for (const { contrato, motivo } of [...casamento.semTarefa, ...casamento.ambiguos]) {
-        pendentes.push(`${clienteId}: contrato ${contrato.id}: ${motivo}`);
+      if (!tarefasDoCliente.length) {
+        // Sem tarefa nenhuma do cliente no fluxo: espera o D-30 trazê-la.
+        aguardandoTarefaNoFluxo += casamento.semTarefa.length;
+      } else {
+        for (const { contrato, motivo } of [...casamento.semTarefa, ...casamento.ambiguos]) {
+          pendentes.push(`${clienteId}: contrato ${contrato.id}: ${motivo}`);
+        }
       }
 
       // Cliente inteiro ou nada: se não cabe na rodada, fica para a seguinte
@@ -250,7 +269,9 @@ export async function propagarReajustes(
       for (const par of casamento.pares) {
         olhados++;
         try {
-          desfechos.push(await propagarUm(clickup.cliente, par.contrato.retrato, par.tarefa.tarefa));
+          desfechos.push(
+            await propagarUm(clickup.cliente, par.contrato.retrato, par.tarefa.tarefa, hostDaSeahub),
+          );
         } catch (erro) {
           pendentes.push(`${clienteId}: contrato ${par.contrato.id}: ${(erro as Error).message}`);
         }
@@ -268,14 +289,15 @@ export async function propagarReajustes(
       candidatos: candidatos.length,
       propagados,
       pendentes,
+      aguardandoTarefaNoFluxo,
       desfechos,
       tarefasCompletas: completa,
     };
-    await registrarRodada(agora, propagados ? "propagado" : "nada escrito", rodada);
+    await registrarRodada(agora, rodada);
     return rodada;
   } catch (erro) {
     logger.error({ erro }, "propagação da renovação falhou");
-    await registrarRodada(agora, "falhou", { erro: (erro as Error).message });
+    await registrarRodada(agora, { acao: "propagado", erro: (erro as Error).message });
     throw erro;
   } finally {
     rodando = false;
@@ -299,10 +321,15 @@ async function propagarUm(
   >,
   retrato: RetratoParaPropagar,
   naListagem: TarefaDoFluxo,
+  hostDaSeahub: string | null,
 ): Promise<DesfechoDaPropagacao> {
   const tarefa = await cliente.obterTarefa(naListagem.id);
 
-  const confere = confereOCliente(retrato.clienteId, textoDoCampo(tarefa, CAMPO_CONEXA_LINK));
+  const confere = confereOCliente(
+    retrato.clienteId,
+    textoDoCampo(tarefa, CAMPO_CONEXA_LINK),
+    hostDaSeahub,
+  );
   if (!confere.confere) {
     return {
       contratoId: retrato.contratoId,
@@ -431,30 +458,24 @@ function motivoDe(
   return decisao.motivo ?? "sem motivo registrado";
 }
 
-async function registrarRodada(agora: Date, resultado: string, detalhe: unknown) {
-  try {
-    const dia = diaEmSaoPaulo(agora);
-    const externalId = `${CHAVE_DA_RODADA}:${dia}`;
-    await db.webhookEvent.upsert({
-      where: { provider_externalId: { provider: PROVIDER_RENOVACAO, externalId } },
-      create: {
-        provider: PROVIDER_RENOVACAO,
-        externalId,
-        eventType: "propagacao-rodada",
-        payload: {},
-        resultado,
-        detalhe: JSON.stringify(detalhe).slice(0, 2000),
-        processedAt: agora,
-      },
-      update: {
-        resultado,
-        detalhe: JSON.stringify(detalhe).slice(0, 2000),
-        processedAt: agora,
-      },
-    });
-  } catch (erro) {
-    logger.error({ erro }, "não consegui registrar o desfecho da propagação");
-  }
+/**
+ * O resumo do dia SOMA as rodadas (ver `resumo-do-dia.ts`): o que foi escrito de
+ * manhã continua no resumo quando a rodada da tarde não acha mais nada.
+ */
+async function registrarRodada(agora: Date, rodada: RodadaDePropagacao) {
+  await gravarResumoDoDia({
+    chave: CHAVE_DA_RODADA,
+    eventType: "propagacao-rodada",
+    agora,
+    rodada,
+    campos: { listas: ["desfechos"], contadores: ["propagados"] },
+    resultado: (somado) =>
+      rodada.erro
+        ? "falhou"
+        : Number(somado.propagados) > 0
+          ? "propagado"
+          : "nada escrito",
+  });
 }
 
 /** As últimas rodadas de propagação, para o MCP. */

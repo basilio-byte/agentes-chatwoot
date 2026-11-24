@@ -2400,6 +2400,53 @@ Chatwoot`, desligado). Regras puras em `renovacao/whatsapp.ts`, a rodada em
 - ⚠ **Não provado**: nada foi enviado ainda. A primeira rodada em sombra e o primeiro
   envio de verdade (com o `criarContato`/`vincularContatoACaixa` que só rodaram em
   teste, se o contato não existir) são quem prova.
+  ✅ **A leitura está provada** (24/11/2026): a sombra planejou o primeiro, a (72) da
+  ONE, só a tarefa de categoria ONE. O envio continua sem prova.
+
+#### O primeiro lote real (24/11/2026), e o que ele mostrou
+
+O lote de dezembro entrou no Conexa às 10:36 (IPCA 4,63%) e levou junto 61 contratos
+da leva de JANEIRO. A propagação escreveu as primeiras 10 tarefas às 12:35, e todas
+saíram certas (valor, percentual, status e comentário; nenhum e-mail disparou na troca
+`notificação` → `pg pendente`). A 2b foi ligada no mesmo dia, a pedido do usuário, sem
+nenhuma tarefa em `renovação`.
+
+- ⚠⚠ **A Base de clientes tem tarefas de OUTRA EMPRESA.** As da ONE Empreendimentos
+  levam o `CONEXA LINK` em `oneempreendimentos.conexa.app`, e o "(72)" delas é o
+  cliente 72 daquele Conexa. Nada conferia o domínio: bastava o número bater (e a data
+  e o valor não impedirem) para o reajuste da Seahub ir parar na tarefa da ONE.
+  `deOutraContaDoConexa` (`regras.ts`) compara o host do link com o da `baseUrl` da
+  integração do Conexa (`hostDoConexaDaSeahub`): a listagem tira o cliente dessa tarefa,
+  `confereOCliente` recusa antes de escrever e a fase 3 nem abre o Conexa. Só conta
+  link de outro `*.conexa.app`; sem link, ou sem saber o host da Seahub, nada muda.
+  É também o que explica o IGP-M do texto do ONE: é locação de loja, outra empresa.
+- ⚠⚠ **O resumo do dia SOMA as rodadas** (`resumo-do-dia.ts`, `gravarResumoDoDia`), nas
+  quatro partes que gravavam por cima (`propagacao:`, `notificacao:`, `pagamento:`,
+  `avanco:`). No dia do lote, a rodada das 13:05 já tinha apagado do resumo as 10
+  tarefas das 12:35, e as seguintes gravariam "nada escrito" por semanas, porque os
+  contratos de janeiro ficam pendentes até a tarefa deles entrar no fluxo. O que foi
+  feito soma; pendentes e candidatos são os de agora; e o texto fica dentro de 4.000
+  caracteres encolhendo as LISTAS, nunca partindo o JSON no meio, como o corte antigo
+  em 2.000 fazia.
+- **Contrato sem tarefa no fluxo é ESPERA, não pendência**: `aguardandoTarefaNoFluxo`
+  conta os contratos reajustados cujo cliente ainda não tem tarefa nos três status (a
+  leva seguinte, antes do D-30), em vez de listá-los a cada meia hora.
+- ⚠⚠ **A fase 3 passou a tirar a DATA DE REAJUSTE nova da FIDELIDADE do Conexa**, e não
+  de "data da tarefa + 1 ano" (`planejarDatas`, em `datas.ts`). Na manhã do lote, uma
+  ação em massa na tela gravou 01/12/2027 na DATA DE REAJUSTE de 51 tarefas do fluxo
+  (mais 2 em `ongoing`); "data + 1 ano" daria 2028, e o aviso de 30 dias da renovação
+  de 2027 nunca dispararia. ⚠ **O n8n faz exatamente isso enquanto estiver ligado**
+  (URL + 365 no ClickUp; a fidelidade ele lê do Conexa, então o ERP fica certo).
+  O contrato da tarefa é achado em dois passos: pela fidelidade perto da data de
+  partida, como antes; e, se nenhuma estiver perto, pelo VALOR, só entre os contratos
+  do ciclo de agora (fidelidade até `DIAS_A_FRENTE_DO_CICLO` = 60 dias à frente, o que
+  deixa de fora o já avançado) e só sem dúvida. Sem contrato (tarefa da ONE), vale o de
+  antes, menos para data de partida mais de 60 dias no futuro, que não é empurrada mais
+  um ano. De quebra some a deriva de um dia dos dois fluxos do n8n (3713: 10/12 → 11/12).
+- **A leva de novembro (lote de 23/10, antes do retrato) não é alcançada**: 61 tarefas
+  ficaram em `notificação` com o valor antigo. Acerto único pelo valor deduzido é
+  possível e não foi feito sem decisão da equipe.
+- O comentário da propagação passou a escrever o percentual em português ("4,63%").
 
 ### Acompanhamento de contratos: a exceção que fala por cima do vendedor
 
