@@ -3,6 +3,7 @@ import {
   humanidadeDoDono,
   podeAgir,
 } from "@/server/integrations/chatwoot/regras";
+import type { AcaoDeFollowUp } from "./follow-up";
 
 /**
  * Prazos da conversa: "se ninguém responder em N minutos, faça X".
@@ -51,7 +52,14 @@ export type AcaoDoPrazo =
    * Pedido do Régis (17/11/2026, conversa 10954): o atendimento feito todo pelo
    * robô terminava sem ninguém clicar no botão do NPS.
    */
-  | { tipo: "pesquisa" };
+  | { tipo: "pesquisa" }
+  /**
+   * CLIENTE: o lead parou de responder — a cadeia de follow-up do Diego
+   * (task 17twvjx1037): duas mensagens e, sem resposta, o lead perdido no CRM e
+   * a conversa encerrada. Cada etapa, ao agir, registra a seguinte. Ver
+   * `prazos/follow-up.ts`.
+   */
+  | AcaoDeFollowUp;
 
 /** Só os campos da mensagem do Chatwoot que a decisão lê. */
 export type MensagemDaConversa = {

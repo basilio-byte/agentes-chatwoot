@@ -70,6 +70,26 @@ describe("aindaVale", () => {
     expect(aindaVale({ status: { type: "custom" }, tags: [{ name: " Ganho " }] })).toBe(false);
   });
 
+  it("⚠ task PERDIDA no Status CRM não barra: o lead que sumiu e voltou é oportunidade nova", () => {
+    // É assim que a equipe marca a perda: o status da task fica "sem contato".
+    const opcoes = [
+      { id: "op-perdido", name: "Perdido", orderindex: 0 },
+      { id: "op-ganho", name: "Ganho", orderindex: 1 },
+      { id: "op-andamento", name: "Em andamento", orderindex: 2 },
+    ];
+    const comStatus = (value: unknown, type_config: unknown = { options: opcoes }) => ({
+      status: { type: "open" },
+      custom_fields: [{ id: "s", name: "Status CRM", value, type_config: type_config as never }],
+    });
+
+    expect(aindaVale(comStatus("op-perdido"))).toBe(false);
+    expect(aindaVale(comStatus(0))).toBe(false);
+    expect(aindaVale(comStatus("op-andamento"))).toBe(true);
+    expect(aindaVale(comStatus(undefined))).toBe(true);
+    // Sem a configuração do campo não dá para traduzir: o comportamento de antes.
+    expect(aindaVale(comStatus("op-perdido", null))).toBe(true);
+  });
+
   it("⚠ lead ou venda autônoma ainda em andamento continua barrando (conversa 14454)", () => {
     expect(aindaVale({ status: { type: "open" }, tags: [{ name: "venda autonoma" }] })).toBe(true);
     expect(aindaVale({ status: { type: "custom" }, tags: [] })).toBe(true);

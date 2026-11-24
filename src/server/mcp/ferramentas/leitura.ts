@@ -2,6 +2,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   IntegrationProvider,
+  PrazoTipo,
   RunSource,
   RunStatus,
   SituacaoDaLacuna,
@@ -1576,6 +1577,101 @@ const verReconferenciaDeContratos = ferramenta({
   },
 });
 
+/**
+ * Os prazos do CLIENTE e o que cada um fez — é por aqui que se confere o
+ * follow-up do lead (task 17twvjx1037) sem abrir conversa por conversa.
+ *
+ * ⚠ Só os do CLIENTE, de propósito: os da EQUIPE medem quem atende e são lidos
+ * na tela `/prazos`, que é só do Proprietário. Por isso também não sai nome de
+ * pessoa da equipe.
+ */
+const verPrazosDoCliente = ferramenta({
+  name: "ver_prazos_do_cliente",
+  title: "Ver os prazos do cliente",
+  description:
+    "Os prazos que os agentes registraram para o CLIENTE responder e o que aconteceu com cada um: pendente (com a hora em que vence), executado (mensagem de retomada, atribuída, conversa resolvida, pesquisa, ou a etapa do follow-up — 1ª e 2ª mensagem, e por fim lead perdido no CRM e conversa resolvida), cancelado (o cliente respondeu, alguém da equipe escreveu, substituído por um novo) ou descartado. Filtre por conversa, agente ou ação. Devolve também os totais por ação e situação.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    conversa: z.number().int().positive().optional().describe("Número da conversa no Chatwoot."),
+    agente: campoAgente.optional(),
+    acao: z
+      .enum(["mensagem", "atribuir", "resolver", "pesquisa", "follow_up"])
+      .optional(),
+    dias: z.number().int().min(1).max(60).optional().describe("Quantos dias para trás. Padrão 7."),
+    limite: z.number().int().min(1).max(100).optional().describe("Padrão 30, máximo 100."),
+  }),
+  async executar({ conversa, agente: termo, acao, dias, limite }) {
+    let agentId: string | undefined;
+    if (termo) {
+      const agente = await acharAgente(termo);
+      if (!agente) return agenteNaoEncontrado(termo);
+      agentId = agente.id;
+    }
+
+    const where = {
+      tipo: PrazoTipo.CLIENTE,
+      criadoEm: { gte: new Date(Date.now() - (dias ?? 7) * 24 * 60 * 60 * 1000) },
+      ...(conversa ? { chatwootConversationId: conversa } : {}),
+      ...(agentId ? { agentId } : {}),
+      ...(acao ? { acao: { path: ["tipo"], equals: acao } } : {}),
+    };
+    const [prazos, totais] = await Promise.all([
+      db.prazoDeConversa.findMany({
+        where,
+        orderBy: { criadoEm: "desc" },
+        take: limite ?? 30,
+        select: {
+          chatwootConversationId: true,
+          status: true,
+          minutos: true,
+          venceEm: true,
+          acao: true,
+          motivo: true,
+          resultado: true,
+          criadoEm: true,
+          finalizadoEm: true,
+          agent: { select: { key: true } },
+        },
+      }),
+      db.prazoDeConversa.findMany({ where, select: { status: true, acao: true } }),
+    ]);
+
+    const contagem: Record<string, number> = {};
+    for (const p of totais) {
+      const tipo = (p.acao as { tipo?: string } | null)?.tipo ?? "?";
+      const chave = `${tipo} · ${p.status}`;
+      contagem[chave] = (contagem[chave] ?? 0) + 1;
+    }
+
+    return responder({
+      periodo: `últimos ${dias ?? 7} dias`,
+      total: totais.length,
+      porAcaoESituacao: contagem,
+      prazos: prazos.map((p) => {
+        const a = (p.acao ?? {}) as Record<string, unknown>;
+        return {
+          conversa: p.chatwootConversationId,
+          agente: p.agent.key,
+          acao: a.tipo ?? null,
+          ...(a.tipo === "follow_up"
+            ? { etapa: a.etapa ?? null, produto: a.produto ?? null, mensagens: a.mensagens ?? null }
+            : a.tipo === "mensagem"
+              ? { texto: a.texto ?? null }
+              : {}),
+          minutos: p.minutos,
+          situacao: p.status,
+          registradoEm: quando(p.criadoEm),
+          venceEm: quando(p.venceEm),
+          finalizadoEm: quando(p.finalizadoEm),
+          motivoDoAgente: p.motivo,
+          resultado: p.resultado,
+        };
+      }),
+    });
+  },
+});
+
 export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   listarAgentes,
   verAgente,
@@ -1596,4 +1692,5 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   verPesquisasDeSatisfacao,
   verFollowupsDeReserva,
   verLimpezaDeContatos,
+  verPrazosDoCliente,
 ];

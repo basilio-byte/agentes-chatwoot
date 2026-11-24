@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { CaminhoDoRepasse, IntegrationProvider, PrazoStatus } from "@/generated/prisma/enums";
+import {
+  CaminhoDoRepasse,
+  IntegrationProvider,
+  PrazoStatus,
+  PrazoTipo,
+} from "@/generated/prisma/enums";
 import type { ChatwootClient } from "@/server/integrations/chatwoot/client";
 import { clienteDoAgente } from "@/server/integrations/chatwoot/credenciais";
 import { resolverAtendente } from "@/server/integrations/chatwoot/atendentes";
@@ -16,6 +21,15 @@ import { iniciarPesquisaAutomatica } from "@/server/nps/automatica";
 import { agendarAtendimento } from "@/server/queue/atendimento";
 import { passarTarefaDoCrm, type AtualizacaoDoCrm } from "./crm";
 import { decidirPrazo, type AcaoDoPrazo } from "./decisao";
+import {
+  ETAPAS_DO_FOLLOW_UP,
+  mensagemDaEtapa,
+  notaDaMensagem,
+  proximaEtapa,
+  type AcaoDeFollowUp,
+} from "./follow-up";
+import { perderNoCrm, type PerdaNoCrm } from "./perda";
+import { registrarPrazo } from "./registrar";
 
 /**
  * Executa os prazos vencidos — chamado pelo vigia a cada minuto.
@@ -46,6 +60,12 @@ const acaoSchema = z.discriminatedUnion("tipo", [
   }),
   z.object({ tipo: z.literal("resolver") }),
   z.object({ tipo: z.literal("pesquisa") }),
+  z.object({
+    tipo: z.literal("follow_up"),
+    etapa: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    mensagens: z.tuple([z.string().min(1), z.string().min(1)]),
+    produto: z.string().nullable(),
+  }),
 ]);
 
 type Prazo = NonNullable<Awaited<ReturnType<typeof db.prazoDeConversa.findFirst>>>;
@@ -444,6 +464,9 @@ async function agir(
       };
     }
 
+    case "follow_up":
+      return seguirFollowUp(cliente, prazo, acao, conversa);
+
     case "atribuir": {
       const achado = resolverAtendente(
         acao.atendente,
@@ -484,6 +507,116 @@ async function agir(
       return { status: PrazoStatus.EXECUTADO, resultado: `atribuída a ${nome}` };
     }
   }
+}
+
+/**
+ * Uma etapa do follow-up do lead (`prazos/follow-up.ts`). As duas primeiras
+ * mandam a mensagem e registram a etapa seguinte; a última dá o lead como
+ * perdido no CRM e encerra a conversa, sem nada ao cliente.
+ *
+ * Quem decide se a etapa age é `decidirPrazo`, como em todo prazo do cliente:
+ * conversa do robô, do mesmo agente, e ninguém — cliente ou equipe — escreveu
+ * depois da etapa anterior.
+ */
+async function seguirFollowUp(
+  cliente: ChatwootClient,
+  prazo: Prazo,
+  acao: AcaoDeFollowUp,
+  conversa: { inboxId: number | null; contactId: number | null },
+): Promise<Fim> {
+  const conversaId = prazo.chatwootConversationId;
+  const texto = mensagemDaEtapa(acao);
+  const proxima = proximaEtapa(acao);
+
+  if (texto && proxima) {
+    const enviada = await cliente.enviarMensagem(conversaId, texto);
+    await notaInterna(
+      cliente,
+      conversaId,
+      notaDaMensagem({ etapa: acao.etapa as 1 | 2, minutos: prazo.minutos, motivo: prazo.motivo }),
+    );
+    // A etapa seguinte conta a partir do que acabou de sair: a mensagem e a nota
+    // são do robô e não derrubariam o prazo, mas a referência certa é a última
+    // mensagem enviada — "respondeu" é o que vier DEPOIS dela.
+    await registrarPrazo({
+      tipo: PrazoTipo.CLIENTE,
+      chatwootConversationId: conversaId,
+      agentId: prazo.agentId,
+      portaAgentId: prazo.portaAgentId,
+      minutos: prazo.minutos,
+      referenciaMensagemId: Math.max(prazo.referenciaMensagemId, enviada?.id ?? 0),
+      donoId: null,
+      donoNome: null,
+      acao: proxima,
+      motivo: prazo.motivo,
+    });
+    return {
+      status: PrazoStatus.EXECUTADO,
+      resultado: `follow-up ${acao.etapa} de ${ETAPAS_DO_FOLLOW_UP}: mensagem enviada`,
+    };
+  }
+
+  // Última etapa: o lead perdido no CRM, depois a conversa encerrada.
+  let contato: { nome: string | null; telefone: string | null } = { nome: null, telefone: null };
+  if (conversa.contactId != null) {
+    try {
+      const lido = await cliente.obterContato(conversa.contactId);
+      contato = { nome: lido.nome, telefone: lido.telefone };
+    } catch (erro) {
+      logger.warn({ conversa: conversaId, erro }, "follow-up: contato não lido para o CRM");
+    }
+  }
+  const agente = await db.agent.findUnique({
+    where: { id: prazo.agentId },
+    select: { name: true },
+  });
+  const crm = await perderNoCrm({
+    chatwootConversationId: conversaId,
+    contato,
+    produto: acao.produto,
+    agente: agente?.name ?? "de atendimento",
+    minutos: prazo.minutos,
+    linkDaConversa: `${cliente.baseUrl}/app/accounts/${cliente.contaId}/conversations/${conversaId}`,
+  });
+
+  await resolverConversa(
+    cliente,
+    conversaId,
+    [
+      `⏱️ Follow-up ${ETAPAS_DO_FOLLOW_UP} de ${ETAPAS_DO_FOLLOW_UP}: o cliente não respondeu às duas mensagens de follow-up. Conversa encerrada pelo agente, sem mensagem ao cliente; se ele escrever de novo, ela reabre.`,
+      `Motivo registrado pelo agente: ${prazo.motivo}`,
+      ...linhasDaPerda(crm),
+    ].join("\n"),
+  );
+  return {
+    status: PrazoStatus.EXECUTADO,
+    resultado: `follow-up ${ETAPAS_DO_FOLLOW_UP} de ${ETAPAS_DO_FOLLOW_UP}: ${resumoDaPerda(crm)} · conversa resolvida`,
+  };
+}
+
+/** O que a nota diz sobre o lead perdido no CRM. */
+function linhasDaPerda(crm: PerdaNoCrm): string[] {
+  const linhas: string[] = [];
+  if (crm.tarefa && crm.marcada) {
+    linhas.push(
+      `CRM: lead marcado como perdido (motivo "Não respondeu") na task ${crm.tarefa.url ?? crm.tarefa.id}` +
+        (crm.tarefa.origem === "criada" ? ", criada agora para o registro." : "."),
+    );
+  } else if (crm.observacao) {
+    linhas.push(`CRM: nada marcado — ${crm.observacao}.`);
+  }
+  for (const problema of crm.problemas) linhas.push(`AVISO: ${problema}`);
+  return linhas;
+}
+
+function resumoDaPerda(crm: PerdaNoCrm): string {
+  if (crm.tarefa && crm.marcada) {
+    return crm.tarefa.origem === "criada"
+      ? "lead perdido no CRM (task criada)"
+      : "lead perdido no CRM";
+  }
+  if (crm.observacao) return `CRM sem mudança: ${crm.observacao}`;
+  return "CRM não atualizado";
 }
 
 /**

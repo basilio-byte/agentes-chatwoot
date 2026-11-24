@@ -11,6 +11,7 @@ import { resolverAtendente } from "../chatwoot/atendentes";
 import { opcoesDeAusencia } from "../chatwoot/ausencias-config";
 import { humanidadeDoDono, podeAgir } from "../chatwoot/regras";
 import { referenciaDasMensagens } from "@/server/prazos/decisao";
+import { rotuloDoProduto } from "@/server/prazos/follow-up";
 import { jaVoltouParaOAgente, registrarPrazo } from "@/server/prazos/registrar";
 
 /**
@@ -188,7 +189,7 @@ export const prazosIntegration: IntegrationDefinition = {
       name: "prazo_resposta_do_cliente",
       categoria: "Prazos",
       description:
-        'Registra um prazo para o CLIENTE responder. Use no fim do seu turno, e só quando as suas instruções mandarem agir se ele não responder em N minutos. Se o cliente escrever antes, o prazo cai sozinho; chamar de novo troca o prazo anterior. Se vencer, o sistema faz UMA coisa: manda a mensagem que você deixou (acao "mensagem"), entrega a conversa à pessoa indicada, com o aviso (acao "atribuir"), resolve a conversa sem mandar nada (acao "resolver") ou manda a pesquisa de satisfação, que resolve a conversa no fim dela (acao "pesquisa", depois de você concluir o pedido do cliente) — essas duas, só quando as instruções mandarem. Se uma pessoa da equipe assumir ou escrever na conversa, nada acontece.',
+        'Registra um prazo para o CLIENTE responder. Use no fim do seu turno, e só quando as suas instruções mandarem agir se ele não responder em N minutos. Se o cliente escrever antes, o prazo cai sozinho; chamar de novo troca o prazo anterior. Se vencer, o sistema faz UMA coisa: manda a mensagem que você deixou (acao "mensagem"), entrega a conversa à pessoa indicada, com o aviso (acao "atribuir"), resolve a conversa sem mandar nada (acao "resolver") ou manda a pesquisa de satisfação, que resolve a conversa no fim dela (acao "pesquisa", depois de você concluir o pedido do cliente) — essas duas, só quando as instruções mandarem. Com acao "follow_up", o sistema segue sozinho em três etapas de N minutos: manda texto, depois segundoTexto, e por fim encerra a conversa e registra o lead como perdido no CRM (motivo "Não respondeu"). Se uma pessoa da equipe assumir ou escrever na conversa, nada acontece.',
       requiresConfirmation: true,
       inputSchema: z.object({
         minutos: z
@@ -198,15 +199,25 @@ export const prazosIntegration: IntegrationDefinition = {
           .max(1440)
           .describe("Quantos minutos de silêncio do cliente, a partir de agora."),
         acao: z
-          .enum(["mensagem", "atribuir", "resolver", "pesquisa"])
+          .enum(["mensagem", "atribuir", "resolver", "pesquisa", "follow_up"])
           .describe(
-            '"mensagem": manda o texto ao cliente. "atribuir": entrega a uma pessoa, com o texto como aviso. "resolver": resolve a conversa, sem texto. "pesquisa": manda a pesquisa de satisfação, sem texto.',
+            '"mensagem": manda o texto ao cliente. "atribuir": entrega a uma pessoa, com o texto como aviso. "resolver": resolve a conversa, sem texto. "pesquisa": manda a pesquisa de satisfação, sem texto. "follow_up": duas mensagens (texto e segundoTexto) e, sem resposta, o lead perdido no CRM e a conversa encerrada.',
           ),
         texto: z
           .string()
           .optional()
           .describe(
-            'Com "mensagem" ou "atribuir": o que o CLIENTE vai ler no vencimento — a mensagem de retomada, ou o aviso da passagem.',
+            'Com "mensagem" ou "atribuir": o que o CLIENTE vai ler no vencimento — a mensagem de retomada, ou o aviso da passagem. Com "follow_up": a 1ª mensagem.',
+          ),
+        segundoTexto: z
+          .string()
+          .optional()
+          .describe('Só com "follow_up": a 2ª mensagem, que sai se o cliente continuar sem responder.'),
+        produto: z
+          .string()
+          .optional()
+          .describe(
+            'Só com "follow_up": o produto como o CRM escreve (ex.: "Sala Privativa", "Endereço Fiscal Litoral", "Sala de reunião"), para registrar o lead perdido.',
           ),
         atendente: z
           .string()
@@ -220,8 +231,10 @@ export const prazosIntegration: IntegrationDefinition = {
       async execute(entrada, ctx) {
         const args = entrada as {
           minutos: number;
-          acao: "mensagem" | "atribuir" | "resolver" | "pesquisa";
+          acao: "mensagem" | "atribuir" | "resolver" | "pesquisa" | "follow_up";
           texto?: string;
+          segundoTexto?: string;
+          produto?: string;
           atendente?: string;
           motivo: string;
         };
@@ -230,12 +243,27 @@ export const prazosIntegration: IntegrationDefinition = {
         if (fora) return { registrado: false, erro: fora };
 
         const texto = args.texto?.trim() ?? "";
+        const segundoTexto = args.segundoTexto?.trim() ?? "";
         const semTexto = args.acao === "resolver" || args.acao === "pesquisa";
         if (!semTexto && texto.length < 5) {
           return {
             registrado: false,
             erro: `Com acao "${args.acao}", escreva em texto o que o cliente vai ler no vencimento.`,
           };
+        }
+        if (args.acao === "follow_up") {
+          if (segundoTexto.length < 5) {
+            return {
+              registrado: false,
+              erro: 'Com acao "follow_up", escreva também segundoTexto: a 2ª mensagem, que sai se o cliente continuar sem responder.',
+            };
+          }
+          if (segundoTexto === texto) {
+            return {
+              registrado: false,
+              erro: 'texto e segundoTexto são a mesma mensagem: o cliente receberia o mesmo texto duas vezes. Escreva uma 2ª mensagem diferente.',
+            };
+          }
         }
 
         if (args.acao === "atribuir" && !args.atendente?.trim()) {
@@ -309,9 +337,24 @@ export const prazosIntegration: IntegrationDefinition = {
                 ? { tipo: "resolver" }
                 : args.acao === "pesquisa"
                   ? { tipo: "pesquisa" }
-                  : { tipo: "mensagem", texto },
+                  : args.acao === "follow_up"
+                    ? {
+                        tipo: "follow_up",
+                        etapa: 1,
+                        mensagens: [texto, segundoTexto],
+                        produto: rotuloDoProduto(args.produto),
+                      }
+                    : { tipo: "mensagem", texto },
           motivo: args.motivo,
         });
+
+        if (args.acao === "follow_up") {
+          return {
+            registrado: true,
+            venceEm: formatarData(prazo.venceEm),
+            observacao: `Se o cliente não responder até lá, ele recebe a 1ª mensagem; ${args.minutos} min depois, a 2ª; e ${args.minutos} min depois disso a conversa é encerrada e o lead fica como perdido no CRM (motivo "Não respondeu"). Se ele responder em qualquer momento, o resto cai e você segue o atendimento. Não fale do follow-up ao cliente. Termine o seu turno normalmente.`,
+          };
+        }
 
         return {
           registrado: true,

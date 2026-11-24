@@ -940,7 +940,7 @@ export const clickupIntegration: IntegrationDefinition = {
       name: "clickup_buscar_tarefas_por_telefone",
       categoria: "Tarefas",
       description:
-        "Procura tarefas pelo telefone do cliente gravado num campo das listas informadas (padrão: CELULAR). Passe o número como vier — com ou sem +55, espaço ou o nono dígito: as variações de formato são testadas aqui, numa chamada só, e o número gravado em cada tarefa é conferido. Devolve da tarefa mais recente para a mais antiga (pela criação), com lista, status, datas e emAndamento — false quando a tarefa é negócio encerrado (ganha, fechada ou arquivada). Sem resultado quer dizer que nenhuma tarefa DESSAS listas tem o número naquele campo, não que o cliente não exista.",
+        "Procura tarefas pelo telefone do cliente gravado num campo das listas informadas (padrão: CELULAR). Passe o número como vier — com ou sem +55, espaço ou o nono dígito: as variações de formato são testadas aqui, numa chamada só, e o número gravado em cada tarefa é conferido. Devolve da tarefa mais recente para a mais antiga (pela criação), com lista, status, datas e emAndamento — false quando a tarefa é negócio encerrado (ganha, perdida, fechada ou arquivada). Sem resultado quer dizer que nenhuma tarefa DESSAS listas tem o número naquele campo, não que o cliente não exista.",
       inputSchema: z.object({
         telefone: z.string().min(8).describe("Telefone do cliente, em qualquer formato."),
         listas: z

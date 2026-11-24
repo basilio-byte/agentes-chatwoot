@@ -4463,6 +4463,58 @@ havia ninguém vendo o tempo passar.
     agente entrega de novo, o prazo devolve de novo, e ninguém fecha a venda.
   - **Agente desligado não retoma**: a conversa fica com a pessoa, com nota.
 
+##### Follow-up do lead: duas mensagens e, sem resposta, perdido no CRM
+
+Pedido do Diego (task 17twvjx1037, 19/11/2026), depois da conversa 15070: o
+lead veio de um anúncio, conversou meia hora com o agente de Salas Privativas,
+desistiu e fechou com um concorrente — *"por falta de follow-up ou sugestão de
+outro espaço"*. O fluxo dele: **30 min → perguntar se deseja seguir com a
+contratação; +30 → perguntar se ainda está interessado; +30 → encerrar o
+contato e perder no CRM com motivo "Não respondeu"**. Regras puras e testadas em
+`prazos/follow-up.ts`; o CRM em `prazos/perda.ts`; o vigia em `executar.ts`; a
+leitura no MCP em `ver_prazos_do_cliente`.
+
+- **É `prazo_resposta_do_cliente` com `acao: "follow_up"`**: o agente registra UMA
+  vez, com `texto` (1ª mensagem), `segundoTexto` (2ª) e `produto` (rótulo do CRM,
+  só para o registro da perda), e `minutos` é o intervalo entre as etapas. O
+  agente só pensa quando o cliente escreve; quem anda a cadeia é o vigia, e cada
+  etapa, ao agir, registra a seguinte (`acao.etapa`, no mesmo JSON, sem
+  migration). Mensagem do cliente ou da equipe em qualquer ponto derruba a etapa
+  pendente pelas travas de todo prazo do cliente; o agente, ao responder, registra
+  a cadeia de novo, do começo.
+- **A etapa seguinte conta a partir da mensagem que acabou de sair**
+  (`referenciaMensagemId` = id dela): "respondeu" é o que vier depois.
+- **A 3ª etapa não manda nada ao cliente**: dá o lead como perdido no CRM e
+  resolve a conversa, com nota interna dizendo o que aconteceu no CRM. Terceira
+  exceção consciente ao "o robô não resolve", depois de `resolver` e `pesquisa`.
+  Se o cliente voltar, a conversa reabre na porta.
+- **Perder no CRM é o que a equipe faz à mão** (conferido em 24/11/2026 numa task
+  marcada pelo Alan): o status da task NÃO muda; **Status CRM = Perdido**, **Motivo
+  de perda = Não respondeu** e **Data perdido** = hoje. Motivo e data só se vazios;
+  task GANHA, ou já Perdida, fica como está. Comentário na task com a origem e o
+  link da conversa, e a leitura de volta confere se o Status ficou Perdido.
+- **Qual task** (`perderNoCrm`): a que um agente criou (ou que a barreira de task
+  em dobro devolveu) NESTA conversa, NESTE atendimento (depois de
+  `historicoDesde`) — nunca a achada por telefone. ⚠ Sem ela: telefone com task
+  **em andamento** no CRM Comercial é outro atendimento, talvez de uma pessoa, e
+  nada é feito; telefone com task já **Perdida** nos 30 dias, também nada (não dobra
+  o lead); sem nenhuma, **a task é criada para o registro** (o lead de Salas
+  Privativas para antes da sexta resposta, quando o CRM o registraria) — só nome,
+  CELULAR e a classificação do produto, **sem responsável e sem VENDEDOR** (ninguém
+  da equipe atendeu; "Auto Venda" é venda fechada), e sem a "Chave CRM", para o CRM
+  não a confundir com o lead que voltar no mesmo dia. ⚠ Os campos da perda vão
+  **5 s depois** da criação: as regras de criação do ClickBot preenchem o Status CRM
+  e desfariam o Perdido. Busca por telefone que falha: na dúvida, não cria.
+- ⚠ **Task Perdida não conta mais como "em andamento"** (`perdidaNoCrm`, dentro de
+  `aindaVale`): as três travas de task em dobro e o `emAndamento` da busca por
+  telefone passaram a tratar Status CRM = Perdido como negócio encerrado. Pelo
+  status ("sem contato") ela parecia viva, e o lead que sumiu e voltou teria a
+  venda nova "completada" na task perdida — que o ganho automático nunca tira de
+  Perdido. Sem a configuração do campo na leitura, conta como viva (o de antes).
+- **Nunca lança no CRM**: ClickUp desligado, campo recusado ou leitura de volta
+  diferente viram `AVISO` na nota e no `resultado` do prazo; a conversa é
+  encerrada de qualquer jeito.
+
 ##### A task do CRM acompanha a troca
 
 Quando o prazo **reatribui**, `passarTarefaDoCrm` passa junto a task que um
