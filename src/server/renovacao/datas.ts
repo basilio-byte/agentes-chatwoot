@@ -86,44 +86,85 @@ export type PedidoDasDatas = {
   dataEncerramento: string | null;
 };
 
+/** Os campos de data da Base de clientes, como vêm na tarefa do `payload`. */
+const CAMPO_REAJUSTE_NO_PAYLOAD = "0231d769-5063-439d-8b03-ad660c6bada5";
+const CAMPO_ENCERRAMENTO_NO_PAYLOAD = "885c7420-baa9-4125-95cd-53934b47b147";
+
 /**
- * O que a automação mandou. Só o `taskid` é indispensável; as duas datas valem
- * como "o valor de antes" quando vêm, e a tarefa é relida ao vivo quando não vêm.
+ * Texto que é variável do ClickUp NÃO preenchida (`{Task ID}`) não é valor.
+ *
+ * ⚠ A ação nova "Webhook de chamada" (24/11/2026) escolhe um webhook cadastrado e
+ * não troca as variáveis do endereço: `?taskid={Task ID}` chega como o texto
+ * `{Task ID}`. Lido como id, ele recusava a chamada inteira.
+ */
+function valorDe(v: unknown): string | null {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t && !/[{}]/.test(t) ? t : null;
+}
+
+/** O valor de um campo personalizado na tarefa do `payload`, nos dois formatos do ClickUp. */
+function campoDoPayload(tarefa: Record<string, unknown>, campoId: string): string | null {
+  for (const lista of [tarefa.fields, tarefa.custom_fields]) {
+    if (!Array.isArray(lista)) continue;
+    for (const campo of lista as Array<Record<string, unknown>>) {
+      if (campo?.field_id === campoId || campo?.id === campoId) return valorDe(campo.value);
+    }
+  }
+  return null;
+}
+
+/**
+ * O que a automação mandou. Só o id da tarefa é indispensável; as duas datas
+ * valem como "o valor de antes" quando vêm, e a tarefa é relida ao vivo quando
+ * não vêm.
  *
  * Os nomes aceitos incluem os do n8n (`taskid`, `datadereajuste`,
  * `dataencerramento`) e as variações óbvias, no query e no corpo: o ClickUp
  * chama o endereço por POST e o formato do corpo não é documentado.
+ *
+ * ⚠⚠ **A automação do ClickUp manda a TAREFA dentro de `payload`, e o `id` do
+ * topo é da EXECUÇÃO da automação, não da tarefa** (conferido nas entregas reais
+ * dos gatilhos em 24/11/2026: `{ id | auto_id, trigger_id, date, payload }`). Por
+ * isso o id vem do query, depois de `payload.id`, e o `id` do topo só vale quando
+ * não há `payload` nenhum. As datas também podem vir dos campos da tarefa no
+ * `payload` (`fields` na ação nova, `custom_fields` na antiga): é a foto do
+ * momento da troca de status, antes de qualquer automação regravar.
  */
 export function lerPedidoDasDatas(
   query: Record<string, string | null | undefined>,
   corpo: unknown,
 ): PedidoDasDatas {
   const doCorpo = (corpo && typeof corpo === "object" ? corpo : {}) as Record<string, unknown>;
-  const aninhado = (doCorpo.payload && typeof doCorpo.payload === "object"
-    ? doCorpo.payload
-    : {}) as Record<string, unknown>;
+  const temPayload = !!doCorpo.payload && typeof doCorpo.payload === "object";
+  const tarefa = (temPayload ? doCorpo.payload : {}) as Record<string, unknown>;
 
-  const achar = (...nomes: string[]) => {
-    for (const n of nomes) {
-      const q = query[n];
-      if (typeof q === "string" && q.trim()) return q.trim();
-    }
-    for (const fonte of [doCorpo, aninhado]) {
+  const achar = (fontes: Array<Record<string, unknown>>, ...nomes: string[]) => {
+    for (const fonte of fontes) {
       for (const n of nomes) {
-        const v = fonte[n];
-        if (typeof v === "string" && v.trim()) return v.trim();
-        if (typeof v === "number") return String(v);
+        const v = valorDe(fonte[n]);
+        if (v) return v;
       }
     }
     return null;
   };
+  const daQuery = query as Record<string, unknown>;
 
-  const id = achar("taskid", "taskId", "task_id", "id");
+  const id =
+    achar([daQuery, doCorpo, tarefa], "taskid", "taskId", "task_id") ??
+    achar([tarefa], "id") ??
+    (temPayload ? null : achar([doCorpo], "id"));
+
   return {
     tarefaId: id && /^[A-Za-z0-9_-]{4,40}$/.test(id) ? id : null,
-    dataReajuste: lerDataDoClickUp(achar("datadereajuste", "dataReajuste", "data_de_reajuste")),
+    dataReajuste: lerDataDoClickUp(
+      achar([daQuery, doCorpo, tarefa], "datadereajuste", "dataReajuste", "data_de_reajuste") ??
+        campoDoPayload(tarefa, CAMPO_REAJUSTE_NO_PAYLOAD),
+    ),
     dataEncerramento: lerDataDoClickUp(
-      achar("dataencerramento", "dataEncerramento", "data_de_encerramento"),
+      achar([daQuery, doCorpo, tarefa], "dataencerramento", "dataEncerramento", "data_de_encerramento") ??
+        campoDoPayload(tarefa, CAMPO_ENCERRAMENTO_NO_PAYLOAD),
     ),
   };
 }

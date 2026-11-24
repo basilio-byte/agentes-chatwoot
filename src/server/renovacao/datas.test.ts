@@ -58,6 +58,53 @@ describe("lerPedidoDasDatas", () => {
     expect(lerPedidoDasDatas({}, { payload: { id: "abc123" } }).tarefaId).toBe("abc123");
   });
 
+  it("⚠ a ação NOVA do ClickUp (24/11/2026): variáveis não preenchidas e a tarefa no `payload`", () => {
+    // O endereço colado com `?taskid={Task ID}` chega com o texto cru, e o `id`
+    // do topo é o da EXECUÇÃO da automação — não pode virar id de tarefa.
+    const p = lerPedidoDasDatas(
+      {
+        taskid: "{Task ID}",
+        datadereajuste: "{DATA DE REAJUSTE}",
+        dataencerramento: "{DATA DE ENCERRAMENTO CONTRATO [BASE CLIENTES]}",
+      },
+      {
+        id: "3f8e2a7c-1b2d-4c5e-9f00-aabbccddeeff",
+        trigger_id: "t1",
+        date: 1795534559111,
+        payload: {
+          id: "86adugf6r",
+          fields: [
+            { field_id: "0231d769-5063-439d-8b03-ad660c6bada5", value: 1827644400000 },
+            { field_id: "885c7420-baa9-4125-95cd-53934b47b147", value: "1796799600000" },
+          ],
+        },
+      },
+    );
+    expect(p).toEqual({ tarefaId: "86adugf6r", dataReajuste: "2027-12-01", dataEncerramento: "2026-12-09" });
+  });
+
+  it("a ação antiga (`auto_id`, `custom_fields`) também dá as datas pelo `payload`", () => {
+    const p = lerPedidoDasDatas(
+      {},
+      {
+        auto_id: "a1",
+        trigger_id: "t1",
+        payload: {
+          id: "86adjmaqg",
+          custom_fields: [{ id: "0231d769-5063-439d-8b03-ad660c6bada5", value: "1795762800000" }],
+        },
+      },
+    );
+    expect(p.tarefaId).toBe("86adjmaqg");
+    expect(p.dataReajuste).toBe("2026-11-27");
+    expect(p.dataEncerramento).toBeNull();
+  });
+
+  it("⚠ o `id` do topo só vale sem `payload`; com `payload` sem id, não há tarefa", () => {
+    expect(lerPedidoDasDatas({}, { id: "abc123" }).tarefaId).toBe("abc123");
+    expect(lerPedidoDasDatas({}, { id: "evento-da-automacao", payload: {} }).tarefaId).toBeNull();
+  });
+
   it("⚠ só o id é indispensável, e id com formato estranho é recusado", () => {
     expect(lerPedidoDasDatas({ taskid: "86adjmaqg" }, null).dataReajuste).toBeNull();
     expect(lerPedidoDasDatas({ taskid: "../../etc" }, null).tarefaId).toBeNull();

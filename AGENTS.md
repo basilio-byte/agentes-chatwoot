@@ -2447,6 +2447,15 @@ nenhuma tarefa em `renovação`.
   ficaram em `notificação` com o valor antigo. Acerto único pelo valor deduzido é
   possível e não foi feito sem decisão da equipe.
 - O comentário da propagação passou a escrever o percentual em português ("4,63%").
+- ⚠⚠ **A ação "Webhook de chamada" NOVA do ClickUp não preenche as variáveis do
+  endereço** (posta na automação 8 em 24/11/2026, ao lado da ação antiga do n8n): o
+  `?taskid={Task ID}` chega como o texto `{Task ID}`. E o corpo de toda automação é
+  `{ id | auto_id, trigger_id, date, payload }`, com a TAREFA em `payload` — o `id` do
+  topo é o da execução da automação. `lerPedidoDasDatas` lia o query primeiro e
+  aceitava o `id` do topo: recusaria a chamada inteira, ou procuraria a tarefa errada.
+  Hoje variável crua não é valor, o id vem de `payload.id` (o do topo só sem
+  `payload`), e as datas também saem dos campos da tarefa no `payload` (`fields` na
+  ação nova, `custom_fields` na antiga) — a foto do momento da troca de status.
 
 ### Acompanhamento de contratos: a exceção que fala por cima do vendedor
 
