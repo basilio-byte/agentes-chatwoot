@@ -12,12 +12,14 @@ import {
   CAMPO_REAJUSTE,
   CAMPO_VALOR_CONTRATO,
   chaveDaPropagacao,
+  comValorDeduzido,
   comentarioDaPropagacao,
   confereOCliente,
   decidirPercentual,
   decidirStatus,
   decidirValor,
   dentroDaJanela,
+  loteAnteriorAoRetrato,
   loteChegou,
   PAUSA_ENTRE_TAREFAS_MS,
   PROPAGACOES_POR_RODADA,
@@ -111,9 +113,16 @@ export async function candidatosDaPropagacao(hoje: string) {
     orderBy: { reajusteEm: "desc" },
   });
 
-  const comLote = linhas.filter(
-    (l) => loteChegou(l as RetratoParaPropagar) && dentroDaJanela(l, hoje),
-  ) as RetratoParaPropagar[];
+  const naJanela = (linhas as RetratoParaPropagar[]).filter((l) => dentroDaJanela(l, hoje));
+  const comLote = [
+    ...naJanela.filter((l) => loteChegou(l)),
+    // ⚠ O lote que caiu antes do retrato (a leva de novembro/2026): o valor de
+    // antes vem do percentual, e só quando a conta fecha no centavo.
+    ...naJanela
+      .filter((l) => !loteChegou(l) && loteAnteriorAoRetrato(l))
+      .map(comValorDeduzido)
+      .filter((l): l is RetratoParaPropagar => l !== null),
+  ];
   if (!comLote.length) return { candidatos: [], tomadas: new Map<number, Set<string>>() };
 
   // O que já foi propagado sai da fila pela reserva, não por campo novo.

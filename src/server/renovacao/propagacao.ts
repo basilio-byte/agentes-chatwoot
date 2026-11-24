@@ -111,6 +111,11 @@ export type RetratoParaPropagar = {
   reajustePct: number | null;
   reajusteIndice: string | null;
   periodicidade: string | null;
+  /**
+   * O valor de antes NÃO veio do retrato: foi calculado do percentual
+   * (`comValorDeduzido`). O comentário diz isso.
+   */
+  valorAnteriorDeduzido?: boolean;
 };
 
 /**
@@ -123,6 +128,45 @@ export type RetratoParaPropagar = {
  */
 export function loteChegou(retrato: RetratoParaPropagar): boolean {
   return !!retrato.reajusteEm && retrato.reajusteEm !== retrato.reajusteDoRetrato;
+}
+
+/**
+ * O lote caiu ANTES de o retrato existir: o retrato já nasceu com o reajuste.
+ *
+ * ⚠ É a leva de NOVEMBRO/2026 (lote de 23/10, retrato só desde 10/11): o valor
+ * guardado já era o novo, `loteChegou` nunca fica verdadeiro, e 61 tarefas ficaram
+ * paradas em "notificação renovação" com o valor antigo. O Laércio autorizou o
+ * acerto em 24/11/2026. A janela de `DIAS_PARA_PROPAGAR` (que quem chama também
+ * aplica) é o que limita isto ao lote recente: todo contrato reajustado há mais
+ * tempo também tem o retrato igual ao reajuste.
+ */
+export function loteAnteriorAoRetrato(retrato: RetratoParaPropagar): boolean {
+  return (
+    !!retrato.reajusteEm &&
+    retrato.reajusteEm === retrato.reajusteDoRetrato &&
+    retrato.reajustePct != null &&
+    retrato.reajustePct > 0
+  );
+}
+
+/**
+ * O mesmo retrato com o valor de antes CALCULADO do percentual (atual ÷ (1 + %)),
+ * ou nulo quando a conta não volta exata ao centavo.
+ *
+ * ⚠ Só serve se ida e volta batem: (calculado × (1 + %)) arredondado tem de ser o
+ * valor de agora. É o que o Conexa faz no lote; um valor que não fecha assim não
+ * saiu do reajuste puro (desconto, mudança de plano), e o "antes" seria palpite.
+ * Com o antes calculado, `decidirValor` só troca o valor da tarefa que está
+ * EXATAMENTE nele — a régua de sempre.
+ */
+export function comValorDeduzido(retrato: RetratoParaPropagar): RetratoParaPropagar | null {
+  const pct = retrato.reajustePct;
+  if (pct == null || pct <= 0) return null;
+  const fator = 1 + pct / 100;
+  const atual = retrato.valorAtualCentavos;
+  const antes = Math.round(atual / fator);
+  if (antes <= 0 || Math.round(antes * fator) !== atual) return null;
+  return { ...retrato, valorCentavos: antes, valorAnteriorDeduzido: true };
 }
 
 /** A chave da reserva: um contrato, um reajuste, uma propagação. */
@@ -311,6 +355,11 @@ export function comentarioDaPropagacao(entrada: {
     linhas.push(
       `- **Valor do contrato:** ${reais(antes)} → ${reais(agora)} (${reais(mensal)} por mês)`,
     );
+    if (retrato.valorAnteriorDeduzido) {
+      linhas.push(
+        "  _(o valor de antes foi calculado a partir do percentual: o reajuste foi lançado antes de o sistema começar a guardar os valores)_",
+      );
+    }
   } else {
     linhas.push(`- ⚠ **Valor do contrato não atualizado:** ${valor.motivo}`);
   }

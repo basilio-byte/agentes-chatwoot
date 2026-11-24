@@ -2443,9 +2443,16 @@ nenhuma tarefa em `renovação`.
   deixa de fora o já avançado) e só sem dúvida. Sem contrato (tarefa da ONE), vale o de
   antes, menos para data de partida mais de 60 dias no futuro, que não é empurrada mais
   um ano. De quebra some a deriva de um dia dos dois fluxos do n8n (3713: 10/12 → 11/12).
-- **A leva de novembro (lote de 23/10, antes do retrato) não é alcançada**: 61 tarefas
-  ficaram em `notificação` com o valor antigo. Acerto único pelo valor deduzido é
-  possível e não foi feito sem decisão da equipe.
+- **O lote que caiu ANTES do retrato também é propagado** (`loteAnteriorAoRetrato` e
+  `comValorDeduzido`, em `propagacao.ts`; autorizado pelo Laércio em 24/11/2026). A leva
+  de novembro (lote de 23/10, retrato só desde 10/11) nunca virava candidata: o retrato
+  já nasceu com o valor novo, e 61 tarefas ficaram em `notificação` com o valor antigo.
+  Agora o valor de antes é CALCULADO do percentual, e só vale quando a ida e volta
+  fecham no centavo (77 de 80 contratos daquele lote fecham). O comentário diz que o
+  valor foi calculado. A janela de 45 dias é o que limita isto ao lote recente: todo
+  contrato reajustado há mais tempo também tem o retrato igual ao reajuste.
+  ⚠ Com o fechamento no pagamento ligado, quem dessa leva já pagou vai para `ongoing`
+  logo depois, e o ClickUp manda o e-mail de "cliente renovado".
 - O comentário da propagação passou a escrever o percentual em português ("4,63%").
 - ⚠⚠ **A ação "Webhook de chamada" NOVA do ClickUp não preenche as variáveis do
   endereço** (posta na automação 8 em 24/11/2026, ao lado da ação antiga do n8n): o

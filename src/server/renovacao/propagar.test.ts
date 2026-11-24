@@ -198,7 +198,10 @@ describe("propagarReajustes: o caminho que funciona", () => {
 
 describe("propagarReajustes: quando não escreve", () => {
   it("sem candidato, NÃO abre o ClickUp", async () => {
-    retratos = [retrato({ reajusteDoRetrato: "2026-10-23" })]; // retrato tirado depois do lote
+    // Retrato tirado depois do lote E sem percentual: não há como calcular o valor
+    // de antes. (Com percentual, desde 24/11/2026 ele é candidato — ver o caso da
+    // leva de novembro.)
+    retratos = [retrato({ reajusteDoRetrato: "2026-10-23", reajustePct: null })];
     const rodada = await propagarReajustes({ forcar: true }, AGORA);
     expect(rodada.acao).toBe("nada a propagar");
     expect(clickupAberto).toBe(0);
@@ -305,6 +308,34 @@ describe("propagarReajustes: quando não escreve", () => {
     expect(rodada.aguardandoTarefaNoFluxo).toBe(1);
     expect(rodada.pendentes).toEqual([]);
     expect(eventos.some((e) => e.externalId.startsWith("reajuste:"))).toBe(false);
+  });
+
+  it("⚠ lote ANTES do retrato (leva de novembro): propaga com o valor de antes calculado", async () => {
+    // O retrato do 5060 nascido depois do lote de 23/10: guarda 1.338,62 e o
+    // reajuste de 23/10. A tarefa está nos 1.280,00 de antes.
+    retratos = [retrato({ valorCentavos: 133862, reajusteDoRetrato: "2026-10-23" })];
+
+    const rodada = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(rodada.propagados).toBe(1);
+    expect(escritas).toEqual([
+      `86adm4t1k/${CAMPO_VALOR}=1338.62`,
+      `86adm4t1k/${CAMPO_PCT}=4.58`,
+      "86adm4t1k/status=pg pendente - renovação",
+    ]);
+    expect(comentarios[0]).toContain("calculado a partir do percentual");
+    expect(eventos.some((e) => e.externalId === "reajuste:10601:2026-10-23")).toBe(true);
+  });
+
+  it("⚠ e o reajuste antigo (fora da janela de 45 dias) NÃO volta à fila por esse caminho", async () => {
+    retratos = [
+      retrato({ valorCentavos: 133862, reajusteDoRetrato: "2026-09-21", reajusteEm: "2026-09-21" }),
+    ];
+
+    const rodada = await propagarReajustes({ forcar: true }, AGORA);
+
+    expect(rodada.acao).toBe("nada a propagar");
+    expect(escritas).toEqual([]);
   });
 
   it("⚠ cliente COM tarefa no fluxo, já levada por outro contrato do lote: é pendência, não espera", async () => {

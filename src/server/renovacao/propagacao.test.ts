@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   chaveDaPropagacao,
+  comValorDeduzido,
   comentarioDaPropagacao,
   confereOCliente,
   decidirPercentual,
   decidirStatus,
   decidirValor,
   dentroDaJanela,
+  loteAnteriorAoRetrato,
   loteChegou,
   reais,
   STATUS_DESTINO,
@@ -39,6 +41,51 @@ const RETRATO: RetratoParaPropagar = {
   reajusteIndice: "IPCA",
   periodicidade: "Yearly",
 };
+
+describe("o lote que caiu ANTES do retrato (leva de novembro/2026)", () => {
+  // O retrato nasceu em 10/11, depois do lote de 23/10: já guardou o valor novo e
+  // o reajuste novo, então `loteChegou` nunca dispara.
+  const NASCEU_DEPOIS: RetratoParaPropagar = {
+    ...RETRATO,
+    valorCentavos: 133862,
+    reajusteDoRetrato: "2026-10-23",
+  };
+
+  it("é reconhecido, e o valor de antes sai do percentual quando a conta fecha no centavo", () => {
+    expect(loteChegou(NASCEU_DEPOIS)).toBe(false);
+    expect(loteAnteriorAoRetrato(NASCEU_DEPOIS)).toBe(true);
+    const deduzido = comValorDeduzido(NASCEU_DEPOIS);
+    // 1.338,62 ÷ 1,0458 = 1.280,00 — e 1.280,00 × 1,0458 volta a 1.338,62.
+    expect(deduzido?.valorCentavos).toBe(128000);
+    expect(deduzido?.valorAnteriorDeduzido).toBe(true);
+    expect(decidirValor(1280, deduzido!)).toEqual({ escreve: true, valor: 1338.62 });
+  });
+
+  it("⚠ conta que não fecha no centavo não vira 'valor de antes'", () => {
+    // R$ 4,00 com 50%: 4,00 ÷ 1,5 = 2,67, e 2,67 × 1,5 = 4,01 ≠ 4,00.
+    expect(
+      comValorDeduzido({ ...NASCEU_DEPOIS, valorCentavos: 400, valorAtualCentavos: 400, reajustePct: 50 }),
+    ).toBeNull();
+  });
+
+  it("sem percentual, ou contrato que nunca foi reajustado, não entra", () => {
+    expect(loteAnteriorAoRetrato({ ...NASCEU_DEPOIS, reajustePct: null })).toBe(false);
+    expect(loteAnteriorAoRetrato({ ...NASCEU_DEPOIS, reajusteEm: null, reajusteDoRetrato: null })).toBe(false);
+    expect(comValorDeduzido({ ...NASCEU_DEPOIS, reajustePct: null })).toBeNull();
+  });
+
+  it("o comentário diz que o valor de antes foi CALCULADO", () => {
+    const deduzido = comValorDeduzido(NASCEU_DEPOIS)!;
+    const texto = comentarioDaPropagacao({
+      retrato: deduzido,
+      valor: decidirValor(1280, deduzido),
+      percentual: { escreve: true, valor: 4.58 },
+      status: decidirStatus("notificação renovação"),
+    });
+    expect(texto).toContain(`${reais(1280)} → ${reais(1338.62)}`);
+    expect(texto).toContain("calculado a partir do percentual");
+  });
+});
 
 describe("loteChegou", () => {
   it("o reajuste de agora não é o que o retrato viu: o lote passou", () => {
