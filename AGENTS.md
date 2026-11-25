@@ -2125,11 +2125,11 @@ tela `/renovacoes` e a ferramenta `ver_leva_de_renovacao` no MCP.
   único lugar onde a falha aparecia era o log do contêiner. E falha espera 30
   min para tentar de novo — o vigia bate de minuto em minuto, e zerar o relógio
   faria ~28 idas ao Conexa a cada 60 s.
-- ⚠ **O corte com o n8n ainda não foi feito.** Quem avança as datas hoje é o
-  fluxo `Atualizar datas do processo de renovação` (`+365`, e **só no primeiro
-  contrato do cliente**), chamado pela automação `Atualizar datas renovação -
-  N8N`. Portar exige repontar aquela automação e despublicar o fluxo **no mesmo
-  movimento**: os dois juntos adiantariam a data em dobro.
+- ✅ **O corte com o n8n foi feito em 25/11/2026** (ver "A troca do n8n nas
+  datas"). Até ali, quem avançava as datas era o fluxo `Atualizar datas do
+  processo de renovação` (`+365`, e **só no primeiro contrato do cliente**),
+  chamado pela automação `Atualizar datas renovação - N8N`, que hoje chama só o
+  sistema. Os dois juntos adiantariam a data em dobro.
 
 #### Fase 2: o reajuste do Conexa chega à tarefa do ClickUp
 
@@ -2172,8 +2172,9 @@ escrita desta capacidade em sistema de terceiro** — até aqui a renovação s�
   n8n, com âncoras diferentes. Mexer nelas é a fase 3, e exige desligar o n8n
   no mesmo movimento.
 - ⚠ **`DATA DE REAJUSTE` nem sempre é a `fidelityDate`.** No contrato 3713 a
-  tarefa diz 10/12 e o Conexa, 11/12 — um dia, a deriva do `+364` de um fluxo
-  contra o `+365` do outro. A nota anterior deste arquivo dizia que as duas
+  tarefa diz 10/12 e o Conexa, 11/12 — um dia a menos POR CICLO, porque o n8n
+  gravava meia-noite UTC num campo sem hora (medido em 25/11/2026, ver "A troca
+  do n8n nas datas"). A nota anterior deste arquivo dizia que as duas
   eram sempre o mesmo dia; são o mesmo dia em alguns clientes, não em todos. A
   leva continua saindo da fidelidade do Conexa, então isso não a afeta; afeta a
   automação do D-30, que lê o campo do ClickUp.
@@ -2320,13 +2321,15 @@ chave: já estava no ar e não escreve nada que chegue ao cliente.
     automação têm de ser o MESMO movimento. Com os dois rodando, o contrato é
     avançado duas vezes (o n8n soma 365 a `data[0]` sem olhar se já avançou) — daqui
     não há como proteger o n8n. Depois, despublicar `sYtrdHFcVPwCo8nF` (e o
-    `hFj2JLcE3FqWYcrq`, que o print das automações mostrou morto).
+    `hFj2JLcE3FqWYcrq`, que o print das automações mostrou morto). ✅ Feita em
+    25/11/2026, com os dois despublicados.
   - **A rota responde 200 na hora e trabalha depois** (`after`); só 401 e 404 são
     erro de protocolo. O corpo não é fonte confiável: status, cliente e contratos
     vêm do ClickUp e do Conexa AO VIVO.
   - Não provado contra o Conexa real (sem sandbox): o PATCH de `fidelityDate` é o
     mesmo que o n8n faz e o Conexa aceita, e o sistema lê de volta; a primeira
-    entrega em sombra e a primeira ligada são quem prova.
+    entrega em sombra e a primeira ligada são quem prova. ✅ A sombra provou a
+    leitura e o plano em 25/11/2026 (7 casos); ⏳ a primeira entrega LIGADA ainda não.
 - ⚠ **O segredo do n8n NÃO foi reaproveitado.** O fluxo traz um token do Conexa em
   texto puro no nó HTTP; foi lido ao inspecionar o fluxo (MCP do n8n) e não é usado
   nem copiado — o sistema usa a credencial cifrada da integração do Conexa. Fica
@@ -2463,6 +2466,33 @@ nenhuma tarefa em `renovação`.
   Hoje variável crua não é valor, o id vem de `payload.id` (o do topo só sem
   `payload`), e as datas também saem dos campos da tarefa no `payload` (`fields` na
   ação nova, `custom_fields` na antiga) — a foto do momento da troca de status.
+
+#### A troca do n8n nas datas (25/11/2026), e o que a comparação mostrou
+
+Os 7 primeiros fechamentos no pagamento (6 clientes, 25/11 às 8h) foram os casos de
+comparação: o n8n e a sombra receberam a mesma entrega da automação 8.
+
+- ⚠⚠ **O n8n gravava as duas datas da tarefa com UM DIA A MENOS, em toda renovação.**
+  Em 7 de 7. Ele manda meia-noite UTC (`2027-11-02T00:00Z`) num campo sem hora, e o
+  ClickUp guarda o DIA de São Paulo daquele instante — 21h do dia 1º. É a causa da
+  "deriva de um dia" do contrato 3713 (tarefa 10/12, Conexa 11/12), e não o
+  `+364` contra `+365`: cada ciclo tirava mais um dia. O sistema grava meio-dia de São
+  Paulo (`paraTimestamp`). As 14 datas dos 7 casos foram corrigidas à mão e lidas de
+  volta.
+- ⚠ **No cliente de vários contratos o n8n avançou o contrato ERRADO**, como previsto:
+  na 1858 foi o 3573 (plano antigo, R$ 0,00, ativo desde 2024, o `data[0]`) em vez do
+  10441 da tarefa. O 10441 foi avançado à mão; o 3573 ficou para a equipe encerrar.
+- **Sala privativa: o sistema avança a fidelidade do contrato também** (decisão do
+  usuário em 25/11). O n8n nunca avançava (o plano "Contrato: Sala …" não contém o
+  `TIPO DE PRODUTO` "Sala Privativa "), e por isso contratos de sala apareciam em
+  "fidelidade vencida" e saíam da leva do ano seguinte. Os dois de 25/11 (10368, 10378)
+  foram avançados à mão.
+- Os 4 casos de cliente com um contrato só de endereço bateram em tudo (contrato e
+  data no Conexa); a diferença era só o dia a menos no ClickUp.
+- **A troca foi feita em 25/11/2026 às ~8h50:** o usuário apagou a ação antiga (n8n) da
+  automação 8, `avancarDatas` = `ligado` (SQL + `AuditLog` no nome dele), e
+  `sYtrdHFcVPwCo8nF` despublicado (conferido no banco do n8n: `active = f`). ⚠ O token
+  do Conexa que está em texto nesse fluxo continua lá até alguém rotacioná-lo.
 
 ### Acompanhamento de contratos: a exceção que fala por cima do vendedor
 
