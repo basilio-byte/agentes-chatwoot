@@ -55,20 +55,29 @@ function dia(iso: string) {
  * 2. ela **inclui uma venda deste contrato** (cobrança → venda → contrato, o
  *    mesmo caminho das notas fiscais): quem tem dois produtos tem duas cobranças
  *    abertas, e a do outro não prova nada;
- * 3. o **valor pago cobre o valor do contrato de agora** — é a pergunta "é
- *    referente ao valor do contrato?" da Duda. Com juros e multa o cliente paga
- *    mais, e vale; menos, não (desconto na quitação ou pagamento parcial é caso
- *    de uma pessoa).
+ * 3. a **venda DESTE contrato nela já está no valor reajustado** — a soma das
+ *    vendas dele na cobrança cobre o valor do contrato de agora. É a pergunta "é
+ *    referente ao valor do contrato?" da Duda;
+ * 4. e o **valor pago cobre o valor do contrato**: com juros e multa o cliente
+ *    paga mais, e vale; menos, não (desconto na quitação ou pagamento parcial é
+ *    caso de uma pessoa).
  *
- * O valor da cobrança que junta várias vendas (o `(5051)` paga os quatro
- * contratos numa fatura só) é a SOMA, então "cobre" ali é o mínimo: pago a menos
- * do que um contrato vale, certamente não pagou o ciclo.
+ * ⚠⚠ **A 3 existe por um erro real (25/11/2026).** Sem ela a regra olhava só o
+ * TOTAL pago contra o valor de UM contrato, e "paga depois do reajuste" pela data
+ * do pagamento. O `(5051)` pagou em 28/10 a mensalidade de OUTUBRO (cobrança
+ * 32059, criada em 19/10, antes do lote de 23/10): cinco vendas de R$ 99,90, o
+ * valor antigo, somando R$ 499,50 — que "cobria" os R$ 104,48 de cada contrato.
+ * As quatro tarefas foram para `ongoing` e o cliente recebeu o e-mail de
+ * "cliente renovado" sem ter pago a renovação. A venda é a prova: a gerada antes
+ * do lote leva o valor antigo, a gerada depois leva o novo. Venda sem valor
+ * legível não prova nada (na dúvida, não fecha).
  */
 export function pagouOCicloNovo(entrada: {
   reajusteEm: string;
   valorDoContrato: number;
   cobrancas: CobrancaPaga[];
-  vendasDoContrato: ReadonlySet<number>;
+  /** As vendas deste contrato e o valor de cada uma (`null` = não deu para ler). */
+  vendasDoContrato: ReadonlyMap<number, number | null>;
 }): ResultadoDaConferencia {
   const { reajusteEm, valorDoContrato, cobrancas, vendasDoContrato } = entrada;
 
@@ -90,8 +99,38 @@ export function pagouOCicloNovo(entrada: {
 
   // Ordem estável: a mais antiga primeira, porque é a do ciclo.
   const ordenadas = [...depoisDoLote].sort((a, b) => a.id - b.id);
-  const cobrindo = ordenadas.find((c) => c.valorPago !== null && c.valorPago >= valorDoContrato - 0.005);
+  const cobre = (v: number | null) => v !== null && v >= valorDoContrato - 0.005;
+
+  /** A soma das vendas deste contrato na cobrança; `null` se alguma não tem valor legível. */
+  const somaDasVendas = (c: CobrancaPaga) => {
+    let soma = 0;
+    for (const v of c.vendas) {
+      if (!vendasDoContrato.has(v)) continue;
+      const valor = vendasDoContrato.get(v);
+      if (valor == null || !Number.isFinite(valor)) return null;
+      soma += valor;
+    }
+    return Math.round(soma * 100) / 100;
+  };
+
+  const cobrindo = ordenadas.find((c) => cobre(somaDasVendas(c)) && cobre(c.valorPago));
   if (!cobrindo) {
+    const comValorAntigo = ordenadas.find((c) => {
+      const soma = somaDasVendas(c);
+      return soma !== null && !cobre(soma);
+    });
+    if (comValorAntigo) {
+      return {
+        pagou: false,
+        motivo: `a cobrança paga ${comValorAntigo.id} traz este contrato por ${reais(somaDasVendas(comValorAntigo) as number)}, abaixo do valor reajustado (${reais(valorDoContrato)}) — é de um ciclo anterior`,
+      };
+    }
+    if (ordenadas.some((c) => somaDasVendas(c) === null)) {
+      return {
+        pagou: false,
+        motivo: "não consegui ler o valor da venda deste contrato na cobrança paga",
+      };
+    }
     const maior = Math.max(...ordenadas.map((c) => c.valorPago ?? 0));
     return {
       pagou: false,

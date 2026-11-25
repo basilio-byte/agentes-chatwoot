@@ -193,7 +193,8 @@ export async function fecharCiclosPagos(
       .sort((a, b) => quando(a) - quando(b))
       .slice(0, CLIENTES_POR_RODADA);
 
-    const vendas = new Map<number, number | null>();
+    /** Venda → o contrato dela e o valor faturado (o valor prova o ciclo: antes do lote, é o antigo). */
+    const vendas = new Map<number, { contratoId: number | null; valor: number | null }>();
     let vendasLidas = 0;
 
     for (const clienteId of clientes) {
@@ -246,7 +247,11 @@ export async function fecharCiclosPagos(
           try {
             const bruta = (await leitor.obterVenda(v)) as Record<string, unknown>;
             const id = Number(bruta.contractId);
-            vendas.set(v, Number.isFinite(id) && id > 0 ? id : null);
+            const valor = bruta.amount === null || bruta.amount === "" ? NaN : Number(bruta.amount);
+            vendas.set(v, {
+              contratoId: Number.isFinite(id) && id > 0 ? id : null,
+              valor: Number.isFinite(valor) ? valor : null,
+            });
           } catch {
             // Venda que não abre não amarra nada.
           }
@@ -259,8 +264,10 @@ export async function fecharCiclosPagos(
         if (!contrato || contrato.valor == null) continue;
         const tarefa = porId.get(alvo.tarefaId) as ClickUpTarefa;
 
-        const vendasDoContrato = new Set(
-          [...vendas.entries()].filter(([, c]) => c === alvo.contratoId).map(([v]) => v),
+        const vendasDoContrato = new Map(
+          [...vendas.entries()]
+            .filter(([, venda]) => venda.contratoId === alvo.contratoId)
+            .map(([v, venda]) => [v, venda.valor] as const),
         );
         const conferencia = pagouOCicloNovo({
           reajusteEm: alvo.reajusteEm,

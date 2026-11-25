@@ -177,7 +177,7 @@ beforeEach(() => {
   cobrancas = [
     { chargeId: 31571, status: "paid", paymentDate: "2026-12-15", paidAmount: 88.98, salesIds: [88552, 89662] },
   ];
-  vendasDoConexa = { 88552: { contractId: 3682 }, 89662: {} };
+  vendasDoConexa = { 88552: { contractId: 3682, amount: 88.98 }, 89662: {} };
   com([tarefa("t1")]);
 });
 
@@ -245,9 +245,39 @@ describe("fecharCiclosPagos: quando NÃO fecha", () => {
   });
 
   it("⚠ a cobrança paga é de OUTRA venda do cliente: não fecha", async () => {
-    vendasDoConexa = { 88552: { contractId: 9999 }, 89662: {} };
+    vendasDoConexa = { 88552: { contractId: 9999, amount: 88.98 }, 89662: {} };
     await fecharCiclosPagos({ forcar: true }, proximoAgora());
     expect(escritas).toEqual([]);
+  });
+
+  it("⚠⚠ (5051, 25/11/2026) a mensalidade de antes do lote, paga depois, não fecha: a venda está no valor antigo", async () => {
+    const contratos = [10574, 10576, 10578, 10580];
+    eventos = contratos.map((c, i) => reserva(c, `t${i + 1}`));
+    retratos = contratos.map((c) => ({ contratoId: c, clienteId: 5051 }));
+    com(contratos.map((_, i) => tarefa(`t${i + 1}`)));
+    cobrancas = [
+      {
+        chargeId: 32059,
+        status: "paid",
+        paymentDate: "2026-12-01",
+        paidAmount: 499.5,
+        salesIds: [89297, 89298, 89299, 89300, 89435],
+      },
+    ];
+    vendasDoConexa = {
+      89297: { contractId: 10574, amount: 99.9 },
+      89298: { contractId: 10576, amount: 99.9 },
+      89299: { contractId: 10578, amount: 99.9 },
+      89300: { contractId: 10580, amount: 99.9 },
+      89435: { amount: 99.9 },
+    };
+    contratoDoConexa = { id: 0, customerId: 5051, amount: 104.48, isActive: true };
+
+    const r = await fecharCiclosPagos({ forcar: true }, proximoAgora());
+
+    expect(r.fechadas).toEqual([]);
+    expect(escritas).toEqual([]);
+    expect(eventos.some((e) => e.externalId.startsWith("fechamento:"))).toBe(false);
   });
 
   it("⚠ contrato encerrado não é fechado", async () => {
@@ -310,7 +340,12 @@ describe("fecharCiclosPagos: o Conexa e o rodízio", () => {
     cobrancas = [
       { chargeId: 40000, status: "paid", paymentDate: "2026-12-15", paidAmount: 417.92, salesIds: [1, 2, 3, 4] },
     ];
-    vendasDoConexa = { 1: { contractId: 10574 }, 2: { contractId: 10576 }, 3: { contractId: 10578 }, 4: { contractId: 10580 } };
+    vendasDoConexa = {
+      1: { contractId: 10574, amount: 104.48 },
+      2: { contractId: 10576, amount: 104.48 },
+      3: { contractId: 10578, amount: 104.48 },
+      4: { contractId: 10580, amount: 104.48 },
+    };
     contratoDoConexa = { id: 0, customerId: 5051, amount: 104.48, isActive: true };
 
     const r = await fecharCiclosPagos({ forcar: true }, proximoAgora());

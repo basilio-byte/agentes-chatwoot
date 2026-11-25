@@ -26,12 +26,15 @@ const cobranca = (extra: Partial<CobrancaPaga> = {}): CobrancaPaga => ({
   ...extra,
 });
 
-const confere = (cobrancas: CobrancaPaga[], extra: { valor?: number; vendas?: number[] } = {}) =>
+const confere = (
+  cobrancas: CobrancaPaga[],
+  extra: { valor?: number; vendas?: Array<[number, number | null]> } = {},
+) =>
   pagouOCicloNovo({
     reajusteEm: REAJUSTE,
     valorDoContrato: extra.valor ?? 88.98,
     cobrancas,
-    vendasDoContrato: new Set(extra.vendas ?? [88552]),
+    vendasDoContrato: new Map(extra.vendas ?? [[88552, 88.98]]),
   });
 
 describe("pagouOCicloNovo", () => {
@@ -73,17 +76,66 @@ describe("pagouOCicloNovo", () => {
     expect(confere([cobranca({ pagaEm: null })]).pagou).toBe(false);
   });
 
-  it("(5051) a fatura única dos quatro contratos fecha os QUATRO", () => {
+  it("(5051) a fatura única dos quatro contratos, já no valor novo, fecha os QUATRO", () => {
     const fatura = cobranca({ id: 40000, valorPago: 417.92, vendas: [1, 2, 3, 4] });
     for (const venda of [1, 2, 3, 4]) {
       const r = pagouOCicloNovo({
         reajusteEm: REAJUSTE,
         valorDoContrato: 104.48,
         cobrancas: [fatura],
-        vendasDoContrato: new Set([venda]),
+        vendasDoContrato: new Map([[venda, 104.48]]),
       });
       expect(r.pagou).toBe(true);
     }
+  });
+
+  it("⚠⚠ (5051, 25/11/2026) a mensalidade de ANTES do lote, paga DEPOIS dele, NÃO fecha o ciclo", () => {
+    // O caso real: cobrança 32059, criada em 19/10, competência outubro, paga em
+    // 28/10 (depois do lote de 23/10). Cinco vendas de R$ 99,90 = R$ 499,50, que
+    // "cobria" os R$ 104,48 de cada contrato pela regra antiga.
+    const outubro = {
+      id: 32059,
+      pagaEm: "2026-10-28",
+      valorPago: 499.5,
+      vendas: [89297, 89298, 89299, 89300, 89435],
+    };
+    for (const venda of [89297, 89298, 89299, 89300]) {
+      const r = pagouOCicloNovo({
+        reajusteEm: "2026-10-23",
+        valorDoContrato: 104.48,
+        cobrancas: [outubro],
+        vendasDoContrato: new Map([[venda, 99.9]]),
+      });
+      expect(r).toMatchObject({ pagou: false });
+      expect((r as { motivo: string }).motivo).toContain("ciclo anterior");
+    }
+  });
+
+  it("(5018) contrato anual com várias vendas na mesma cobrança: vale a SOMA delas", () => {
+    const vendas: Array<[number, number | null]> = [
+      [1, 500],
+      [2, 500],
+      [3, 588.57],
+    ];
+    const r = confere([cobranca({ valorPago: 1588.87, vendas: [1, 2, 3, 99] })], { valor: 1588.57, vendas });
+    expect(r.pagou).toBe(true);
+  });
+
+  it("⚠ venda do contrato sem valor legível: na dúvida, não fecha", () => {
+    const r = confere([cobranca()], { vendas: [[88552, null]] });
+    expect(r).toMatchObject({ pagou: false });
+    expect((r as { motivo: string }).motivo).toContain("não consegui ler o valor da venda");
+  });
+
+  it("a cobrança de antes do lote não esconde a do ciclo novo, paga depois", () => {
+    const r = confere(
+      [
+        cobranca({ id: 31000, valorPago: 85, vendas: [70000] }),
+        cobranca({ id: 31571, vendas: [88552] }),
+      ],
+      { vendas: [[70000, 85], [88552, 88.98]] },
+    );
+    expect(r).toMatchObject({ pagou: true, evidencia: { cobrancaId: 31571 } });
   });
 
   it("com mais de uma cobrança paga, vale a mais antiga que cobre", () => {

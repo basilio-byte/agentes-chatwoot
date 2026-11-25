@@ -2283,6 +2283,18 @@ chave: já estava no ar e não escreve nada que chegue ao cliente.
   pago cobre o valor do contrato de agora** (a pergunta "é referente ao valor do
   contrato?" da Duda; juros e multa pagam mais e valem, desconto na quitação ou
   parcial não). Quatro contratos numa fatura só (o `(5051)`) fecham os quatro.
+  ⚠⚠ **E a VENDA deste contrato na cobrança tem de estar no valor reajustado**
+  (a soma das vendas dele cobre o valor de agora; venda sem valor legível não
+  prova nada). Sem isso a regra fechou por engano o `(5051)` em 25/11/2026: ele
+  pagou em 28/10 a mensalidade de OUTUBRO (cobrança 32059, criada em 19/10, antes
+  do lote de 23/10, cinco vendas de R$ 99,90 = R$ 499,50), e "paga depois do
+  reajuste" + "total cobre UM contrato" deixavam passar. As quatro tarefas foram a
+  `ongoing`, o cliente recebeu o e-mail de "cliente renovado", e as datas e a
+  fidelidade avançaram. Desfeito no mesmo dia (status, datas, fidelidade e as
+  reservas renomeadas para `desfeito:…`, para o fechamento de verdade passar
+  depois); os outros 11 fechamentos daquela manhã foram conferidos um a um e
+  estavam certos (cobranças criadas depois do lote, competência de novembro).
+  ⚠ O e-mail que saiu não volta: quem fala com o cliente é a equipe.
   Destino: sala privativa → `ongoing - sala privativa`; **ONE fica com a equipe**
   (renova para `one`, que o pagamento não deduz). Só abre o Conexa para
   tarefa nomeada por reserva de propagação e parada em `pg pendente`, no máximo 5
