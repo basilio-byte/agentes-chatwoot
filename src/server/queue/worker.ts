@@ -41,6 +41,7 @@ import {
 } from "./conversa-parada";
 import { FILA_NPS, type JobNps } from "./nps";
 import { processarNps } from "./nps-worker";
+import { registrarLeadPendente } from "@/server/lead-no-crm/conferir";
 import { executarAgente } from "@/server/agents/runner";
 import {
   clienteDoAgente,
@@ -604,6 +605,16 @@ async function atender(job: Job<JobAtendimento>, turno: EstadoDoTurno) {
         { de: ativo.key, para: destino.key, motivo: handoff.motivo },
         "atendimento transferido",
       );
+
+      // O lead escolheu um serviço comercial: o registro no CRM fica garantido
+      // pelo sistema, em segundo plano (`lead-no-crm/`). Só grava um pendente e
+      // nunca lança — o cliente não espera por isto.
+      await registrarLeadPendente({
+        chatwootConversationId,
+        inboxId: inboxId ?? aoVivo.inboxId ?? conversa?.chatwootInboxId,
+        agenteKey: destino.key,
+        atendimentoDesde: conversa?.historicoDesde,
+      });
 
       bastao = mensagemDeBastao({
         deNome: ativo.name,

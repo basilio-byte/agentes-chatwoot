@@ -1986,6 +1986,54 @@ Integrações; a leitura no MCP em `ver_limpeza_ao_resolver`.
   a limpeza só alcança quem tiver uma conversa resolvida DEPOIS de ligada. Limpar o
   estoque é decisão à parte, em lote, e este arquivo pede cerimônia para isso.
 
+### Registro automático do lead no CRM Comercial
+
+Três tasks do Diego no Formulário Bugs (25 e 26/11/2026, "Não subiu no CRM",
+conversas 15480 a 15522). Não era o Menu: ele mandou o cliente ao agente certo.
+O CRM Comercial só recebia o lead TARDE, cada agente num momento: o Everton só
+cria task quando ele mesmo fecha a venda (109 leads foram ao rodízio em 30 dias
+sem task), Salas Privativas depois das seis perguntas, Salas de Reunião no
+rodízio ou depois de reservar. O resto dependia de alguém marcar o checkbox
+`passar_para_crm`. Decisão do usuário (26/11): o SISTEMA registra, em segundo
+plano. Regras puras e testadas em `lead-no-crm/regras.ts`; a rodada em
+`lead-no-crm/conferir.ts`, no vigia, de 3 em 3 min; a tela no fim da aba
+Chatwoot de Integrações; a leitura no MCP em `ver_registro_de_leads`.
+
+- **O pendente nasce na passagem**: o robô passou a conversa a um agente da lista
+  (`agentes`, por chave) — é a escolha do serviço no menu. `registrarLeadPendente`,
+  no worker, logo depois de `registrarPassagem`, grava uma linha em `WebhookEvent`
+  (provider `LEAD_CRM`, `conversa:<id>:<historicoDesde>`, um por atendimento, sem
+  nome nem telefone). Nunca lança.
+- ⚠ **Em segundo plano porque o CRM custa ~40 s** (mediana de 39 s, p90 54 s em
+  30 dias). Feito no turno em que o cliente escolheu o serviço, ele esperaria isso
+  a mais pela resposta. O vigia só INICIA a rodada; ela roda com a trava `rodando`.
+- ⚠⚠ **Só registra com uma PESSOA dona da conversa** (`humanidadeDoDono === true`),
+  e o vendedor da task é esse dono. Com o robô conduzindo, ESPERA: o CRM, sem
+  vendedor, põe o Diego, e quando o especialista registra depois com o vendedor
+  do rodízio, o CRM responde "JÁ EXISTIA" sem trocar o vendedor — a task ficaria
+  no nome errado para sempre. O lead que fica com o robô já tem caminho: venda vira
+  task "Auto Venda" e abandono vira "perdido" pelo follow-up, que cria a task.
+  Pendente com o robô por 24 h sai da fila (`expirada`).
+- **Não registra** se a conversa já tem task de QUALQUER agente neste atendimento
+  (`clickup_criar_tarefa` com `criada` ou `jaExistia`), se virou suporte (acionou
+  `agente-crm-atendimentos`) ou se o agente dono no nosso banco não é comercial.
+- ⚠ **Pelo caminho do checkbox**: o agente de CRM roda como `CONVERSA_MARCADA`, e a
+  mensagem começa como a do checkbox, porque o prompt do CRM Comercial tem a seção
+  "Quando vier do checkbox" — monta os dados pela transcrição, usa o dono como
+  vendedor e procura task pelo telefone antes de criar. A primeira linha diz que
+  quem marcou foi o sistema, e a `CAUDA_CONVERSA_MARCADA` passou a dizer "alguém da
+  equipe (ou o sistema, no registro automático de um lead)". O checkbox de verdade
+  não é tocado: escrever atributo faz o Chatwoot rodar as automações de novo.
+- **Retry só antes de qualquer ferramenta**, a doutrina de sempre: falha depois
+  pode ter criado a task.
+- **Nasce DESLIGADO**, com modo `sombra` (anota "registraria" sem chamar o CRM).
+  A configuração mora na linha do Chatwoot (`config.leadNoCrm`), com formulário
+  PRÓPRIO (`salvarLeadNoCrm`, `ADMIN`, auditoria), e `salvarConfigChatwoot` a
+  preserva, como a limpeza e as ausências.
+- ⚠ **Não cobre o lead que nunca escolheu um serviço** (15501 e 15502: o Menu
+  mandou o menu e o cliente não respondeu). Sem escolha não há passagem, e a regra
+  do Diego é registrar "assim que a pessoa indicar o serviço".
+
 ### Venda autônoma paga vira "ganho" no CRM Comercial
 
 Pedido do Diego (task "Ajustes Auto Venda", 16/10/2026): *"Dar ganho (quando

@@ -24,6 +24,10 @@ import {
   configDoFormulario as configDaLimpezaDoFormulario,
   lerConfigDaLimpeza,
 } from "@/server/limpeza-do-contato/regras";
+import {
+  configDoFormulario as configDoLeadDoFormulario,
+  lerConfigDoLead,
+} from "@/server/lead-no-crm/regras";
 import { lerIdsDeCaixa } from "@/server/agents/equipe";
 import { autorDaSessao } from "@/server/gestao/autor";
 import { salvarEscopo } from "@/server/gestao/escopo";
@@ -66,11 +70,13 @@ export async function salvarConfigChatwoot(
     where: { provider: IntegrationProvider.CHATWOOT },
     select: { config: true },
   });
-  // A limpeza do contato (`limpezaDoContato`) também mora aqui e passa intacta.
+  // A limpeza do contato (`limpezaDoContato`) e o registro automático do lead
+  // (`leadNoCrm`) também moram aqui e passam intactos.
   const config = {
     ...parsed.data,
     ausencias: ausenciasDaConfig(atual?.config),
     limpezaDoContato: lerConfigDaLimpeza(atual?.config),
+    leadNoCrm: lerConfigDoLead(atual?.config),
   };
 
   await db.integration.upsert({
@@ -358,5 +364,71 @@ export async function salvarLimpezaDoContato(
     ok: lido.config.ligada
       ? `Ligada: ${lido.config.campos.length} campo(s) do contato são limpos 15 min depois de a conversa ser resolvida.`
       : "Desligada: nenhum campo do contato é limpo.",
+  };
+}
+
+export type EstadoLeadNoCrm = { ok?: string; erro?: string };
+
+/**
+ * O registro automático do lead no CRM Comercial (pedido do Diego, 26/11/2026).
+ * Formulário PRÓPRIO, como a limpeza: mexe só na chave `leadNoCrm` da
+ * configuração do Chatwoot. Ligar faz o sistema criar task no CRM da equipe —
+ * por isso `ADMIN` e auditoria.
+ */
+export async function salvarLeadNoCrm(
+  _estado: EstadoLeadNoCrm,
+  formData: FormData,
+): Promise<EstadoLeadNoCrm> {
+  const sessao = await exigirPapel(UserRole.ADMIN);
+
+  const lido = configDoLeadDoFormulario({
+    modo: String(formData.get("modo") ?? ""),
+    agentes: String(formData.get("agentes") ?? ""),
+    agenteDoCrm: String(formData.get("agenteDoCrm") ?? ""),
+  });
+  if ("erro" in lido) return { erro: lido.erro };
+
+  // Chave que não existe nunca dispararia, e a tela diria "ligado" em silêncio.
+  const chaves = [...lido.config.agentes, lido.config.agenteDoCrm];
+  const existentes = await db.agent.findMany({
+    where: { key: { in: chaves }, archivedAt: null },
+    select: { key: true },
+  });
+  const faltam = chaves.filter((c) => !existentes.some((a) => a.key === c));
+  if (faltam.length) return { erro: `Não há agente com a chave: ${faltam.join(", ")}.` };
+
+  const registro = await db.integration.findUnique({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    select: { config: true },
+  });
+  if (!registro) return { erro: "Configure a instância do Chatwoot antes." };
+
+  const anterior = lerConfigDoLead(registro.config);
+  await db.integration.update({
+    where: { provider: IntegrationProvider.CHATWOOT },
+    data: {
+      config: { ...(registro.config as Record<string, unknown>), leadNoCrm: lido.config },
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      userId: sessao.user.id,
+      action: "integration.chatwoot.lead_no_crm.updated",
+      entity: "Integration",
+      entityId: IntegrationProvider.CHATWOOT,
+      diff: { antes: anterior, depois: lido.config },
+    },
+  });
+
+  revalidatePath("/integracoes");
+  const { modo, agentes } = lido.config;
+  return {
+    ok:
+      modo === "ligado"
+        ? `Ligado: o lead que passar de ${agentes.length} agente(s) comercial(is) a uma pessoa da equipe sem task vai para o CRM sozinho.`
+        : modo === "sombra"
+          ? "Em sombra: o sistema só anota o que registraria, sem criar task."
+          : "Desligado: nada é registrado pelo sistema.",
   };
 }

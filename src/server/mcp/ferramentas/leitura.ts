@@ -39,6 +39,7 @@ import { candidatosAoFollowup } from "@/server/followup-reserva/conferir";
 import { PROVIDER_FOLLOWUP } from "@/server/followup-reserva/regras";
 import { lerConfigNps } from "@/server/nps/config";
 import { lerConfigDaLimpeza, PROVIDER_LIMPEZA } from "@/server/limpeza-do-contato/regras";
+import { lerConfigDoLead, PROVIDER_LEAD } from "@/server/lead-no-crm/regras";
 import {
   CHAVE_DA_RODADA as CHAVE_DA_RODADA_DA_RECONFERENCIA,
   ultimasReconferencias,
@@ -1512,6 +1513,54 @@ const verLimpezaDeContatos = ferramenta({
 });
 
 /**
+ * O registro automático do lead no CRM Comercial: a configuração e o desfecho de
+ * cada lead (pendente, registrada, sombra, já registrada, suporte...). Sem nome
+ * nem telefone: só a conversa e o motivo.
+ */
+const verRegistroDeLeads = ferramenta({
+  name: "ver_registro_de_leads",
+  title: "Ver o registro automático de leads no CRM",
+  description:
+    "O registro automático do lead no CRM Comercial: quando o robô passa a conversa a um agente comercial, o sistema aciona o agente de CRM assim que ela estiver com uma pessoa da equipe e sem task. Mostra o modo (desligado, sombra, ligado), os agentes comerciais e o desfecho de cada lead — pendente (o robô ainda conduz), registrada (com a execução do CRM), sombra (registraria), já registrada, suporte, não é lead, sem pessoa, expirada ou falhou.",
+  papel: UserRole.VIEWER,
+  anotacoes: CONSULTA,
+  entrada: z.strictObject({
+    limite: z.number().int().min(1).max(50).optional().describe("Quantos leads devolver. Padrão 20."),
+  }),
+  async executar({ limite }) {
+    const [chatwoot, linhas] = await Promise.all([
+      db.integration.findUnique({
+        where: { provider: IntegrationProvider.CHATWOOT },
+        select: { config: true },
+      }),
+      db.webhookEvent.findMany({
+        where: { provider: PROVIDER_LEAD },
+        orderBy: { createdAt: "desc" },
+        take: limite ?? 20,
+        select: { resultado: true, detalhe: true, createdAt: true, processedAt: true, payload: true },
+      }),
+    ]);
+    const config = lerConfigDoLead(chatwoot?.config);
+    return responder({
+      modo: config.modo,
+      agentesComerciais: config.agentes,
+      agenteDoCrm: config.agenteDoCrm,
+      leads: linhas.map((l) => {
+        const dados = (l.payload ?? {}) as { conversa?: number; agente?: string };
+        return {
+          conversa: dados.conversa ?? null,
+          agente: dados.agente ?? null,
+          resultado: l.resultado,
+          detalhe: l.detalhe,
+          passouEm: quando(l.createdAt),
+          olhadoEm: l.processedAt ? quando(l.processedAt) : null,
+        };
+      }),
+    });
+  },
+});
+
+/**
  * A varredura que devolve à fila a task corrigida à mão.
  *
  * ⚠ Ela é a única rodada do vigia cujo trabalho normal é NÃO fazer nada: task
@@ -1692,5 +1741,6 @@ export const FERRAMENTAS_DE_LEITURA: FerramentaMcp[] = [
   verPesquisasDeSatisfacao,
   verFollowupsDeReserva,
   verLimpezaDeContatos,
+  verRegistroDeLeads,
   verPrazosDoCliente,
 ];

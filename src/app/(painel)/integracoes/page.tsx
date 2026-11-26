@@ -49,6 +49,8 @@ import { BotaoTentarDeNovo } from "@/components/botao-tentar-de-novo";
 import { ChatwootConfigForm } from "@/components/chatwoot-config";
 import { AusenciasDaEquipeForm } from "@/components/ausencias-da-equipe";
 import { LimpezaDoContatoForm } from "@/components/limpeza-do-contato";
+import { LeadNoCrmForm } from "@/components/lead-no-crm";
+import { lerConfigDoLead, PROVIDER_LEAD } from "@/server/lead-no-crm/regras";
 import {
   lerConfigDaLimpeza,
   NUNCA_LIMPAR,
@@ -468,6 +470,22 @@ export default async function IntegracoesPage({
         .join(" · ")}.`
     : null;
 
+  // Registro automático do lead no CRM: mesma linha do Chatwoot, mesmo resumo.
+  const configDoLead = lerConfigDoLead(chatwoot?.config);
+  const desfechosDoLead = await db.webhookEvent.groupBy({
+    by: ["resultado"],
+    where: {
+      provider: PROVIDER_LEAD,
+      createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60_000) },
+    },
+    _count: { _all: true },
+  });
+  const resumoDoLead = desfechosDoLead.length
+    ? `Últimos 7 dias: ${desfechosDoLead
+        .map((d) => `${d._count._all} ${d.resultado ?? "sem resultado"}`)
+        .join(" · ")}.`
+    : null;
+
   // Follow-up de reserva: a config, o rastro de cada reserva e as próximas — só
   // banco (`candidatosAoFollowup` não abre Conexa nem Chatwoot).
   const followup = registros.find((i) => i.provider === IntegrationProvider.FOLLOWUP_RESERVA);
@@ -605,6 +623,14 @@ export default async function IntegracoesPage({
                   campos={configDaLimpeza.campos.join("\n")}
                   nuncaLimpa={NUNCA_LIMPAR.join(", ")}
                   resumo={resumoDaLimpeza}
+                  somenteLeitura={!editavel}
+                />
+
+                <LeadNoCrmForm
+                  modo={configDoLead.modo}
+                  agentes={configDoLead.agentes.join("\n")}
+                  agenteDoCrm={configDoLead.agenteDoCrm}
+                  resumo={resumoDoLead}
                   somenteLeitura={!editavel}
                 />
 

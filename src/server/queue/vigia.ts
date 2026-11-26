@@ -17,6 +17,7 @@ import { emitirNotasFiscais } from "@/server/notas-fiscais/emissao/emitir";
 import { conferirAutoVendas } from "@/server/auto-venda/conferir";
 import { conferirFollowupsDeReserva } from "@/server/followup-reserva/conferir";
 import { limparContatosResolvidos } from "@/server/limpeza-do-contato/conferir";
+import { conferirLeadsNoCrm } from "@/server/lead-no-crm/conferir";
 import { tirarRetratoDaLeva } from "@/server/renovacao/retrato";
 import { propagarReajustes } from "@/server/renovacao/propagar";
 import { avancarTarefasDoLote } from "@/server/renovacao/avancar";
@@ -317,6 +318,15 @@ export function iniciarVigia(): NodeJS.Timeout {
       }
     } catch (erro) {
       logger.error({ erro }, "limpeza do contato falhou");
+    }
+
+    // Lead comercial que chegou a uma pessoa da equipe sem task no CRM: de 3 em 3
+    // min, e só INICIA a rodada (cada registro é uma execução de ~40 s do agente
+    // de CRM). Desligado, o padrão, é uma consulta ao banco.
+    try {
+      await conferirLeadsNoCrm();
+    } catch (erro) {
+      logger.error({ erro }, "lead no CRM: a conferência falhou ao iniciar");
     }
 
     // Retrato da leva de renovação: uma vez por dia, guarda o valor de cada
