@@ -1215,7 +1215,7 @@ export const conexaIntegration: IntegrationDefinition = {
       name: "conexa_faturar_reserva",
       categoria: "Reservas de sala",
       description:
-        "Gera a cobrança de uma reserva e devolve valor, vencimento e link de pagamento. Confere antes de cobrar: reserva descontada do pacote de horas não é cobrada, reserva cancelada é recusada, e reserva que já tem cobrança devolve a existente em vez de criar outra. Chame UMA vez, logo depois de conexa_criar_reserva.",
+        "Gera a cobrança de uma reserva e devolve valor, vencimento e link de pagamento. A cobrança vence HOJE (ou amanhã, se o cliente pedir), e a reserva só fica confirmada com o pagamento. Confere antes de cobrar: reserva descontada do pacote de horas não é cobrada, reserva cancelada é recusada, e reserva que já tem cobrança devolve a existente em vez de criar outra. Chame UMA vez, logo depois de conexa_criar_reserva.",
       requiresConfirmation: true,
       inputSchema: z.object({
         reservaId: z
@@ -1223,15 +1223,26 @@ export const conexaIntegration: IntegrationDefinition = {
           .int()
           .positive()
           .describe("O id da reserva, devolvido por conexa_criar_reserva."),
+        vencimentoNoDiaSeguinte: z
+          .boolean()
+          .optional()
+          .describe(
+            "true SÓ se o cliente pediu para pagar no dia seguinte. Sem isso, a cobrança vence hoje.",
+          ),
       }),
       async execute(entrada, ctx) {
-        const { reservaId } = entrada as { reservaId: number };
+        const { reservaId, vencimentoNoDiaSeguinte } = entrada as {
+          reservaId: number;
+          vencimentoNoDiaSeguinte?: boolean;
+        };
         const { cliente } = contexto(ctx);
 
         const semCobrar =
           "Não informe valor nem link ao cliente: encaminhe para a equipe cobrar.";
+        // Pedido do Diego (24/11/2026): a reserva só se confirma com o pagamento,
+        // e é o retorno da ferramenta que garante que o cliente ouve isso.
         const comoMandarOLink =
-          "Mande ao cliente o valorAtual e o faturaUrl, que é a página de pagamento; sem faturaUrl, o boletoUrl. Não invente valor nem link.";
+          "Mande ao cliente o valorAtual, o vencimento (em dd/mm) e o faturaUrl, que é a página de pagamento; sem faturaUrl, o boletoUrl. Diga que a reserva fica confirmada com o pagamento. Não invente valor nem link.";
 
         const reserva = await cliente.obterReserva(reservaId);
 
@@ -1241,7 +1252,10 @@ export const conexaIntegration: IntegrationDefinition = {
         if (!identidade.ok) return { faturada: false, ...identidade.recusa };
 
         // A decisão de SE cobrar é do código (`faturamento.ts`), não do modelo.
-        const situacao = situacaoDeFaturamento(reserva);
+        const situacao = situacaoDeFaturamento(reserva, {
+          agora: new Date(),
+          noDiaSeguinte: vencimentoNoDiaSeguinte === true,
+        });
 
         if (situacao.tipo === "recusar") {
           return { faturada: false, erro: situacao.motivo, comoSeguir: semCobrar };
@@ -1301,9 +1315,20 @@ export const conexaIntegration: IntegrationDefinition = {
           );
         }
 
+        // O cliente pediu amanhã, mas a reserva é hoje: venceu hoje, e ele precisa
+        // saber disso pela boca do agente.
+        const avisoDoVencimento = situacao.diaSeguinteNegado
+          ? "O cliente pediu para pagar amanhã, mas a reserva é antes disso: a cobrança vence hoje. Explique isso a ele."
+          : undefined;
+
         try {
           const cobranca = semVazios(formatarCobranca(await cliente.obterCobranca(id)));
-          return { faturada: true, cobranca, observacao: comoMandarOLink };
+          return {
+            faturada: true,
+            cobranca,
+            observacao: comoMandarOLink,
+            ...(avisoDoVencimento ? { avisoDoVencimento } : {}),
+          };
         } catch {
           return {
             faturada: true,

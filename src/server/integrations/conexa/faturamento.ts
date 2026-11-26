@@ -1,4 +1,4 @@
-import { diaEmSaoPaulo } from "@/lib/tempo";
+import { diaEmSaoPaulo, somarDias } from "@/lib/tempo";
 import { juntarPaginas, type ConexaClient } from "./client";
 import { STATUS_PENDENTE } from "./formatacao";
 
@@ -21,12 +21,28 @@ const JA_FATURADA = new Set(["billed", "paid", "partiallyPaid", "billedNegociate
 const CANCELADA = new Set(["cancelled", "billedCancelled"]);
 
 export type SituacaoDeFaturamento =
-  | { tipo: "faturar"; vendaId: number; clienteId?: number; vencimento?: string }
+  | {
+      tipo: "faturar";
+      vendaId: number;
+      clienteId?: number;
+      vencimento: string;
+      /** O cliente pediu o dia seguinte, mas a reserva é antes disso. */
+      diaSeguinteNegado: boolean;
+    }
   | { tipo: "pacoteDeHoras" }
   | { tipo: "jaFaturada"; vendaId?: number; clienteId?: number }
   | { tipo: "recusar"; motivo: string };
 
-export function situacaoDeFaturamento(reserva: Bruto): SituacaoDeFaturamento {
+export type OpcoesDeFaturamento = {
+  agora: Date;
+  /** Só quando o CLIENTE pediu para pagar no dia seguinte. */
+  noDiaSeguinte?: boolean;
+};
+
+export function situacaoDeFaturamento(
+  reserva: Bruto,
+  opcoes: OpcoesDeFaturamento,
+): SituacaoDeFaturamento {
   const status = String(reserva.status ?? "");
   const vendaId = typeof reserva.saleId === "number" ? reserva.saleId : undefined;
   const clienteId =
@@ -53,17 +69,46 @@ export function situacaoDeFaturamento(reserva: Bruto): SituacaoDeFaturamento {
       motivo: "A reserva não tem venda associada no Conexa: não há o que faturar por aqui.",
     };
   }
-  return { tipo: "faturar", vendaId, clienteId, vencimento: diaDaReserva(reserva.startTime) };
+  return {
+    tipo: "faturar",
+    vendaId,
+    clienteId,
+    ...vencimentoDaCobranca({
+      agora: opcoes.agora,
+      inicioDaReserva: reserva.startTime,
+      noDiaSeguinte: opcoes.noDiaSeguinte,
+    }),
+  };
 }
 
 /**
- * O vencimento é o DIA DA RESERVA, no relógio de São Paulo.
+ * A cobrança vence NO DIA EM QUE É GERADA, no relógio de São Paulo — ou no dia
+ * seguinte, se o cliente pedir.
  *
- * ⚠ Sem `dueDate`, o Conexa vence a cobrança HOJE. A rota que fatura sozinha é a
- * de fora do expediente: uma reserva feita no sábado para segunda nasceria
- * vencida no domingo, com juros e aviso de atraso antes de o cliente usar a
- * sala.
+ * Pedido do Diego (task "Melhoria", 24/11/2026): a reserva só fica confirmada com
+ * o pagamento. Até então vencia no DIA DA RESERVA (decisão de 15/09, para a
+ * reserva de sábado para segunda não nascer vencida no domingo), e a reserva
+ * marcada com semanas de antecedência ficava semanas sem pagamento.
+ *
+ * ⚠ O dia seguinte nunca passa do dia da reserva: pagar depois de usar a sala
+ * contradiz "confirmada com o pagamento". Reserva de hoje vence hoje, e quem
+ * chama diz isso ao cliente (`diaSeguinteNegado`). Sem o dia da reserva legível,
+ * vale hoje — na dúvida, o vencimento mais cedo.
  */
+export function vencimentoDaCobranca(args: {
+  agora: Date;
+  inicioDaReserva: unknown;
+  noDiaSeguinte?: boolean;
+}): { vencimento: string; diaSeguinteNegado: boolean } {
+  const hoje = diaEmSaoPaulo(args.agora);
+  if (!args.noDiaSeguinte) return { vencimento: hoje, diaSeguinteNegado: false };
+  const amanha = somarDias(hoje, 1);
+  const dia = diaDaReserva(args.inicioDaReserva);
+  if (!dia || dia < amanha) return { vencimento: hoje, diaSeguinteNegado: true };
+  return { vencimento: amanha, diaSeguinteNegado: false };
+}
+
+/** O dia em que a reserva começa, no relógio de São Paulo. */
 function diaDaReserva(inicio: unknown): string | undefined {
   if (typeof inicio !== "string") return undefined;
   const ms = Date.parse(inicio);

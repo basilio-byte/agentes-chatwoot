@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IntegrationProvider, RunSource } from "@/generated/prisma/enums";
 import type { ToolContext } from "../types";
 import { ConexaApiError } from "./client";
@@ -627,10 +627,18 @@ describe("clientes", () => {
 
 describe("conexa_faturar_reserva", () => {
   const BASE = "/index.php/api/v2";
-  const faturar = () =>
-    tool("conexa_faturar_reserva").execute({ reservaId: 28400 }, ctx()) as Promise<
+  const faturar = (extra: Record<string, unknown> = {}) =>
+    tool("conexa_faturar_reserva").execute({ reservaId: 28400, ...extra }, ctx()) as Promise<
       Record<string, unknown>
     >;
+
+  // Sábado, 19/09/2026, 23h em São Paulo; a reserva de teste é na segunda, 21/09.
+  // Só o Date é falso: o resto do relógio (timeouts do cliente HTTP) segue real.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-20T02:00:00Z"));
+  });
+  afterEach(() => vi.useRealTimers());
 
   const reservaDaApi = (extra: Record<string, unknown> = {}) => ({
     ...reserva(28400),
@@ -676,7 +684,7 @@ describe("conexa_faturar_reserva", () => {
 
   const rotas = () => chamadas.map((c) => `${c.metodo} ${c.url.pathname.replace(BASE, "")}`);
 
-  it("cobra a venda da reserva, vencendo no dia dela, e devolve valor e link", async () => {
+  it("cobra a venda da reserva, vencendo HOJE, e devolve valor e link", async () => {
     conexa({});
 
     const r = await faturar();
@@ -684,7 +692,6 @@ describe("conexa_faturar_reserva", () => {
     expect(r.faturada).toBe(true);
     expect(r.cobranca).toMatchObject({
       valorAtual: 60,
-      vencimento: "2026-09-21",
       faturaUrl: "https://seahub.conexa.app/fatura/abc",
     });
     expect(rotas()).toEqual([
@@ -693,10 +700,31 @@ describe("conexa_faturar_reserva", () => {
       "POST /charge",
       "GET /charge/7001",
     ]);
-    // Só as pendentes do cliente, e o corpo com a venda e o dia da reserva.
+    // Só as pendentes do cliente, e o corpo com a venda e o dia de HOJE em São
+    // Paulo (pedido do Diego, 24/11/2026: a reserva se confirma com o pagamento).
     expect(chamadas[1].url.searchParams.get("customerId[]")).toBe("975");
     expect(chamadas[1].url.searchParams.get("status")).toBe("unpaid");
-    expect(chamadas[2].corpo).toEqual({ salesIds: [190001], dueDate: "2026-09-21" });
+    expect(chamadas[2].corpo).toEqual({ salesIds: [190001], dueDate: "2026-09-19" });
+    // ⚠ É o retorno que garante que o cliente ouve a regra, não o prompt.
+    expect(String(r.observacao)).toMatch(/confirmada com o pagamento/);
+    expect(r).not.toHaveProperty("avisoDoVencimento");
+  });
+
+  it("o cliente pediu o dia seguinte: vence amanhã", async () => {
+    conexa({});
+
+    await faturar({ vencimentoNoDiaSeguinte: true });
+
+    expect(chamadas[2].corpo).toEqual({ salesIds: [190001], dueDate: "2026-09-20" });
+  });
+
+  it("dia seguinte pedido com a reserva HOJE: vence hoje, e o agente é avisado", async () => {
+    conexa({ reserva: { startTime: "2026-09-19T23:30:00-03:00", finalTime: "2026-09-20T00:30:00-03:00" } });
+
+    const r = await faturar({ vencimentoNoDiaSeguinte: true });
+
+    expect(chamadas[2].corpo).toEqual({ salesIds: [190001], dueDate: "2026-09-19" });
+    expect(String(r.avisoDoVencimento)).toMatch(/vence hoje/);
   });
 
   it("pacote de horas: não cria cobrança", async () => {

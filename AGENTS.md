@@ -3386,9 +3386,17 @@ com mock — e mock aceita qualquer corpo. A tradução de ida é pura e testada
   pendentes do cliente, uma que já contenha a venda — o modelo repete chamada, e
   nada garante que a reserva vire `billed` no mesmo instante. Lista de
   pendentes que não veio inteira também recusa.
-- ⚠ **O vencimento da cobrança é o dia da reserva.** Sem `dueDate`, o Conexa
-  vence HOJE, e a reserva feita no sábado para segunda nasceria vencida no
-  domingo, com juros antes de o cliente usar a sala.
+- ⚠ **A cobrança da reserva vence HOJE, e a reserva só se confirma com o
+  pagamento** (pedido do Diego, task "Melhoria", 26/11/2026). Até então vencia
+  no dia da reserva (decisão de 15/09, para a reserva de sábado para segunda
+  não nascer vencida no domingo), e a reserva marcada com semanas de
+  antecedência ficava semanas sem pagamento. O cliente pode pedir o dia
+  seguinte (`vencimentoNoDiaSeguinte`), mas **nunca depois do dia da
+  reserva**: pagar depois de usar a sala contradiz a regra, e aí a ferramenta
+  vence hoje e devolve `avisoDoVencimento` (`vencimentoDaCobranca`, em
+  `faturamento.ts`). "Confirmada com o pagamento" vai no RETORNO da ferramenta,
+  não só no prompt. ⚠ Quem não paga no dia fica com a cobrança vencida, e o
+  Conexa aplica juros e multa conforme a configuração dele.
 - ⚠ **Na conversa, nada sai em nome de um cliente sem o CPF ou o CNPJ do
   cadastro escrito por ELE** (`conexa/identidade.ts`, pedido do usuário em
   22/09/2026: *"abre brecha pra qualquer pessoa reservar em nome de
