@@ -3,6 +3,27 @@
     "clickup": {
       "type": "http",
       "url": "https://mcp.clickup.com/mcp"
+    },
+    "seahub-agentes": {
+      "type": "http",
+      "url": "${SEAHUB_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${SEAHUB_MCP_TOKEN}"
+      }
+    },
+    "n8n": {
+      "type": "http",
+      "url": "${N8N_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${N8N_MCP_TOKEN}"
+      }
+    },
+    "easypanel": {
+      "type": "http",
+      "url": "https://painel.seahubcoworking.com.br/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${EASYPANEL_MCP_TOKEN}"
+      }
     }
   }
 }
